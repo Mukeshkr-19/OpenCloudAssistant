@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Open Cloud Assistant portable user PATH
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
+
+
 MODE="${1:---dry-run}"
 
 if command -v hermes >/dev/null 2>&1; then

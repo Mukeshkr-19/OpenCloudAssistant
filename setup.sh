@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Open Cloud Assistant portable user PATH
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
+
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODE="${1:---help}"
 

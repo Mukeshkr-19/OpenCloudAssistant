@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Open Cloud Assistant portable user PATH
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
+
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${OPEN_CLOUD_CONFIG:-$HOME/.opencloud/config.env}"
 FAILURES=0
@@ -73,23 +77,23 @@ else
 fi
 
 if command -v hermes >/dev/null 2>&1; then
-    if hermes version >/dev/null 2>&1; then
-        pass "Hermes" "installed"
+    if hermes --help >/dev/null 2>&1; then
+        pass "Hermes" "$(command -v hermes)"
     else
-        fail "Hermes" "command exists but version check failed"
+        fail "Hermes" "command exists but CLI check failed"
     fi
 else
-    fail "Hermes" "not installed"
+    fail "Hermes" "not installed or not discoverable"
 fi
 
 if command -v vellum >/dev/null 2>&1; then
     if vellum --help >/dev/null 2>&1; then
-        pass "Vellum" "installed"
+        pass "Vellum" "$(command -v vellum)"
     else
         fail "Vellum" "command exists but CLI check failed"
     fi
 else
-    fail "Vellum" "not installed"
+    fail "Vellum" "not installed or not discoverable"
 fi
 
 if [ -d "$ROOT/.git" ]; then

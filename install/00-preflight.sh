@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Open Cloud Assistant portable user PATH
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
+
+
 FAILURES=0
 
 pass() {
