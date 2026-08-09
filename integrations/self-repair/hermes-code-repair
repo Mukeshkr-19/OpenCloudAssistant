@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
+
+STATE_ROOT="${OPEN_CLOUD_REPAIR_STATE:-$HOME/.local/share/opencloud-repair}"
+TARGET_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
+AGENT_NAME="${OPEN_CLOUD_REPAIR_AGENT:-hermes-repair}"
+REPAIR_TIMEOUT="${OPEN_CLOUD_REPAIR_TIMEOUT:-900}"
+BACKUP_KEEP="${OPEN_CLOUD_REPAIR_BACKUP_KEEP:-5}"
+
+usage() {
+    printf "%s\n" \
+        "Usage:" \
+        "  hermes-code-repair --task \"describe the repair\"" \
+        "  hermes-code-repair --self-test" \
+        "  hermes-code-repair --help"
+}
+
+require_command() {
+    local cmd="$1"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "ERROR: required command missing: $cmd" >&2
+        return 1
+    fi
+}
+
+validate_tree() {
+    local root="$1"
+    local failures=0
+    local file=""
+
+    [ -d "$root" ] || {
+        echo "VALIDATION_FAIL: missing tree: $root" >&2
+        return 1
+    }
+
+    while IFS= read -r -d "" file; do
+        if ! python3 -m py_compile "$file" >/dev/null 2>&1; then
+            echo "VALIDATION_FAIL: Python syntax: ${file#$root/}" >&2
+            failures=1
+        fi
+    done < <(
+        find "$root" -type f -name "*.py" \
+            -not -path "*/.git/*" \
+            -not -path "*/node_modules/*" \
+            -print0
+    )
+
+    while IFS= read -r -d "" file; do
+        if ! bash -n "$file" >/dev/null 2>&1; then
+            echo "VALIDATION_FAIL: shell syntax: ${file#$root/}" >&2
+            failures=1
+        fi
+    done < <(
+        find "$root" -type f -name "*.sh" \
+            -not -path "*/.git/*" \
+            -not -path "*/node_modules/*" \
+            -print0
+    )
+
+    [ "$failures" -eq 0 ]
+}
+
+reject_sensitive_artifacts() {
+    local root="$1"
+    local hit=""
+
+    hit="$(find "$root" -type f \
+        \( -name ".env" -o -name ".env.*" -o -name "auth.json" -o -name "*.pem" -o -name "*.key" \) \
+        -not -name ".env.example" \
+        -print -quit)"
+
+    if [ -n "$hit" ]; then
+        echo "ERROR: staged repair contains sensitive artifact: ${hit#$root/}" >&2
+        return 1
+    fi
+
+    if [ -d "$root/.git" ]; then
+        echo "ERROR: staged repair unexpectedly contains .git metadata" >&2
+        return 1
+    fi
+}
+
+tree_digest() {
+    local root="$1"
+
+    (
+        cd "$root"
+        find . -type f \
+            -not -path "./.git/*" \
+            -not -path "*/__pycache__/*" \
+            -not -name ".env" \
+            -not -name ".env.*" \
+            -print0 | sort -z | xargs -0 -r sha256sum
+    ) | sha256sum | awk "{print \$1}"
+}
+
+copy_code_tree() {
+    local src="$1"
+    local dst="$2"
+
+    mkdir -p "$dst"
+    rsync -a --delete \
+        --exclude ".git/" \
+        --exclude ".env" \
+        --exclude ".env.*" \
+        --exclude "__pycache__/" \
+        --exclude "*.pyc" \
+        "$src/" "$dst/"
+}
+
+rollback_tree() {
+    local backup="$1"
+    local target="$2"
+
+    echo "ROLLBACK: restoring pre-repair snapshot"
+    copy_code_tree "$backup" "$target"
+    validate_tree "$target"
+    echo "ROLLBACK: PASS"
+}
+
+prune_backups() {
+    local backup_root="$STATE_ROOT/backups"
+    local remove_count=0
+
+    [ -d "$backup_root" ] || return 0
+
+    remove_count="$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d | wc -l)"
+    if [ "$remove_count" -le "$BACKUP_KEEP" ]; then
+        return 0
+    fi
+
+    find "$backup_root" -mindepth 1 -maxdepth 1 -type d -printf "%f\n" \
+        | sort -r \
+        | tail -n "+$((BACKUP_KEEP + 1))" \
+        | while IFS= read -r name; do
+            rm -rf -- "$backup_root/$name"
+        done
+}
+
+self_test() {
+    require_command python3
+    require_command rsync
+    require_command sha256sum
+
+    local tmp=""
+    local source=""
+    local stage=""
+    local backup=""
+    local before=""
+
+    tmp="$(mktemp -d)"
+    source="$tmp/source"
+    stage="$tmp/stage"
+    backup="$tmp/backup"
+
+    mkdir -p "$source"
+    printf "%s\n" "def answer():" "    return 42" > "$source/example.py"
+    printf "%s\n" "#!/usr/bin/env bash" "echo ok" > "$source/check.sh"
+    chmod 755 "$source/check.sh"
+
+    validate_tree "$source"
+    before="$(tree_digest "$source")"
+
+    copy_code_tree "$source" "$stage"
+    copy_code_tree "$source" "$backup"
+
+    printf "%s\n" "def answer():" "    return 43" > "$stage/example.py"
+    validate_tree "$stage"
+
+    if [ "$(tree_digest "$stage")" = "$before" ]; then
+        rm -rf "$tmp"
+        echo "SELF_TEST_FAIL: digest did not detect modification" >&2
+        return 1
+    fi
+
+    printf "%s\n" "def broken(" > "$stage/example.py"
+
+    if validate_tree "$stage" >/dev/null 2>&1; then
+        rm -rf "$tmp"
+        echo "SELF_TEST_FAIL: invalid Python was accepted" >&2
+        return 1
+    fi
+
+    validate_tree "$source"
+
+    if [ "$(tree_digest "$source")" != "$before" ]; then
+        rm -rf "$tmp"
+        echo "SELF_TEST_FAIL: source changed during staging test" >&2
+        return 1
+    fi
+
+    copy_code_tree "$backup" "$source"
+    validate_tree "$source"
+    rm -rf "$tmp"
+
+    echo "SELF_REPAIR_SMOKE: PASS"
+}
+
+run_repair() {
+    local task="$1"
+    local timestamp=""
+    local work_root=""
+    local stage=""
+    local backup=""
+    local before_digest=""
+    local after_digest=""
+    local prompt=""
+
+    require_command opencode
+    require_command rsync
+    require_command timeout
+    require_command python3
+    require_command sha256sum
+
+    [ -n "$task" ] || {
+        echo "ERROR: repair task is empty" >&2
+        return 2
+    }
+
+    [ -d "$TARGET_ROOT" ] || {
+        echo "ERROR: Hermes source not found: $TARGET_ROOT" >&2
+        return 1
+    }
+
+    echo "REPAIR: validating current source"
+    validate_tree "$TARGET_ROOT" || {
+        echo "ERROR: live source fails baseline syntax validation" >&2
+        return 1
+    }
+
+    timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    mkdir -p "$STATE_ROOT/work" "$STATE_ROOT/backups"
+
+    work_root="$(mktemp -d "$STATE_ROOT/work/repair-${timestamp}-XXXXXX")"
+    stage="$work_root/stage"
+    backup="$STATE_ROOT/backups/$timestamp"
+
+    echo "REPAIR: creating isolated staging tree"
+    copy_code_tree "$TARGET_ROOT" "$stage"
+    reject_sensitive_artifacts "$stage"
+    validate_tree "$stage"
+    before_digest="$(tree_digest "$stage")"
+
+    prompt="Repair the following Hermes defect.
+
+Task:
+$task
+
+Work only inside this staged project copy.
+Make the smallest correct source-code change.
+Do not use Git, shell commands, the network, credentials, environment files,
+auth data, personal data, or external directories.
+Do not deploy or restart anything.
+The trusted outer harness validates and deploys the result."
+
+    echo "REPAIR: invoking restricted OpenCode agent"
+
+    if ! timeout "$REPAIR_TIMEOUT" \
+        opencode run \
+        --agent "$AGENT_NAME" \
+        --dir "$stage" \
+        "$prompt"
+    then
+        rm -rf "$work_root"
+        echo "ERROR: OpenCode repair did not complete successfully" >&2
+        return 1
+    fi
+
+    reject_sensitive_artifacts "$stage"
+    echo "REPAIR: validating staged result"
+    validate_tree "$stage" || {
+        rm -rf "$work_root"
+        echo "ERROR: staged repair failed validation" >&2
+        return 1
+    }
+
+    after_digest="$(tree_digest "$stage")"
+    if [ "$before_digest" = "$after_digest" ]; then
+        rm -rf "$work_root"
+        echo "ERROR: repair agent produced no source change" >&2
+        return 1
+    fi
+
+    echo "REPAIR: creating trusted pre-deployment backup"
+    copy_code_tree "$TARGET_ROOT" "$backup"
+    validate_tree "$backup"
+
+    echo "REPAIR: deploying validated staged tree"
+    copy_code_tree "$stage" "$TARGET_ROOT"
+
+    if ! validate_tree "$TARGET_ROOT"; then
+        echo "ERROR: deployed tree failed validation" >&2
+        rollback_tree "$backup" "$TARGET_ROOT"
+        rm -rf "$work_root"
+        return 1
+    fi
+
+    rm -rf "$work_root"
+    prune_backups
+
+    echo
+    echo "REPAIR_STATUS: PASS"
+    echo "Backup: $backup"
+    echo "Service restart: NOT PERFORMED"
+}
+
+MODE="${1:-}"
+
+case "$MODE" in
+    --self-test)
+        self_test
+        ;;
+    --task)
+        shift
+        [ "$#" -gt 0 ] || {
+            echo "ERROR: --task requires a repair description" >&2
+            exit 2
+        }
+        run_repair "$*"
+        ;;
+    --help|-h|help|"")
+        usage
+        ;;
+    *)
+        echo "ERROR: unknown option: $MODE" >&2
+        usage >&2
+        exit 2
+        ;;
+esac

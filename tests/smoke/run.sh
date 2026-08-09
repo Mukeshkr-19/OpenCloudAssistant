@@ -18,4 +18,6 @@ test -x scripts/public-audit.sh
 
 "$ROOT/tests/smoke/public-brain.sh"
 
+"$ROOT/tests/smoke/self-repair.sh"
+
 echo "SMOKE_TESTS: PASS"
