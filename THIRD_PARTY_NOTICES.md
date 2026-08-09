@@ -65,3 +65,13 @@ should be placed under:
 Whenever possible, Open Cloud Assistant should install upstream software from
 its official distribution source instead of vendoring entire third-party
 source trees.
+
+## Verified upstream licenses
+
+The upstream license files were re-verified for this release:
+
+- Hermes Agent — MIT — https://github.com/NousResearch/hermes-agent
+- Vellum Assistant — MIT — https://github.com/vellum-ai/vellum-assistant
+- OpenCode — MIT — https://github.com/anomalyco/opencode
+
+Exact upstream license texts are preserved under `licenses/`.

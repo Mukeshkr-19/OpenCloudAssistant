@@ -426,3 +426,30 @@ A non-Apple user must be able to install Open Cloud Assistant, pass
 device or account.
 
 See `docs/CHANNELS.md` for the complete messaging contract.
+
+## v0.1.0 prerelease scope
+
+This is the first public prerelease of Open Cloud Assistant.
+
+- The documented Ubuntu/ARM64 installation path and CLI workflow have been validated.
+- Browser/Open WebUI integration is preview functionality in this prerelease.
+- Telegram and Discord require the user's own credentials and configuration.
+- iMessage is optional and is not required for a normal installation.
+
+### Ubuntu prerequisites
+
+On a fresh Ubuntu installation, install the base operating-system prerequisites first:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git xz-utils unzip python3 python3-venv python3-pip sudo dbus-user-session procps
+```
+
+Then install Open Cloud Assistant:
+
+```bash
+git clone https://github.com/Mukeshkr-19/OpenCloudAssistant.git
+cd OpenCloudAssistant
+./setup.sh --install
+opencloud doctor
+```
