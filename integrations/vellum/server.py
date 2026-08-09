@@ -586,12 +586,12 @@ def repair_code(task: str, target: str = "hermes"):
     """
     Repair a real code defect using the restricted local OpenCode mechanic.
 
-    Use this only when Hermes needs an actual source-code repair or a requested
-    code change in an allowlisted project.
+    Use this only when Hermes needs an actual Hermes source-code repair.
 
-    Allowed targets:
+    New feature development uses a separate workflow and is not handled here.
+
+    Allowed target:
       - hermes
-      - core
 
     Do NOT use this for ordinary questions, personal-memory retrieval,
     research, writing, or model selection.
@@ -605,7 +605,7 @@ def repair_code(task: str, target: str = "hermes"):
     task = str(task or "").strip()
     target = str(target or "hermes").strip().lower()
 
-    if target not in {"hermes", "core"}:
+    if target != "hermes":
         return {
             "ok": False,
             "status": "target_denied",
@@ -635,9 +635,9 @@ def repair_code(task: str, target: str = "hermes"):
         proc = subprocess.run(
             [
                 str(helper),
-                target,
+                "--task",
+                task,
             ],
-            input=task,
             text=True,
             capture_output=True,
             timeout=960,

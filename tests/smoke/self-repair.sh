@@ -33,6 +33,27 @@ then
     exit 1
 fi
 
+echo "SMOKE: repair bridge contract"
+
+REPAIR_HELP="$(integrations/self-repair/hermes-code-repair --help)"
+
+[[ "$REPAIR_HELP" == *'--task "describe the repair"'* ]]
+
+for bridge in \
+    integrations/vellum/server.py \
+    integrations/vellum/mcp-managed-blocks.py
+do
+    test "$(grep -c '^def repair_code' "$bridge")" -eq 1
+
+    grep -qF 'if target != "hermes":' "$bridge"
+    grep -qF '"--task",' "$bridge"
+
+    if grep -qF "input=task" "$bridge"; then
+        echo "SELF_REPAIR_PUBLIC_SMOKE: FAIL stale stdin repair contract in $bridge"
+        exit 1
+    fi
+done
+
 integrations/self-repair/hermes-code-repair --self-test
 
 echo "SELF_REPAIR_PUBLIC_SMOKE: PASS"

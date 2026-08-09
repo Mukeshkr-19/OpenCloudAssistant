@@ -499,12 +499,12 @@ def repair_code(task: str, target: str = "hermes"):
     """
     Repair a real code defect using the restricted local OpenCode mechanic.
 
-    Use this only when Hermes needs an actual source-code repair or a requested
-    code change in an allowlisted project.
+    Use this only when Hermes needs an actual Hermes source-code repair.
 
-    Allowed targets:
+    New feature development uses a separate workflow and is not handled here.
+
+    Allowed target:
       - hermes
-      - core
 
     Do NOT use this for ordinary questions, personal-memory retrieval,
     research, writing, or model selection.
@@ -518,7 +518,7 @@ def repair_code(task: str, target: str = "hermes"):
     task = str(task or "").strip()
     target = str(target or "hermes").strip().lower()
 
-    if target not in {"hermes", "core"}:
+    if target != "hermes":
         return {
             "ok": False,
             "status": "target_denied",
@@ -548,9 +548,9 @@ def repair_code(task: str, target: str = "hermes"):
         proc = subprocess.run(
             [
                 str(helper),
-                target,
+                "--task",
+                task,
             ],
-            input=task,
             text=True,
             capture_output=True,
             timeout=960,
@@ -620,111 +620,3 @@ def get_user_context(query: str, max_results: int = 8):
     )
 
 # HERMES_VELLUM_CONTEXT_V1_END
-
-
-# HERMES_CODE_REPAIR_TOOL_V1_BEGIN
-
-@mcp.tool()
-def repair_code(task: str, target: str = "hermes"):
-    """
-    Repair a real code defect using the restricted local OpenCode mechanic.
-
-    Use this only when Hermes needs an actual source-code repair or a requested
-    code change in an allowlisted project.
-
-    Allowed targets:
-      - hermes
-      - core
-
-    Do NOT use this for ordinary questions, personal-memory retrieval,
-    research, writing, or model selection.
-
-    The repair harness snapshots the target first, blocks secret/external
-    access, validates code after edits, and rolls back if OpenCode fails.
-    """
-    import subprocess
-    from pathlib import Path
-
-    task = str(task or "").strip()
-    target = str(target or "hermes").strip().lower()
-
-    if target not in {"hermes", "core"}:
-        return {
-            "ok": False,
-            "status": "target_denied",
-        }
-
-    if not task:
-        return {
-            "ok": False,
-            "status": "empty_task",
-        }
-
-    if len(task) > 6000:
-        return {
-            "ok": False,
-            "status": "task_too_large",
-        }
-
-    helper = Path("__OPEN_CLOUD_HOME__/.local/bin/hermes-code-repair")
-
-    if not helper.exists():
-        return {
-            "ok": False,
-            "status": "repair_harness_missing",
-        }
-
-    try:
-        proc = subprocess.run(
-            [
-                str(helper),
-                target,
-            ],
-            input=task,
-            text=True,
-            capture_output=True,
-            timeout=960,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            "ok": False,
-            "status": "timeout",
-        }
-    except Exception:
-        return {
-            "ok": False,
-            "status": "launch_failed",
-        }
-
-    lines = [
-        line.strip()
-        for line in proc.stdout.splitlines()
-        if line.strip()
-    ]
-
-    safe = [
-        line
-        for line in lines
-        if line.startswith(
-            (
-                "REPAIR_STATUS:",
-                "REPAIR_TARGET:",
-                "RESTART_REQUIRED:",
-                "RESTART_SCHEDULED:",
-                "PYTHON_FILES_VALIDATED:",
-            )
-        )
-    ]
-
-    return {
-        "ok": proc.returncode == 0,
-        "status": (
-            "completed"
-            if proc.returncode == 0
-            else "failed"
-        ),
-        "summary": safe[-12:],
-    }
-
-# HERMES_CODE_REPAIR_TOOL_V1_END
