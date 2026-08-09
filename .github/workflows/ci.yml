@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Static audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Public privacy and credential audit
+        run: ./scripts/public-audit.sh
+
+      - name: Bash syntax
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r file; do
+            if [ -f "$file" ] && head -1 "$file" | grep -qE "^#!.*(bash|sh)"; then
+              echo "bash -n $file"
+              bash -n "$file"
+            fi
+          done < <(git ls-files)
+
+      - name: Python compile
+        run: |
+          set -euo pipefail
+
+          mapfile -t files < <(git ls-files "*.py")
+
+          if [ "${#files[@]}" -gt 0 ]; then
+            echo "python compile: ${#files[@]} files"
+            python3 -m py_compile "${files[@]}"
+          fi
+
+      - name: JSON validation
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r file; do
+            echo "json: $file"
+            python3 -m json.tool "$file" >/dev/null
+          done < <(git ls-files "*.json")
+
+  smoke:
+    name: Smoke / ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Runner identity
+        run: |
+          uname -m
+          . /etc/os-release
+          echo "$PRETTY_NAME"
+
+      - name: Full deterministic smoke suite
+        run: ./tests/smoke/run.sh
+
+  installer:
+    name: Installer dry-run / ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Runner identity
+        run: |
+          uname -m
+          . /etc/os-release
+          echo "$PRETTY_NAME"
+
+      - name: Installer dry-run
+        run: ./setup.sh --dry-run
