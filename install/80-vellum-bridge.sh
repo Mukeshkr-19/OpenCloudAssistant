@@ -23,6 +23,7 @@ validate() {
 
     grep -qF "def get_user_context" "$file"
     grep -qF "def start_vellum_task" "$file"
+    grep -B1 -F "def start_vellum_task" "$file" | grep -qF "@mcp.tool()"
     grep -qF "def get_vellum_task" "$file"
     grep -qF "def stop_vellum_task" "$file"
     grep -qF "def repair_code" "$file"

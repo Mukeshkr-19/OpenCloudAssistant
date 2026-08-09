@@ -70,5 +70,7 @@ test -f "$HOME_TARGET/.config/hermes-vellum/mcp/server.py"
 test -f "$STATE/hermes-vellum-installed"
 
 grep -qF "def get_user_context" "$HOME_TARGET/.config/hermes-vellum/mcp/server.py"
+grep -qF "def start_vellum_task" "$HOME_TARGET/.config/hermes-vellum/mcp/server.py"
+grep -B1 -F "def start_vellum_task" "$HOME_TARGET/.config/hermes-vellum/mcp/server.py" | grep -qF "@mcp.tool()"
 
 echo "HERMES_VELLUM_SMOKE: PASS"

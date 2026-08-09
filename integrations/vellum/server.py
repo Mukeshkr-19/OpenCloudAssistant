@@ -708,13 +708,14 @@ def get_user_context(query: str, max_results: int = 8):
 
 # HERMES_VELLUM_CONTEXT_V1_END
 
+@mcp.tool()
 def start_vellum_task(
     task: str,
     thread: str = "main",
     timeout_seconds: int = 600,
 ) -> str:
     """
-    Start a Vellum personal-intelligence task.
+    Start a Vellum personal-memory mutation task.
 
     Use Vellum for personal memory, preferences, goals, job-search context,
     application tracking, routines, reminders, learning plans, and personal

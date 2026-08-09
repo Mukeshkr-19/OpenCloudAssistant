@@ -43,3 +43,22 @@ User memory, MCP task state, credentials, prompts, runtime databases, and person
     install/85-hermes-orchestration.sh --install
 
 Both stages also provide non-mutating --check modes.
+
+## Read/write routing contract
+
+Open Cloud Assistant separates personal-context reads from personal-memory
+mutations.
+
+For ordinary reads about the user, Hermes uses get_user_context. It may make
+one narrower retry when retrieved material is weak, and it ignores generic
+skill descriptions or capability documentation that are not user facts.
+
+For explicit remember, save, update, correct, or forget requests, Hermes uses
+start_vellum_task once and polls the same task with get_vellum_task until the
+mutation completes or fails.
+
+The asynchronous task path is not required for ordinary personal-context
+retrieval.
+
+Normal user-facing responses must not expose MCP metadata, task IDs, raw JSON,
+model routing, stack traces, or internal retrieval diagnostics.
