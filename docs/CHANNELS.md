@@ -1,138 +1,209 @@
-# Talking to Open Cloud Assistant
+# Conversation Channels
 
-Apple hardware is **not required** to install or use Open Cloud Assistant.
+Open Cloud Assistant is **not Apple-only**. The assistant core runs on Ubuntu and can be installed with CLI only.
 
-The core assistant runs on the Linux host. Messaging is a separate interface
-that users choose after the core system is operational.
+v0.1.0 channel status:
 
-A user may configure one channel, several channels, CLI only, or configure
-messaging later.
+| Channel | Status |
+|---|---|
+| CLI | ✅ Validated core path |
+| Telegram | 🧪 Guided config implemented; public E2E acceptance pending |
+| Discord | 🧪 Guided config implemented; public E2E acceptance pending |
+| Browser / Open WebUI | ⚠️ Protected local config only; runtime is preview |
+| iMessage / Apple | ➕ Optional; requires compatible runtime |
+| Advanced Hermes channels | ➕ Delegated to upstream `hermes gateway setup` |
 
-## Recommended channel order
+## Channel command
 
-### 1. Telegram — recommended default
+```bash
+./bin/opencloud channels configure
+```
 
-Telegram is the recommended first option for users who want the simplest
-cross-platform phone and desktop experience.
+The wizard displays:
 
-It works without a Mac or iPhone.
+```text
+1) Telegram              [recommended]
+2) Discord
+3) Browser / Open WebUI
+4) CLI only
+5) iMessage / Apple      [optional]
+6) Advanced channels
+7) Configure later
+```
 
-Target setup flow:
+Multiple values are accepted, for example `1,4` for Telegram + CLI.
 
-1. Create a Telegram bot through BotFather.
-2. Keep the bot token private.
-3. Obtain the numeric Telegram user ID that should be allowed.
-4. Run the Hermes gateway setup flow.
-5. Configure the Telegram bot.
-6. Restrict the bot to explicit allowed users.
-7. Start or restart the Hermes gateway.
-8. Send a normal test message.
+Channel selection is stored in:
 
-The public installer should guide the user through these steps rather than
-assuming they already know Hermes configuration.
+```text
+~/.opencloud/channels.json
+```
 
-## 2. Discord
+Channel/provider secrets are stored separately in:
 
-Discord is another primary cross-platform option.
+```text
+~/.opencloud/config.env
+```
 
-Target setup flow:
+Both are runtime files and should be mode `600`.
 
-1. Create a Discord bot/application.
-2. Keep the bot token private.
-3. Configure the bot through the Hermes gateway.
-4. Start with a direct-message test.
-5. Configure server/channel access only when needed.
+## CLI
 
-Discord setup failure must not make the core assistant unhealthy when the
-user did not select Discord.
+CLI is the safest first-install path because it requires no messaging credential and no Apple device.
 
-## 3. Browser / Open WebUI
+Install CLI-only noninteractively:
 
-A browser interface gives users a platform-independent option from Windows,
-Linux, macOS, ChromeOS, Android, iOS, or another machine with a modern browser.
+```bash
+OPEN_CLOUD_CHANNELS=cli ./setup.sh --install
+```
 
-The planned browser path will connect a protected web frontend to the Hermes
-API interface.
+Start the assistant:
 
-The installer must never expose an unauthenticated assistant API directly to
-the public internet.
+```bash
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
+hermes chat
+```
 
-## 4. CLI
+CLI-only does not require the Hermes messaging gateway service. Fleet maintenance timers still run.
 
-CLI access is the universal fallback and diagnostic interface.
+## Telegram — recommended cross-platform messaging
 
-A successful core installation should be usable from the command line before
-the installer claims that optional messaging setup is complete.
+Open Cloud Assistant requires **both**:
 
-## 5. iMessage / Apple integration
+```text
+TELEGRAM_BOT_TOKEN
+TELEGRAM_ALLOWED_USERS
+```
 
-iMessage is **optional**.
+The allowlist is explicit and numeric.
 
-Users with compatible Apple hardware may configure the supported Apple
-messaging path.
+### Create a bot
 
-Users without Apple hardware must never be required to provide:
+Telegram's official documentation says to message `@BotFather` to register a bot and receive its authentication token. The token gives control of the bot and must remain secret.
 
-- a Mac,
-- an iPhone,
-- an Apple ID,
-- iMessage credentials,
-- or Apple-specific configuration.
+Official docs:
 
-The installer should ask Apple-specific questions only when the user
-explicitly selects the iMessage option.
+- https://core.telegram.org/bots
+- https://core.telegram.org/bots/api
 
-## Installer channel menu
+### Get the allowed numeric user ID
 
-The target setup flow is:
+A Telegram bot cannot initiate the conversation; send your bot a message first.
 
-    How do you want to talk to your assistant?
+Then use the official Bot API `getUpdates` method. The following keeps the token out of the literal shell command history and prints only sender IDs from message updates:
 
-      1) Telegram              [recommended]
-      2) Discord
-      3) Browser / Open WebUI
-      4) CLI only
-      5) iMessage / Apple      [optional]
-      6) Advanced channels
-      7) Configure later
+```bash
+read -rsp "Telegram bot token: " TG_TOKEN; echo
+curl -sS "https://api.telegram.org/bot${TG_TOKEN}/getUpdates" | python3 -c 'import json,sys; d=json.load(sys.stdin); ids=[]; [ids.append(x.get("message",{}).get("from",{}).get("id")) for x in d.get("result",[])]; print("User IDs:", ", ".join(str(x) for x in sorted(set(i for i in ids if isinstance(i,int)))))'
+unset TG_TOKEN
+```
 
-Users may enable more than one channel.
+If there is no ID, send the bot another message and retry. If you already configured a webhook elsewhere, `getUpdates` cannot be used simultaneously with that webhook.
 
-Core installation must remain independent from optional messaging setup.
+### Configure Open Cloud Assistant
 
-## Doctor behavior
+```bash
+./bin/opencloud channels configure
+```
 
-`opencloud doctor` must distinguish three states:
+Select Telegram. The wizard asks for the token with hidden input and then asks:
 
-- PASS — selected/configured component works.
-- FAIL — selected/required component is broken.
-- SKIP — optional component was not configured.
+```text
+Allowed Telegram user IDs, comma separated:
+```
 
-Example:
+Multiple users can be listed as numeric IDs separated by commas.
 
-    Core assistant        PASS
-    Hermes               PASS
-    Vellum               PASS
-    Telegram             PASS
-    Discord              SKIP
-    Browser UI           SKIP
-    iMessage             SKIP
+After adding Telegram to an already-installed CLI-only deployment:
 
-A SKIP is not a failure.
+```bash
+./bin/opencloud services install
+./bin/opencloud channels status
+./bin/opencloud services status
+./bin/opencloud doctor
+```
 
-Someone using Android plus Windows should be able to run Telegram, Discord,
-or the browser interface and receive a completely healthy doctor result.
+The service stage now sees Telegram and makes the Hermes gateway required.
 
-## Release acceptance requirements
+## Discord
 
-Before a stable public release:
+Discord's official developer flow starts by creating an application in the Developer Portal. The Bot page is where you obtain/reset the bot token. Discord explicitly treats the token as highly sensitive.
 
-- non-Apple installation must work end-to-end;
-- Telegram must be tested end-to-end;
-- Discord must be tested end-to-end;
-- browser access must be tested end-to-end;
-- CLI access must be tested;
-- iMessage must remain optional;
-- Apple questions must appear only when iMessage is selected;
-- doctor must distinguish PASS, FAIL, and SKIP;
-- every supported primary channel must include a real test-message step.
+Official docs:
+
+- https://docs.discord.com/developers/quick-start/getting-started
+- https://docs.discord.com/developers/bots/overview
+
+### Setup flow
+
+1. Create an application in the Discord Developer Portal.
+2. Open its **Bot** page and generate/reset the token.
+3. Store that token securely.
+4. Install the bot/app into the test context you plan to use.
+5. Grant only the permissions your messaging use case needs.
+6. Run `./bin/opencloud channels configure` and select Discord.
+7. Paste the token at the hidden prompt.
+8. Re-run `./bin/opencloud services install`.
+9. Check `./bin/opencloud services logs` if the gateway does not connect.
+
+The public channel wizard currently validates that a Discord credential is present; real end-to-end Discord acceptance is still required before stable v1.0.
+
+## Browser / Open WebUI — preview
+
+Selecting Browser generates/protects local API configuration:
+
+```text
+API_SERVER_ENABLED=true
+API_SERVER_HOST=127.0.0.1
+API_SERVER_PORT=8642
+API_SERVER_KEY=<generated secret>
+```
+
+If an unsafe/nonlocal host is present, the wizard resets it to localhost.
+
+**v0.1.0 does not claim a release-validated browser runtime.** The service doctor intentionally fails Browser when it is selected so a local config file cannot be mistaken for a working public web deployment.
+
+Do not expose port 8642 directly to the internet. When experimenting, use an authenticated/private tunnel and understand the upstream Hermes API security model.
+
+If you want a clean prerelease doctor result, do not select Browser yet.
+
+## iMessage / Apple — optional
+
+Selecting iMessage asks optionally for Photon project configuration. The channel doctor requires a compatible Photon runtime when iMessage is selected.
+
+No Apple device, Apple ID, Photon project, or iMessage credential is required for CLI, Telegram, or Discord installations.
+
+## Advanced channels
+
+Selecting Advanced delegates configuration to upstream:
+
+```bash
+hermes gateway setup
+```
+
+This keeps Open Cloud Assistant from duplicating every Hermes messaging integration.
+
+## Change channels after installation
+
+```bash
+./bin/opencloud channels configure
+./bin/opencloud channels status
+```
+
+Because messaging selections change whether the Hermes gateway is required, apply the service plan again:
+
+```bash
+./bin/opencloud services plan
+./bin/opencloud services install
+./bin/opencloud doctor
+```
+
+## Doctor semantics
+
+`./bin/opencloud doctor` intentionally distinguishes:
+
+- `PASS` — selected channel has its required local configuration/runtime;
+- `FAIL` — selected channel is incomplete/broken;
+- `SKIP` — optional channel was not selected.
+
+A `SKIP` is not a failure.

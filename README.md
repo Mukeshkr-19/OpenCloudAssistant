@@ -1,455 +1,190 @@
-# Open Cloud Assistant
+<h1 align="center">☁️ Open Cloud Assistant</h1>
 
-> A free-first, self-hosted, always-on personal AI assistant architecture.
+<p align="center"><strong>A free-first, self-hosted, always-on personal AI assistant stack for Ubuntu.</strong></p>
 
-**Open Cloud Assistant** is a public integration project for building an AI
-assistant that can stay online, remember personal context, split complex work
-across parallel workers, route across changing model providers, and perform
-restricted automated code repair.
+<p align="center">
+  <a href="https://github.com/Mukeshkr-19/OpenCloudAssistant/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Mukeshkr-19/OpenCloudAssistant?include_prereleases&amp;label=release"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Mukeshkr-19/OpenCloudAssistant"></a>
+  <img alt="Ubuntu 24.04" src="https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&amp;logoColor=white">
+  <img alt="ARM64 validated" src="https://img.shields.io/badge/ARM64-release%20validated-success">
+  <img alt="Free-first routing" src="https://img.shields.io/badge/routing-free--first-6f42c1">
+</p>
 
-Created and maintained by **Mukesh Krishna Murthy**.
+<p align="center"><strong>Hermes orchestration · Vellum personal context · dynamic AI routing · parallel workers · restricted self-repair</strong></p>
 
-> **Status: pre-release.** The architecture is proven in a private deployment,
-> but the public installer is still being converted into a clean,
-> reproducible setup.
+> [!IMPORTANT]
+> **v0.1.0 is a prerelease.** The Ubuntu 24.04 ARM64 installation path and CLI workflow have been validated. Telegram and Discord configuration are included but still need public end-to-end acceptance testing before a stable v1.0. Browser/Open WebUI is preview-only in this release. iMessage is optional.
 
----
+## What it is
 
-## What problem does this solve?
+Open Cloud Assistant turns an Ubuntu server into an assistant that can stay online, route model calls across changing free-capacity providers, retrieve personal context through a separate memory layer, split complex work across temporary parallel workers, and recover from selected code defects through a restricted repair workflow.
 
-Most assistants are tied to one model, one app, or one machine.
+The architecture deliberately separates responsibilities:
 
-Open Cloud Assistant is designed around independent layers:
+- **Hermes** is the user-facing orchestrator: conversation, tools, planning, workers, messaging, and final synthesis.
+- **Vellum** is the personal-context layer: user-specific memory is kept outside the public source repository.
+- **Fleet** chooses currently usable provider/model capacity at runtime instead of permanently hard-coding temporary model IDs.
+- **Workers** are temporary child jobs for one complex task, not permanent specialist personalities.
+- **OpenCode repair** can edit a staged copy under restricted permissions; a trusted outer harness validates, backs up, deploys, or rolls back.
 
-- a main conversational orchestrator,
-- temporary parallel workers,
-- persistent personal memory,
-- dynamic provider/model routing,
-- failure handling,
-- optional messaging,
-- restricted code repair,
-- and an always-on Linux host.
-
-The user should be able to ask normally.
-
-The assistant decides internally whether it needs memory, workers, tools,
-verification, research, or code repair.
-
----
-
-## Architecture
-
-```text
-                         USER
-                           |
-                           v
-                   Messaging / CLI
-                           |
-                           v
-                        HERMES
-                  main orchestrator
-                           |
-             +-------------+-------------+
-             |             |             |
-             v             v             v
-          Worker A      Worker B      Worker C
-          research      analysis      verification
-             |             |             |
-             +-------------+-------------+
-                           |
-                           v
-                    Dynamic AI Fleet
-                           |
-                  free-first routing
-                           |
-                           v
-                    Hermes synthesis
-                           |
-                           v
-                         USER
+```mermaid
+flowchart TD
+    U[User] --> C[CLI / Telegram / Discord / optional iMessage]
+    C --> H[Hermes<br/>main orchestrator]
+    H --> V[Vellum<br/>personal context]
+    V --> H
+    H --> W1[Worker A]
+    H --> W2[Worker B]
+    H --> W3[Worker C]
+    H --> F[Dynamic AI Fleet]
+    W1 --> F
+    W2 --> F
+    W3 --> F
+    F --> H
+    H --> U
+    H -. approved repair .-> R[Restricted OpenCode<br/>stage → validate → backup → deploy/rollback]
 ```
 
-Personal context is a separate path:
-
-```text
-Hermes
-  |
-  v
-Vellum
-  |
-  v
-relevant personal context
-  |
-  v
-Hermes
-```
-
-Approved code repair is also separate:
-
-```text
-Hermes
-  |
-  v
-repair_code()
-  |
-  v
-snapshot
-  |
-  v
-restricted OpenCode
-  |
-  +--> PASS --> retain
-  |
-  +--> FAIL --> rollback
-```
-
----
-
-## Core components
-
-### Hermes Agent
-
-Hermes is the primary user-facing assistant and orchestrator.
-
-It is responsible for:
-
-- conversation,
-- planning,
-- tools,
-- child workers,
-- model calls,
-- messaging,
-- and final synthesis.
-
-The user should not need to manually say:
-
-```text
-spawn three agents
-ask Vellum
-use model X
-delegate to worker Y
-```
-
-Those are internal orchestration decisions.
-
-### Vellum Assistant
-
-Vellum is used as the personal-memory and context layer.
-
-The design intentionally keeps personal memory separate from the main
-orchestrator. Hermes asks for user-specific context only when it is useful.
-
-Private memory itself belongs to the user's runtime, not the source repo.
-
-### Dynamic Fleet
-
-The Fleet layer selects providers/models dynamically rather than making one
-temporary model ID permanent architecture.
-
-The design supports:
-
-- provider discovery,
-- candidate health,
-- failure tracking,
-- cooldown/quarantine,
-- role-aware selection,
-- and deterministic fallback.
-
-### Parallel workers
-
-Complex tasks can be divided into multiple independent child jobs and run
-concurrently when that is useful.
-
-Workers are temporary execution units, not permanent personalities.
-
-### OpenCode repair
-
-A restricted OpenCode workflow can be used as an automated coding mechanic.
-
-The outer system controls:
-
-- allowed targets,
-- snapshots,
-- validation,
-- rollback,
-- and privileged operations.
-
-The coding agent should not receive unrestricted Git push or secret access.
-
-### Messaging
-
-Messaging is optional.
-
-The reference architecture can use Hermes messaging integrations, including
-iMessage through Photon where available and configured.
-
-The core project should remain usable without requiring one specific chat
-platform.
-
----
-
-## Design principles
-
-### Always-on
-
-The reference deployment targets a continuously available Linux server.
-
-### Self-hosted
-
-Core orchestration and private runtime state remain under the user's control.
-
-### Free-first
-
-Routing can prefer available free provider/model lanes.
-
-Free availability and quotas are controlled by external providers and can
-change independently of this project.
-
-### Dynamic
-
-Temporary model IDs should not become permanent architecture.
-
-### Private by design
-
-Do not store personal memory, credentials, authentication state,
-conversations, or runtime databases in source control.
-
-### One clean answer
-
-Internal worker status, model failover details, and debugging chatter belong
-in logs, not normal user conversation.
-
----
-
-## Target quick start
-
-The v1.0 goal is:
-
-```bash
-git clone https://github.com/Mukeshkr-19/OpenCloudAssistant.git
-cd OpenCloudAssistant
-./setup.sh
-opencloud doctor
-```
-
-A new user should provide their own:
-
-- Linux/cloud host,
-- provider credentials,
-- optional messaging credentials,
-- and any external account configuration they choose to enable.
-
-The installer should handle the engineering setup.
-
----
-
-## Planned installer flow
-
-```text
-supported Ubuntu host
-        |
-        v
-./setup.sh
-        |
-        +--> dependency checks
-        +--> Hermes install
-        +--> Vellum install
-        +--> provider config
-        +--> Fleet integration
-        +--> context bridge
-        +--> optional messaging
-        +--> self-repair tooling
-        +--> system services
-        |
-        v
-opencloud doctor
-        |
-        v
-healthy assistant
-```
-
-The user should not have to reproduce the private development/debugging
-history that created the reference system.
-
----
-
-## Repository layout
-
-```text
-OpenCloudAssistant/
-├── README.md
-├── LICENSE
-├── SECURITY.md
-├── CONTRIBUTING.md
-├── THIRD_PARTY_NOTICES.md
-├── .env.example
-├── setup.sh
-│
-├── config/
-├── docs/
-├── examples/
-├── install/
-├── integrations/
-│   ├── hermes/
-│   ├── vellum/
-│   └── self-repair/
-├── scripts/
-├── tests/
-└── third_party/
-```
-
----
-
-## Security model
-
-This project treats Git as source control, not as a secret manager.
-
-Never commit:
-
-- API keys,
-- bearer tokens,
-- OAuth credentials,
-- JWTs,
-- SSH private keys,
-- `.env` files,
-- personal memory,
-- private conversations,
-- authentication state,
-- runtime databases,
-- session identifiers,
-- or private production logs.
-
-The repository includes a public-release audit that blocks common
-credential-shaped values and forbidden runtime files.
-
-See `SECURITY.md`.
-
----
-
-## Upstream projects
-
-Open Cloud Assistant is an independent integration project.
-
-Major upstream projects currently include:
-
-- **Hermes Agent** by Nous Research
-- **Vellum Assistant** by Vellum AI
-- **OpenCode** by the OpenCode contributors
-
-Open Cloud Assistant does not claim ownership of those projects.
-
-See `THIRD_PARTY_NOTICES.md`.
-
----
-
-## Public-release standard
-
-The repository is not v1.0 until a clean supported machine can:
-
-1. clone the repository,
-2. run the documented installer,
-3. provide its own credentials,
-4. pass `opencloud doctor`,
-5. start the assistant,
-6. recover or roll back safely when a setup stage fails,
-7. and do all of that without manual production source edits.
-
-Fresh-machine reproducibility is the release standard.
-
----
-
-## Roadmap
-
-The next milestones are:
-
-- real `setup.sh`,
-- `opencloud doctor`,
-- Oracle Cloud guide,
-- generic Ubuntu/VPS guide,
-- provider configuration,
-- Hermes installer,
-- Vellum installer,
-- Fleet installer,
-- deterministic context bridge,
-- worker configuration,
-- optional Photon/iMessage integration,
-- restricted OpenCode repair,
-- backup/restore,
-- upgrade workflow,
-- clean ARM64 installation test,
-- clean x86_64 installation test where supported,
-- final license/secret audit,
-- public GitHub release.
-
-See `docs/ROADMAP.md`.
-
----
-
-## Project identity
-
-**Project:** Open Cloud Assistant
-**Repository:** `OpenCloudAssistant`
-**Maintainer:** Mukesh Krishna Murthy
-
-Open Cloud Assistant is the reusable public project.
-
-Personal installations can use any assistant name they want.
-
----
-
-## License
-
-Original Open Cloud Assistant integration, deployment, and documentation work
-is released under the MIT License.
-
-Third-party projects remain governed by their own licenses and copyright
-notices.
-
----
-
-## No Apple device required
-
-Open Cloud Assistant is **not an Apple-only assistant**.
-
-The assistant core runs on Linux. Users choose how they want to talk to it.
-
-Primary public access paths are:
-
-- **Telegram** — recommended cross-platform default.
-- **Discord** — DMs or configured server channels.
-- **Browser / Open WebUI** — platform-independent web access.
-- **CLI** — direct use, setup, diagnostics, and recovery.
-- **iMessage / Apple** — optional integration for users who want it.
-
-A non-Apple user must be able to install Open Cloud Assistant, pass
-`opencloud doctor`, and use the assistant without configuring any Apple
-device or account.
-
-See `docs/CHANNELS.md` for the complete messaging contract.
-
-## v0.1.0 prerelease scope
-
-This is the first public prerelease of Open Cloud Assistant.
-
-- The documented Ubuntu/ARM64 installation path and CLI workflow have been validated.
-- Browser/Open WebUI integration is preview functionality in this prerelease.
-- Telegram and Discord require the user's own credentials and configuration.
-- iMessage is optional and is not required for a normal installation.
-
-### Ubuntu prerequisites
-
-On a fresh Ubuntu installation, install the base operating-system prerequisites first:
+## Release status
+
+| Area | v0.1.0 status |
+|---|---|
+| Ubuntu 24.04 ARM64 install | ✅ Release-validated |
+| Second install / idempotency | ✅ Validated |
+| CLI installation and diagnostics | ✅ Validated |
+| Dynamic NVIDIA discovery | ✅ Implemented |
+| OpenRouter `openrouter/free` fallback | ✅ Implemented |
+| Vellum context bridge | ✅ Implemented |
+| Parallel workers | ✅ Implemented, up to 3 concurrent children |
+| Restricted self-repair | ✅ Smoke-tested |
+| Telegram setup | 🧪 Configuration implemented; public E2E pending |
+| Discord setup | 🧪 Configuration implemented; public E2E pending |
+| Browser / Open WebUI | ⚠️ Preview; E2E runtime not release-validated |
+| iMessage / Apple | ➕ Optional; never required |
+| Ubuntu x86_64 | 🧪 Accepted by preflight; clean E2E proof still pending |
+
+## Quick start on an Ubuntu server
+
+Install the operating-system prerequisites:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl git xz-utils unzip python3 python3-venv python3-pip sudo dbus-user-session procps
 ```
 
-Then install Open Cloud Assistant:
+Clone and validate before making changes:
 
 ```bash
 git clone https://github.com/Mukeshkr-19/OpenCloudAssistant.git
 cd OpenCloudAssistant
-./setup.sh --install
-opencloud doctor
+./setup.sh --dry-run
 ```
+
+For the simplest first installation, start with CLI only:
+
+```bash
+OPEN_CLOUD_CHANNELS=cli ./setup.sh --install
+```
+
+Configure at least one usable AI provider. NVIDIA + OpenRouter is the recommended free-first combination:
+
+```bash
+./bin/opencloud providers configure
+./bin/opencloud fleet refresh
+./bin/opencloud fleet proof
+./bin/opencloud doctor
+```
+
+Then start a CLI conversation:
+
+```bash
+export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
+hermes chat
+```
+
+> [!NOTE]
+> In v0.1.0, the project command wrapper is guaranteed at `./bin/opencloud` while you are inside the repository. If `opencloud` is already on your `PATH`, you can omit `./bin/`.
+
+## Add messaging later
+
+You do not need Telegram, Discord, Apple hardware, or a browser UI to complete the core install. When you are ready:
+
+```bash
+./bin/opencloud channels configure
+./bin/opencloud channels status
+./bin/opencloud services install
+./bin/opencloud doctor
+```
+
+Telegram is the recommended cross-platform messaging path. See [Channels](docs/CHANNELS.md) for BotFather setup, the explicit user allowlist, Discord setup, Browser preview status, and optional iMessage notes.
+
+## Where configuration lives
+
+Runtime secrets are intentionally outside Git:
+
+| Purpose | Runtime location |
+|---|---|
+| Provider + channel secrets | `~/.opencloud/config.env` |
+| Channel selection | `~/.opencloud/channels.json` |
+| Fleet runtime | `~/.local/share/hermes-fleet/` |
+| Hermes | `~/.hermes/` |
+| Vellum | user runtime managed by Vellum |
+
+Both Open Cloud Assistant config files are created with restrictive permissions. **Do not put real keys in `.env.example` or commit a runtime config file.**
+
+## Documentation
+
+Start here if this is your first cloud server:
+
+| Guide | Use it for |
+|---|---|
+| **[Complete Setup Guide](docs/COMPLETE_SETUP_GUIDE.md)** | Zero → cloud VM → SSH → install → providers → channels → first conversation |
+| **[Oracle Cloud Setup](docs/ORACLE_CLOUD_SETUP.md)** | Create an OCI Ubuntu ARM64 VM safely |
+| **[Ubuntu / VPS Setup](docs/UBUNTU_VPS_SETUP.md)** | Use another Ubuntu 24.04 host |
+| **[Providers](docs/PROVIDERS.md)** | NVIDIA, OpenRouter, optional Zen, Fleet refresh and verification |
+| **[Channels](docs/CHANNELS.md)** | CLI, Telegram, Discord, Browser preview, optional iMessage |
+| **[Architecture](docs/ARCHITECTURE.md)** | Hermes, Vellum, workers, Fleet, self-repair and privacy boundaries |
+| **[Operations](docs/OPERATIONS.md)** | Health, services, logs, restarts, updates and maintenance |
+| **[Troubleshooting](docs/TROUBLESHOOTING.md)** | Symptom → checks → fix |
+| **[Documentation Index](docs/README.md)** | All project documentation |
+
+Existing engineering references under `docs/` remain useful for implementation details such as Fleet internals, materialization, services, and self-repair.
+
+## Provider policy
+
+Permanent source policy does **not** pin changing NVIDIA or OpenCode Zen model IDs. Runtime discovery verifies currently available candidates. The stable explicit OpenRouter route is:
+
+```text
+openrouter/free
+```
+
+Gemini is intentionally blocked by the public routing integration until it is independently configured and verified. Free provider capacity, quotas, latency, and model availability are controlled by external providers and can change without a repository update.
+
+## Security model
+
+Open Cloud Assistant connects agents to real tools and personal context. Treat it like production infrastructure.
+
+- Keep `~/.opencloud/config.env` private and mode `600`.
+- Never commit API keys, bot tokens, private memory, conversations, auth state, runtime databases, or SSH keys.
+- Do not expose the Hermes API port directly to the public internet. Browser preview configuration is localhost-only by design.
+- The restricted coding agent does not receive Git push, broad shell, secret, or arbitrary filesystem access.
+- Internal fallback and routine gateway lifecycle chatter are kept out of normal user conversations; the underlying recovery logic and logs remain active.
+
+Read [SECURITY.md](SECURITY.md) before exposing any integration to the internet.
+
+## Validation for contributors
+
+```bash
+./scripts/public-audit.sh
+./tests/smoke/run.sh
+```
+
+The smoke suite covers public privacy checks, brain integration references, self-repair, Fleet runtime/discovery, Hermes↔Vellum integration, channels, services, live Hermes integration, and the install branch.
+
+## Upstream projects
+
+Open Cloud Assistant is an independent integration project built around upstream open-source components including **Hermes Agent**, **Vellum Assistant**, and **OpenCode**. Their licenses and notices remain their own. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and `licenses/`.
+
+## License
+
+Original Open Cloud Assistant integration, deployment, and documentation work is released under the [MIT License](LICENSE). Third-party components remain governed by their own licenses.

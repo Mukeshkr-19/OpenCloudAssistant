@@ -1,103 +1,113 @@
 # Open Cloud Assistant Roadmap
 
+This roadmap reflects the actual v0.1.0 prerelease state rather than the original bootstrap checklist.
+
 ## Phase 1 — Public repository foundation
 
-- [x] Separate public project from the private production repository
-- [x] Create public project identity
-- [x] Add `.gitignore`
-- [x] Add `.env.example`
-- [x] Add project MIT license
-- [x] Add third-party notice framework
-- [x] Add public credential/privacy audit
-- [x] Add smoke-test harness
-- [x] Add security policy
-- [x] Add contributing guide
-- [x] Create initial local Git checkpoint
+- [x] Separate public source from private production state
+- [x] Public project identity and MIT license
+- [x] `.gitignore` and configuration-key reference
+- [x] Third-party notices and exact upstream license copies
+- [x] Public credential/privacy audit
+- [x] Smoke-test harness
+- [x] Security policy and contributing guide
+- [x] Public GitHub repository, `main`, and v0.1.0 prerelease
 
 ## Phase 2 — Installation and diagnostics
 
-- [ ] Implement `setup.sh`
-- [ ] Implement `opencloud doctor`
-- [ ] Ubuntu dependency bootstrap
-- [ ] ARM64 checks
-- [ ] x86_64 checks where supported
-- [ ] idempotent installation
-- [ ] safe rollback
-- [ ] uninstall command
+- [x] Implement `setup.sh --dry-run`
+- [x] Implement `setup.sh --install`
+- [x] Implement doctor with PASS / FAIL / SKIP semantics
+- [x] ARM64 preflight checks
+- [x] x86_64 preflight acceptance
+- [x] Idempotent second installation proof on the ARM64 release path
+- [x] Validated backup/rollback boundaries for live Hermes integration and self-repair
+- [ ] Automatically bootstrap all Ubuntu OS prerequisites
+- [ ] Supported uninstall command
 
 ## Phase 3 — Core integrations
 
-- [ ] Hermes installer
-- [ ] Vellum installer
-- [ ] Hermes ↔ Vellum deterministic context bridge
-- [ ] dynamic Hermes Fleet
-- [ ] dynamic Vellum Fleet
-- [ ] parallel-worker configuration
-- [ ] free-first provider configuration
-- [ ] restricted OpenCode repair
-- [ ] optional messaging integration
+- [x] Hermes installer
+- [x] Vellum installer
+- [x] Hermes ↔ Vellum deterministic context bridge
+- [x] Dynamic Hermes Fleet runtime/registry
+- [x] Parallel-worker configuration
+- [x] Free-first provider policy
+- [x] Restricted OpenCode repair workflow
+- [x] Optional cross-platform channel wizard
+- [x] Always-on systemd user-service layer
+- [ ] Public reusable Vellum Fleet configuration equivalent to the dynamic Hermes Fleet layer
 
 ## Phase 4 — Documentation
 
-- [ ] Architecture guide
-- [ ] Oracle Cloud guide
-- [ ] Generic Ubuntu/VPS guide
-- [ ] Tailscale/networking guide
-- [ ] Provider configuration guide
-- [ ] Hermes guide
-- [ ] Vellum guide
-- [ ] Fleet guide
-- [ ] Parallel-worker guide
-- [ ] Photon/iMessage guide
-- [ ] Self-repair guide
-- [ ] Security guide
-- [ ] Backup/restore guide
-- [ ] Upgrade guide
-- [ ] Troubleshooting guide
+- [x] Documentation index
+- [x] Complete zero-to-running setup guide
+- [x] Architecture guide
+- [x] Oracle Cloud guide
+- [x] Generic Ubuntu/VPS guide
+- [x] Provider configuration guide
+- [x] Channel guide
+- [x] Hermes/Vellum integration guide
+- [x] Fleet guides
+- [x] Parallel-worker architecture documentation
+- [x] Self-repair guide
+- [x] Security policy
+- [x] Operations/update guide
+- [x] Troubleshooting guide
+- [ ] Dedicated Tailscale/private-networking guide
+- [ ] Dedicated Photon/iMessage setup guide
+- [ ] Supported backup/restore guide backed by a project command
 
-## Phase 5 — Reproducibility
+## Phase 5 — Reproducibility and acceptance
 
-- [ ] Fresh Ubuntu ARM64 installation
-- [ ] Fresh Ubuntu x86_64 installation where supported
-- [ ] Fresh configuration using user-supplied provider credentials
-- [ ] `opencloud doctor` all-pass proof
-- [ ] messaging smoke test
-- [ ] personal-context smoke test
-- [ ] parallel-worker smoke test
-- [ ] controlled repair smoke test
-- [ ] rollback smoke test
+- [x] Fresh Ubuntu 24.04 ARM64 installation with documented base prerequisites
+- [x] Complete second-run ARM64 install proof
+- [x] Core doctor PASS proof on clean ARM64 CLI path
+- [x] Public privacy/credential audit proof
+- [x] Hermes↔Vellum integration smoke test
+- [x] Parallel-worker configuration smoke test
+- [x] Controlled self-repair smoke test
+- [x] Rollback behavior smoke test
+- [ ] Fresh Ubuntu x86_64 end-to-end proof
+- [ ] Fresh-machine proof with user-supplied live provider credentials and a real model conversation
+- [ ] Telegram real end-to-end test
+- [ ] Discord real end-to-end test
+- [ ] Browser/Open WebUI real end-to-end test
 
-## Phase 6 — Public release
+## Phase 6 — Stable release
 
-- [ ] Final third-party license audit
-- [ ] Final credential/privacy scan
-- [ ] Final documentation review
-- [ ] Create GitHub repository `OpenCloudAssistant`
-- [ ] Push `main`
-- [ ] Publish first pre-release
-- [ ] Tag `v1.0.0` only after fresh-machine reproducibility passes
+- [x] Third-party license audit for v0.1.0
+- [x] Credential/privacy/history scan for v0.1.0
+- [x] Create and publish public GitHub repository
+- [x] Publish first prerelease
+- [x] Tag `v0.1.0`
+- [ ] Close all stable channel acceptance gates
+- [ ] Complete x86_64 support claim or document ARM64-only stable support
+- [ ] Add prerequisite bootstrap or make the manual prerequisite contract a permanent supported design
+- [ ] Publish stable `v1.0.0`
 
 ## v1.0 release standard
 
-Open Cloud Assistant reaches v1.0 only when a new user can:
+Open Cloud Assistant reaches stable v1.0 only when a new user can:
 
-1. start from a clean supported Linux host,
-2. clone the repository,
-3. run the documented installer,
-4. provide their own credentials,
-5. run `opencloud doctor`,
-6. start the assistant,
-7. use memory and worker orchestration,
-8. recover safely from a failed setup or repair,
-9. do all of this without manually editing installed production source.
+1. start from a clean supported Ubuntu host;
+2. follow the public guide without private deployment knowledge;
+3. install dependencies/core integrations reproducibly;
+4. provide their own provider and optional channel credentials;
+5. pass `opencloud doctor`/`./bin/opencloud doctor` for the selected supported configuration;
+6. hold a real assistant conversation;
+7. use personal context and parallel orchestration without exposing internal machinery;
+8. keep the selected messaging path running across logout/reboot;
+9. recover safely from an install/repair failure;
+10. do all of this without manually editing installed production source.
 
 ## Cross-platform conversation acceptance
 
-- [ ] Core installation succeeds without Apple hardware
-- [ ] Telegram guided setup and end-to-end test
-- [ ] Discord guided setup and end-to-end test
-- [ ] Browser/Open WebUI guided setup and end-to-end test
-- [ ] CLI conversation test
-- [ ] iMessage remains optional
-- [ ] Apple-specific questions appear only when iMessage is selected
-- [ ] Doctor reports unconfigured optional channels as SKIP, not FAIL
+- [x] Core installation succeeds without Apple hardware
+- [ ] Telegram guided setup + real message/response proof
+- [ ] Discord guided setup + real message/response proof
+- [ ] Browser/Open WebUI guided setup + real browser conversation proof
+- [ ] Fresh public CLI conversation with user-supplied live provider credentials
+- [x] iMessage remains optional
+- [x] Apple-specific questions appear only when iMessage is selected
+- [x] Doctor reports unconfigured optional channels as SKIP, not FAIL

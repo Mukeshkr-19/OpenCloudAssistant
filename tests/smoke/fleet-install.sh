@@ -16,7 +16,8 @@ bash -n scripts/doctor-fleet.sh
 
 install/70-fleet-runtime.sh --check
 
-bin/opencloud help | grep -qF "opencloud fleet status"
+HELP_OUTPUT="$(bin/opencloud help)"
+[[ "$HELP_OUTPUT" == *"opencloud fleet status"* ]]
 bin/opencloud fleet paths >/dev/null
 
 echo "FLEET_INSTALL_SMOKE: PASS"
