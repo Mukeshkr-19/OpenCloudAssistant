@@ -22,4 +22,5 @@ test -x scripts/public-audit.sh
 
 "$ROOT/tests/smoke/materialization.sh"
 
+"$ROOT/tests/smoke/fleet-runtime.sh"
 echo "SMOKE_TESTS: PASS"
