@@ -102,6 +102,14 @@ else
     fail "OpenCloud source" "missing"
 fi
 
+if [ -x "$ROOT/scripts/doctor-fleet.sh" ]; then
+    if ! "$ROOT/scripts/doctor-fleet.sh"; then
+        fail "Fleet runtime" "Fleet checks failed"
+    fi
+else
+    skip "Fleet runtime" "doctor module missing"
+fi
+
 if has_value TELEGRAM_BOT_TOKEN; then
     pass "Telegram" "configured"
 else

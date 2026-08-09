@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Open Cloud Assistant portable user PATH
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
 
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
 COMMAND="${1:-help}"
 
 case "$COMMAND" in
     doctor)
         shift || true
         exec "$ROOT/scripts/doctor.sh" "$@"
+        ;;
+    fleet)
+        shift || true
+        exec "$ROOT/scripts/fleet-status.sh" "$@"
         ;;
     version)
         if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
@@ -26,6 +27,9 @@ case "$COMMAND" in
         echo
         echo "Usage:"
         echo "  opencloud doctor"
+        echo "  opencloud fleet status"
+        echo "  opencloud fleet paths"
+        echo "  opencloud fleet select [main|worker|reviewer]"
         echo "  opencloud version"
         echo "  opencloud help"
         ;;

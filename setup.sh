@@ -20,6 +20,7 @@ case "$MODE" in
         "$ROOT/install/40-context-materialize.sh" --check
         "$ROOT/install/50-workers.sh" --check
         "$ROOT/install/60-self-repair.sh" --dry-run
+        "$ROOT/install/70-fleet-runtime.sh" --check
         echo
         echo "Planned later setup stages:"
         echo "  provider configuration"
