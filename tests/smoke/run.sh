@@ -28,4 +28,6 @@ test -x scripts/public-audit.sh
 "$ROOT/tests/smoke/hermes-vellum.sh"
 "$ROOT/tests/smoke/channels.sh"
 "$ROOT/tests/smoke/services.sh"
+"$ROOT/tests/smoke/hermes-live.sh"
+"$ROOT/tests/smoke/setup-install.sh"
 echo "SMOKE_TESTS: PASS"
