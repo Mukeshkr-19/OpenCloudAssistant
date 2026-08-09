@@ -116,27 +116,12 @@ if [ -x "$ROOT/scripts/doctor-brain.sh" ]; then
     fi
 fi
 
-if has_value TELEGRAM_BOT_TOKEN; then
-    pass "Telegram" "configured"
-else
-    skip "Telegram"
+if [ -x "$ROOT/scripts/channels.py" ]; then
+    if ! python3 "$ROOT/scripts/channels.py" doctor; then
+        FAILURES=$((FAILURES + 1))
+    fi
 fi
 
-if has_value DISCORD_BOT_TOKEN; then
-    pass "Discord" "configured"
-else
-    skip "Discord"
-fi
-
-if has_value API_SERVER_KEY; then
-    pass "Browser API" "configured"
-else
-    skip "Browser API"
-fi
-
-skip "iMessage" "optional Apple integration"
-
-echo
 if [ "$FAILURES" -eq 0 ]; then
     echo "DOCTOR_STATUS: PASS"
     exit 0
