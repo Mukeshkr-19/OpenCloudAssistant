@@ -22,10 +22,10 @@ case "$MODE" in
         "$ROOT/install/60-self-repair.sh" --dry-run
         "$ROOT/install/70-fleet-runtime.sh" --check
         "$ROOT/install/75-fleet-registry.sh" --check
+        "$ROOT/install/80-vellum-bridge.sh" --check
+        "$ROOT/install/85-hermes-orchestration.sh" --check
         echo
         echo "Planned later setup stages:"
-        echo "  Hermes/Vellum context bridge"
-        echo "  parallel workers"
         echo "  messaging selection"
         echo "  restricted OpenCode repair"
         echo "  systemd services"

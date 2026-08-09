@@ -110,6 +110,12 @@ else
     skip "Fleet runtime" "doctor module missing"
 fi
 
+if [ -x "$ROOT/scripts/doctor-brain.sh" ]; then
+    if ! "$ROOT/scripts/doctor-brain.sh"; then
+        FAILURES=$((FAILURES + 1))
+    fi
+fi
+
 if has_value TELEGRAM_BOT_TOKEN; then
     pass "Telegram" "configured"
 else

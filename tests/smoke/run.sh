@@ -25,4 +25,5 @@ test -x scripts/public-audit.sh
 "$ROOT/tests/smoke/fleet-runtime.sh"
 "$ROOT/tests/smoke/fleet-install.sh"
 "$ROOT/tests/smoke/fleet-registry.sh"
+"$ROOT/tests/smoke/hermes-vellum.sh"
 echo "SMOKE_TESTS: PASS"
