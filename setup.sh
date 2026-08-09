@@ -25,10 +25,9 @@ case "$MODE" in
         "$ROOT/install/80-vellum-bridge.sh" --check
         "$ROOT/install/85-hermes-orchestration.sh" --check
         "$ROOT/install/90-channels.sh" --check
+        "$ROOT/install/95-services.sh" --check
         echo
         echo "Planned later setup stages:"
-        echo "  restricted OpenCode repair"
-        echo "  systemd services"
         echo "  final opencloud doctor"
         echo
         echo "SETUP_DRY_RUN: PASS"

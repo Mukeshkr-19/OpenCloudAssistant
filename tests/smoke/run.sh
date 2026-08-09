@@ -27,4 +27,5 @@ test -x scripts/public-audit.sh
 "$ROOT/tests/smoke/fleet-registry.sh"
 "$ROOT/tests/smoke/hermes-vellum.sh"
 "$ROOT/tests/smoke/channels.sh"
+"$ROOT/tests/smoke/services.sh"
 echo "SMOKE_TESTS: PASS"

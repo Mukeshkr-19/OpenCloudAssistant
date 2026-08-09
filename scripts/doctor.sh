@@ -122,6 +122,12 @@ if [ -x "$ROOT/scripts/channels.py" ]; then
     fi
 fi
 
+if [ -x "$ROOT/scripts/doctor-services.sh" ]; then
+    if ! "$ROOT/scripts/doctor-services.sh"; then
+        FAILURES=$((FAILURES + 1))
+    fi
+fi
+
 if [ "$FAILURES" -eq 0 ]; then
     echo "DOCTOR_STATUS: PASS"
     exit 0
