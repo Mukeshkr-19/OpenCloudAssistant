@@ -30,18 +30,34 @@ configure_channels() {
 }
 
 run_checks() {
+    local hermes_root="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
+    local hermes_source="${OPEN_CLOUD_HERMES_SOURCE:-$hermes_root}"
+
     "$ROOT/install/00-preflight.sh"
     "$ROOT/install/10-hermes.sh" --dry-run
     "$ROOT/install/20-vellum.sh" --dry-run
-    "$ROOT/install/30-brain-materialize.sh" --check
-    "$ROOT/install/35-hermes-live.sh" --check
+
+    if [ -d "$hermes_root/.git" ]; then
+        OPEN_CLOUD_HERMES_ROOT="$hermes_root" "$ROOT/install/30-brain-materialize.sh" --check
+        OPEN_CLOUD_HERMES_ROOT="$hermes_root" "$ROOT/install/35-hermes-live.sh" --check
+    else
+        echo "HERMES_COMPATIBILITY_CHECK: DEFERRED_UNTIL_HERMES_INSTALL"
+        echo "HERMES_LIVE_INTEGRATION_CHECK: DEFERRED_UNTIL_HERMES_INSTALL"
+    fi
+
     "$ROOT/install/40-context-materialize.sh" --check
     "$ROOT/install/50-workers.sh" --check
     "$ROOT/install/60-self-repair.sh" --dry-run
     "$ROOT/install/70-fleet-runtime.sh" --check
     "$ROOT/install/75-fleet-registry.sh" --check
     "$ROOT/install/80-vellum-bridge.sh" --check
-    "$ROOT/install/85-hermes-orchestration.sh" --check
+
+    if [ -f "$hermes_source/tools/delegate_tool.py" ]; then
+        OPEN_CLOUD_HERMES_SOURCE="$hermes_source" "$ROOT/install/85-hermes-orchestration.sh" --check
+    else
+        echo "HERMES_ORCHESTRATION_SOURCE_CHECK: DEFERRED_UNTIL_HERMES_INSTALL"
+    fi
+
     "$ROOT/install/90-channels.sh" --check
     "$ROOT/install/95-services.sh" --check
 }

@@ -10,7 +10,14 @@ bash -n install/30-brain-materialize.sh
 bash -n install/40-context-materialize.sh
 bash -n install/50-workers.sh
 
-install/30-brain-materialize.sh --check
+HERMES_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
+
+if [ -d "$HERMES_ROOT/.git" ]; then
+    OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT" install/30-brain-materialize.sh --check
+else
+    echo "HERMES_BRAIN_MATERIALIZATION: SKIP (Hermes Git source unavailable)"
+fi
+
 install/40-context-materialize.sh --check
 install/50-workers.sh --check
 

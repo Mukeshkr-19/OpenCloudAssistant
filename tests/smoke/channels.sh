@@ -12,6 +12,14 @@ install/90-channels.sh --check
 
 TMP="$(mktemp -d)"
 
+BIN="$TMP/bin"
+mkdir -p "$BIN"
+
+printf "%s\n"     "#!/usr/bin/env bash"     "exit 0"     > "$BIN/hermes"
+
+chmod 755 "$BIN/hermes"
+export PATH="$BIN:$PATH"
+
 cleanup() {
     rm -rf "$TMP"
 }

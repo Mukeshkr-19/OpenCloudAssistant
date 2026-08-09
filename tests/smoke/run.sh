@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+HERMES_SOURCE="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
+
 echo "Open Cloud Assistant smoke tests"
 
 bash -n scripts/public-audit.sh
@@ -28,6 +30,10 @@ test -x scripts/public-audit.sh
 "$ROOT/tests/smoke/hermes-vellum.sh"
 "$ROOT/tests/smoke/channels.sh"
 "$ROOT/tests/smoke/services.sh"
-"$ROOT/tests/smoke/hermes-live.sh"
+if [ -d "$HERMES_SOURCE/.git" ]; then
+    "$ROOT/tests/smoke/hermes-live.sh"
+else
+    echo "HERMES_LIVE_INSTALL_SMOKE: SKIP (Hermes Git source unavailable)"
+fi
 "$ROOT/tests/smoke/setup-install.sh"
 echo "SMOKE_TESTS: PASS"

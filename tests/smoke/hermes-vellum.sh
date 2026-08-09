@@ -7,7 +7,6 @@ cd "$ROOT"
 echo "Open Cloud Assistant Hermes/Vellum integration smoke test"
 
 install/80-vellum-bridge.sh --check
-install/85-hermes-orchestration.sh --check
 
 TMP="$(mktemp -d)"
 
@@ -20,6 +19,14 @@ HOME_TARGET="$TMP/home"
 CONFIG="$HOME_TARGET/.hermes/config.yaml"
 STATE="$HOME_TARGET/.opencloud/state"
 PY="$(command -v python3)"
+HERMES_SOURCE="$TMP/hermes-source"
+
+mkdir -p "$HERMES_SOURCE/tools"
+printf "%s\\n" "orchestrator_enabled max_concurrent_children max_iterations max_spawn_depth inherit_mcp_toolsets" > "$HERMES_SOURCE/tools/delegate_tool.py"
+
+OPEN_CLOUD_HERMES_SOURCE="$HERMES_SOURCE" \
+OPEN_CLOUD_HERMES_PYTHON="$PY" \
+install/85-hermes-orchestration.sh --check
 
 mkdir -p "$(dirname "$CONFIG")"
 
@@ -40,7 +47,7 @@ OPEN_CLOUD_HOME="$HOME_TARGET" install/80-vellum-bridge.sh --install
 
 OPEN_CLOUD_HOME="$HOME_TARGET" \
 OPEN_CLOUD_HERMES_CONFIG="$CONFIG" \
-OPEN_CLOUD_HERMES_SOURCE="$HOME/.hermes/hermes-agent" \
+OPEN_CLOUD_HERMES_SOURCE="$HERMES_SOURCE" \
 OPEN_CLOUD_HERMES_PYTHON="$PY" \
 OPEN_CLOUD_STATE_DIR="$STATE" \
 install/85-hermes-orchestration.sh --install

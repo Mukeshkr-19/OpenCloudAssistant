@@ -4,9 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+HERMES_SOURCE="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
+
 echo "Open Cloud Assistant Hermes live installer smoke test"
 
-install/35-hermes-live.sh --check
+OPEN_CLOUD_HERMES_ROOT="$HERMES_SOURCE" install/35-hermes-live.sh --check
 
 TMP="$(mktemp -d)"
 
@@ -18,7 +20,7 @@ trap cleanup EXIT
 
 mkdir -p "$TMP/hermes"
 
-git -C "$HOME/.hermes/hermes-agent" archive HEAD | tar -x -C "$TMP/hermes"
+git -C "$HERMES_SOURCE" archive HEAD | tar -x -C "$TMP/hermes"
 
 git -C "$TMP/hermes" init -q
 git -C "$TMP/hermes" config maintenance.auto false

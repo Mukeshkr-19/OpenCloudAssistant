@@ -86,7 +86,12 @@ jobs:
           . /etc/os-release
           echo "$PRETTY_NAME"
 
-      - name: Full deterministic smoke suite
+      - name: Smoke test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-yaml
+
+      - name: Repository smoke suite
         run: ./tests/smoke/run.sh
 
   installer:
@@ -113,5 +118,37 @@ jobs:
           . /etc/os-release
           echo "$PRETTY_NAME"
 
-      - name: Installer dry-run
-        run: ./setup.sh --dry-run
+      - name: Installer dry-run from clean home
+        run: |
+          set -euo pipefail
+          test_home="$(mktemp -d)"
+          HOME="$test_home" ./setup.sh --dry-run
+
+  compatibility:
+    name: Hermes compatibility / captured baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Fetch captured Hermes baseline
+        run: |
+          set -euo pipefail
+          hermes_commit="$(sed -n "s/^Hermes Git HEAD: //p" docs/COMPATIBILITY.md)"
+          test -n "$hermes_commit"
+          hermes_root="$RUNNER_TEMP/hermes-agent"
+          git init -q "$hermes_root"
+          git -C "$hermes_root" remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C "$hermes_root" fetch --depth=1 origin "$hermes_commit"
+          git -C "$hermes_root" checkout -q --detach FETCH_HEAD
+          echo "HERMES_ROOT=$hermes_root" >> "$GITHUB_ENV"
+
+      - name: Materialization compatibility
+        run: OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT" ./tests/smoke/materialization.sh
+
+      - name: Hermes live integration compatibility
+        run: OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT" ./tests/smoke/hermes-live.sh

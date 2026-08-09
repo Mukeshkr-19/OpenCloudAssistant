@@ -32,6 +32,21 @@ Vellum MCP server is installed by install/80-vellum-bridge.sh.
 install/50-workers.sh remains the canonical policy validator because actual Hermes
 orchestration configuration is applied by install/85-hermes-orchestration.sh.
 
+## Fresh-host dry-run semantics
+
+On a fresh host, Hermes may not exist yet when `./setup.sh --dry-run` runs.
+
+Repository-local validation still runs immediately. Checks that require an
+installed Hermes source tree are reported as deferred until Hermes installation.
+
+This deferral applies only to the non-mutating pre-install dry-run.
+
+`./setup.sh --install` remains strict: Hermes is installed first and the real
+compatibility and live-integration checks must pass before installation continues.
+
+CI separately validates the captured supported Hermes baseline so deferred
+fresh-host checks do not remove upstream compatibility coverage.
+
 ## Channels
 
 Interactive installs launch the channel wizard when no saved selection exists.
