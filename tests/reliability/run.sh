@@ -11,6 +11,7 @@ test -f config/fleet/hermes-fleet-policy.json
 test -f config/hermes/orchestration.json
 test -x tests/reliability/fleet-failover.py
 test -x tests/reliability/hermes-concurrency.py
+test -x tests/reliability/self-repair-rollback.sh
 
 python3 -c "import yaml"
 
@@ -26,5 +27,7 @@ else
 
     echo "HERMES_CONCURRENCY_RELIABILITY: SKIP (Hermes source unavailable)"
 fi
+
+./tests/reliability/self-repair-rollback.sh
 
 echo "RELIABILITY_TESTS: PASS"
