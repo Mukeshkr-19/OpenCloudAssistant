@@ -62,3 +62,14 @@ retrieval.
 
 Normal user-facing responses must not expose MCP metadata, task IDs, raw JSON,
 model routing, stack traces, or internal retrieval diagnostics.
+
+## Gateway lifecycle notifications
+
+Routine Hermes gateway shutdown and restart messages are internal lifecycle
+events and are suppressed from normal user conversations by default.
+
+The underlying shutdown interrupt, recovery state, service logs, and messaging
+adapter reconnect behavior remain unchanged.
+
+Operators can opt back into the upstream notices with
+`HERMES_GATEWAY_LIFECYCLE_NOTICES=1`.

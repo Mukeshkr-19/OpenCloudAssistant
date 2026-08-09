@@ -74,3 +74,6 @@ grep -qF "def start_vellum_task" "$HOME_TARGET/.config/hermes-vellum/mcp/server.
 grep -B1 -F "def start_vellum_task" "$HOME_TARGET/.config/hermes-vellum/mcp/server.py" | grep -qF "@mcp.tool()"
 
 echo "HERMES_VELLUM_SMOKE: PASS"
+
+test -f "$ROOT/integrations/hermes/silent_gateway_lifecycle.py"
+python3 -m py_compile "$ROOT/integrations/hermes/silent_gateway_lifecycle.py"

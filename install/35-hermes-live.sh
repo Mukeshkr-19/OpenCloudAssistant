@@ -198,3 +198,13 @@ case "$MODE" in
         exit 2
         ;;
 esac
+
+# OPEN_CLOUD_SILENT_GATEWAY_LIFECYCLE_V1
+GATEWAY_RUN="$TARGET_HOME/.hermes/hermes-agent/gateway/run.py"
+GATEWAY_PATCH="$ROOT/integrations/hermes/silent_gateway_lifecycle.py"
+
+if [ -f "$GATEWAY_RUN" ] && [ -f "$GATEWAY_PATCH" ]; then
+    python3 "$GATEWAY_PATCH" "$GATEWAY_RUN"
+    python3 -m py_compile "$GATEWAY_RUN"
+    grep -qF "HERMES_SILENT_GATEWAY_LIFECYCLE_NOTICE_V1" "$GATEWAY_RUN"
+fi
