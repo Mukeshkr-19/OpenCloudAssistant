@@ -12,6 +12,7 @@ test -f config/hermes/orchestration.json
 test -x tests/reliability/fleet-failover.py
 test -x tests/reliability/hermes-concurrency.py
 test -x tests/reliability/self-repair-rollback.sh
+test -x tests/reliability/service-persistence.sh
 
 python3 -c "import yaml"
 
@@ -29,5 +30,7 @@ else
 fi
 
 ./tests/reliability/self-repair-rollback.sh
+
+./tests/reliability/service-persistence.sh
 
 echo "RELIABILITY_TESTS: PASS"
