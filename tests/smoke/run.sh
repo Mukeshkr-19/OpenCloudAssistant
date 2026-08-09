@@ -15,4 +15,7 @@ test -x scripts/public-audit.sh
 
 ./scripts/public-audit.sh
 
+
+"$ROOT/tests/smoke/public-brain.sh"
+
 echo "SMOKE_TESTS: PASS"

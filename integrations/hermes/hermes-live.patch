@@ -1,0 +1,389 @@
+diff --git a/agent/agent_init.py b/agent/agent_init.py
+index 649d533..f6696e9 100644
+--- a/agent/agent_init.py
++++ b/agent/agent_init.py
+@@ -581,6 +581,138 @@ def init_agent(
+     """
+     _install_safe_stdio()
+
++    # HERMES_FLEET_MAIN_ATTACH_BEGIN
++    _hermes_fleet_bootstrap = None
++    _hermes_fleet_session_key = gateway_session_key
++
++    try:
++        from agent.hermes_fleet_bridge import (
++            resolve_role as _fleet_resolve,
++            should_manage_main as _fleet_should_manage_main,
++        )
++
++        if _fleet_should_manage_main(
++            model=model,
++            provider=provider or requested_provider,
++            gateway_session_key=_hermes_fleet_session_key,
++        ):
++            _hermes_fleet_bootstrap = _fleet_resolve(
++                "main",
++                session_key=_hermes_fleet_session_key,
++            )
++
++            _fleet_candidate = (
++                _hermes_fleet_bootstrap[
++                    "candidate"
++                ]
++            )
++
++            _fleet_runtime = (
++                _hermes_fleet_bootstrap[
++                    "runtime"
++                ]
++            )
++
++            model = _fleet_candidate[
++                "model"
++            ]
++
++            provider = (
++                _fleet_runtime.get(
++                    "provider"
++                )
++                or _fleet_candidate[
++                    "provider"
++                ]
++            )
++
++            requested_provider = (
++                _fleet_runtime.get(
++                    "requested_provider"
++                )
++                or _fleet_candidate[
++                    "provider"
++                ]
++            )
++
++            base_url = (
++                _fleet_runtime.get(
++                    "base_url"
++                )
++                or ""
++            )
++
++            if (
++                _fleet_runtime.get(
++                    "api_key"
++                )
++                is not None
++            ):
++                api_key = (
++                    _fleet_runtime.get(
++                        "api_key"
++                    )
++                )
++
++            api_mode = (
++                _fleet_runtime.get(
++                    "api_mode"
++                )
++                or None
++            )
++
++            credential_pool = (
++                _fleet_runtime.get(
++                    "credential_pool"
++                )
++            )
++
++            fallback_model = list(
++                _hermes_fleet_bootstrap.get(
++                    "fallback_chain"
++                )
++                or []
++            )
++
++            _fleet_overrides = (
++                _fleet_runtime.get(
++                    "request_overrides"
++                )
++            )
++
++            if isinstance(
++                _fleet_overrides,
++                dict,
++            ):
++                _merged_overrides = dict(
++                    request_overrides
++                    or {}
++                )
++
++                _merged_overrides.update(
++                    _fleet_overrides
++                )
++
++                request_overrides = (
++                    _merged_overrides
++                )
++
++            reasoning_config = None
++            service_tier = None
++
++    except Exception as _fleet_exc:
++        logger.warning(
++            "Hermes Fleet main bootstrap failed; "
++            "using legacy configured route (%s)",
++            type(
++                _fleet_exc
++            ).__name__,
++        )
++
++        _hermes_fleet_bootstrap = None
++
++    # HERMES_FLEET_MAIN_ATTACH_END
++
+     agent.model = model
+     agent.max_iterations = max_iterations
+     # Shared iteration budget — parent creates, children inherit.
+@@ -622,6 +754,17 @@ def init_agent(
+         else agent.provider
+     )
+     agent._credential_pool = credential_pool
++
++    if _hermes_fleet_bootstrap is not None:
++        agent._hermes_fleet_role = "main"
++        agent._hermes_fleet_candidate = dict(
++            _hermes_fleet_bootstrap[
++                "candidate"
++            ]
++        )
++        agent._hermes_fleet_session_key = (
++            _hermes_fleet_session_key
++        )
+     agent.acp_command = acp_command or command
+     agent.acp_args = list(acp_args or args or [])
+     if api_mode in {"chat_completions", "codex_responses", "anthropic_messages", "bedrock_converse", "codex_app_server"}:
+diff --git a/agent/chat_completion_helpers.py b/agent/chat_completion_helpers.py
+index 3b7d8b0..ce76286 100644
+--- a/agent/chat_completion_helpers.py
++++ b/agent/chat_completion_helpers.py
+@@ -1704,6 +1704,27 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
+     auth resolution and client construction — no duplicated provider→key
+     mappings.
+     """
++    # HERMES_FLEET_FAILURE_ATTACH_BEGIN
++
++    try:
++        from agent.hermes_fleet_bridge import (
++            note_agent_failure,
++        )
++
++        note_agent_failure(
++            agent,
++            reason,
++        )
++
++    except Exception as _fleet_exc:
++        logger.debug(
++            "Fleet failure reporting skipped: %s",
++            type(
++                _fleet_exc
++            ).__name__,
++        )
++
++    # HERMES_FLEET_FAILURE_ATTACH_END
+     if reason in {FailoverReason.rate_limit, FailoverReason.billing, FailoverReason.upstream_rate_limit}:
+         # Only start cooldown when leaving the primary provider.  If we're
+         # already on a fallback and chain-switching, the primary wasn't the
+@@ -1758,6 +1779,42 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
+     if not fb_provider or not fb_model:
+         return agent._try_activate_fallback(reason)  # skip invalid, try next
+
++    # HERMES_FLEET_FALLBACK_SKIP_BEGIN
++
++    try:
++        from agent.hermes_fleet_bridge import (
++            should_skip_fallback,
++        )
++
++        if should_skip_fallback(
++            agent,
++            fb_provider,
++            fb_model,
++        ):
++            unavailable.add(
++                fb_key
++            )
++
++            logger.info(
++                "Fleet health skip: %s/%s cooling",
++                fb_provider,
++                fb_model,
++            )
++
++            return agent._try_activate_fallback(
++                reason
++            )
++
++    except Exception as _fleet_exc:
++        logger.debug(
++            "Fleet fallback health check skipped: %s",
++            type(
++                _fleet_exc
++            ).__name__,
++        )
++
++    # HERMES_FLEET_FALLBACK_SKIP_END
++
+     local_skip_reason = _fallback_entry_unavailable_without_network(agent, fb)
+     if local_skip_reason:
+         unavailable.add(fb_key)
+@@ -2063,6 +2120,8 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None) -> bool
+             f"🔄 Switched to fallback model: {old_model} via {old_provider} "
+             f"→ {fb_model} via {fb_provider}"
+         )
++        # HERMES_SILENT_FALLBACK_NOTICE_V1
++        agent._pending_fallback_notice = None
+         logger.info(
+             "Fallback activated: %s → %s (%s)",
+             old_model, fb_model, fb_provider,
+diff --git a/tools/delegate_tool.py b/tools/delegate_tool.py
+index 13e2143..bf5d55f 100644
+--- a/tools/delegate_tool.py
++++ b/tools/delegate_tool.py
+@@ -1249,6 +1249,98 @@ def _build_child_agent(
+
+     delegation_cfg = _load_config()
+
++    # HERMES_FLEET_WORKER_ATTACH_BEGIN
++    _hermes_fleet_worker_route = None
++
++    try:
++        from agent.hermes_fleet_bridge import (
++            resolve_role as _fleet_resolve,
++        )
++
++        _hermes_fleet_worker_route = (
++            _fleet_resolve(
++                "worker"
++            )
++        )
++
++        _fleet_candidate = (
++            _hermes_fleet_worker_route[
++                "candidate"
++            ]
++        )
++
++        _fleet_runtime = (
++            _hermes_fleet_worker_route[
++                "runtime"
++            ]
++        )
++
++        model = _fleet_candidate[
++            "model"
++        ]
++
++        override_provider = (
++            _fleet_runtime.get(
++                "provider"
++            )
++            or _fleet_candidate[
++                "provider"
++            ]
++        )
++
++        override_base_url = (
++            _fleet_runtime.get(
++                "base_url"
++            )
++            or ""
++        )
++
++        if (
++            _fleet_runtime.get(
++                "api_key"
++            )
++            is not None
++        ):
++            override_api_key = (
++                _fleet_runtime.get(
++                    "api_key"
++                )
++            )
++
++        override_api_mode = (
++            _fleet_runtime.get(
++                "api_mode"
++            )
++            or None
++        )
++
++        _fleet_overrides = (
++            _fleet_runtime.get(
++                "request_overrides"
++            )
++        )
++
++        if isinstance(
++            _fleet_overrides,
++            dict,
++        ):
++            override_request_overrides = dict(
++                _fleet_overrides
++            )
++
++    except Exception as _fleet_exc:
++        logger.warning(
++            "Hermes Fleet worker bootstrap failed; "
++            "using native delegation route (%s)",
++            type(
++                _fleet_exc
++            ).__name__,
++        )
++
++        _hermes_fleet_worker_route = None
++
++    # HERMES_FLEET_WORKER_ATTACH_END
++
+     # When no explicit toolsets given, inherit from parent's enabled toolsets
+     # so disabled tools (e.g. web) don't leak to subagents.
+     # Note: enabled_toolsets=None means "all tools enabled" (the default),
+@@ -1460,7 +1552,23 @@ def _build_child_agent(
+     # from rate-limits and credential exhaustion exactly like the top-level
+     # agent does.  _fallback_chain is a list accepted by AIAgent's
+     # fallback_model parameter (which handles both list and dict forms).
+-    parent_fallback = getattr(parent_agent, "_fallback_chain", None) or None
++    parent_fallback = (
++        list(
++            _hermes_fleet_worker_route.get(
++                "fallback_chain"
++            )
++            or []
++        )
++        if _hermes_fleet_worker_route is not None
++        else (
++            getattr(
++                parent_agent,
++                "_fallback_chain",
++                None,
++            )
++            or None
++        )
++    )
+
+     # Inherit the parent's OpenRouter provider-preference filters by default
+     # (so subagents routed to the same provider honour the same routing
+@@ -1545,6 +1653,15 @@ def _build_child_agent(
+             **child_optional_kwargs,
+         )
+     child._print_fn = getattr(parent_agent, "_print_fn", None)
++
++    if _hermes_fleet_worker_route is not None:
++        child._hermes_fleet_role = "worker"
++        child._hermes_fleet_candidate = dict(
++            _hermes_fleet_worker_route[
++                "candidate"
++            ]
++        )
++        child._hermes_fleet_session_key = None
+     # Now the child exists, its session id can ride on every relayed event
+     # (including the spawn_requested below — first emit happens after this).
+     child_session_ref["session_id"] = getattr(child, "session_id", "") or ""

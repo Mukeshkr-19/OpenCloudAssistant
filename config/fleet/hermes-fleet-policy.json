@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "enabled": true,
+
+  "roles": {
+    "main": [
+      "nvidia-dynamic",
+      "openrouter-free",
+      "gemini-emergency"
+    ],
+
+    "worker": [
+      "zen-free-dynamic",
+      "nvidia-dynamic",
+      "openrouter-free",
+      "gemini-emergency"
+    ],
+
+    "reviewer": [
+      "nvidia-dynamic",
+      "openrouter-free",
+      "gemini-emergency"
+    ]
+  },
+
+  "pools": {
+    "zen-free-dynamic": {
+      "type": "registry",
+      "providerGroup": "zen"
+    },
+
+    "nvidia-dynamic": {
+      "type": "registry",
+      "providerGroup": "nvidia"
+    },
+
+    "openrouter-free": {
+      "type": "stable-route",
+      "providerGroup": "openrouter",
+      "provider": "openrouter",
+      "route": "openrouter/free"
+    },
+
+    "gemini-emergency": {
+      "type": "hermes-runtime-config",
+      "providerGroup": "gemini",
+      "provider": "gemini"
+    }
+  },
+
+  "failurePolicy": {
+    "modelUnavailableCooldownSeconds": 21600,
+    "quotaCooldownSeconds": 21600,
+    "rateLimitCooldownSeconds": 300,
+    "serverErrorCooldownSeconds": 60,
+    "networkCooldownSeconds": 30,
+    "authCooldownSeconds": 21600,
+    "accountAccessCooldownSeconds": 86400,
+
+    "providerRateTripCount": 2,
+    "providerServerTripCount": 2,
+    "providerTripWindowSeconds": 60
+  }
+}
