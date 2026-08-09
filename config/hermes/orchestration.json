@@ -1,0 +1,11 @@
+{
+  "orchestrator_enabled": true,
+  "max_concurrent_children": 3,
+  "max_iterations": 50,
+  "max_spawn_depth": 1,
+  "inherit_mcp_toolsets": true,
+  "required_mcp_toolsets": [
+    "vellum-bridge"
+  ],
+  "notes": "Open Cloud Assistant canonical orchestration policy. Installer translation into upstream Hermes config is handled separately."
+}

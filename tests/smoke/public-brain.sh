@@ -23,7 +23,7 @@ if grep -RInEi "meta/llama-[A-Za-z0-9._:-]+|nvidia/[A-Za-z0-9._:-]+|qwen/[A-Za-z
     exit 1
 fi
 
-grep -qF "__OPEN_CLOUD_HOME__" integrations/hermes/hermes-fleet-bridge.patch
+grep -qF "diff --git a/agent/hermes_fleet_bridge.py b/agent/hermes_fleet_bridge.py" integrations/hermes/hermes-fleet-bridge.patch
 grep -qF "__OPEN_CLOUD_HOME__" integrations/vellum/mcp-managed-blocks.py
 
 echo "BRAIN_REFERENCE_SMOKE: PASS"

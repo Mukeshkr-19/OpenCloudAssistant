@@ -16,6 +16,9 @@ case "$MODE" in
         echo
         "$ROOT/install/10-hermes.sh" --dry-run
         "$ROOT/install/20-vellum.sh" --dry-run
+        "$ROOT/install/30-brain-materialize.sh" --check
+        "$ROOT/install/40-context-materialize.sh" --check
+        "$ROOT/install/50-workers.sh" --check
         "$ROOT/install/60-self-repair.sh" --dry-run
         echo
         echo "Planned later setup stages:"

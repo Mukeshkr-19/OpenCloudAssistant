@@ -1,8 +1,8 @@
-diff --git a__OPEN_CLOUD_HOME__/.hermes/hermes-agent/agent/hermes_fleet_bridge.py b__OPEN_CLOUD_HOME__/.hermes/hermes-agent/agent/hermes_fleet_bridge.py
+diff --git a/agent/hermes_fleet_bridge.py b/agent/hermes_fleet_bridge.py
 new file mode 100644
 index 0000000..6eb5c06
 --- /dev/null
-+++ b__OPEN_CLOUD_HOME__/.hermes/hermes-agent/agent/hermes_fleet_bridge.py
++++ b/agent/hermes_fleet_bridge.py
 @@ -0,0 +1,1196 @@
 +"""
 +Hermes <-> dynamic Fleet integration.

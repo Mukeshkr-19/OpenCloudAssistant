@@ -20,4 +20,6 @@ test -x scripts/public-audit.sh
 
 "$ROOT/tests/smoke/self-repair.sh"
 
+"$ROOT/tests/smoke/materialization.sh"
+
 echo "SMOKE_TESTS: PASS"
