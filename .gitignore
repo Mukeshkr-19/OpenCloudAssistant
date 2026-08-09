@@ -1,0 +1,52 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+auth.json
+credentials.json
+token.json
+
+# Runtime state
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.pid
+*.sock
+*.log
+logs/
+
+# User/private state
+memory/
+memories/
+runtime/
+state/
+sessions/
+backups/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Temporary safety copies
+*.before-*
+*.backup-*
+*.bak
+
+# Local installer state
+.opencloud/
