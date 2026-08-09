@@ -21,10 +21,9 @@ case "$MODE" in
         "$ROOT/install/50-workers.sh" --check
         "$ROOT/install/60-self-repair.sh" --dry-run
         "$ROOT/install/70-fleet-runtime.sh" --check
+        "$ROOT/install/75-fleet-registry.sh" --check
         echo
         echo "Planned later setup stages:"
-        echo "  provider configuration"
-        echo "  dynamic Fleet"
         echo "  Hermes/Vellum context bridge"
         echo "  parallel workers"
         echo "  messaging selection"

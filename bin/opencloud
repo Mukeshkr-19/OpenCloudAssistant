@@ -15,6 +15,10 @@ case "$COMMAND" in
         shift || true
         exec "$ROOT/scripts/fleet-status.sh" "$@"
         ;;
+    providers)
+        shift || true
+        exec "$ROOT/scripts/providers.sh" "$@"
+        ;;
     version)
         if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
             echo "Open Cloud Assistant $(git -C "$ROOT" rev-parse --short HEAD)"
@@ -27,8 +31,13 @@ case "$COMMAND" in
         echo
         echo "Usage:"
         echo "  opencloud doctor"
+        echo "  opencloud providers status"
+        echo "  opencloud providers configure"
         echo "  opencloud fleet status"
         echo "  opencloud fleet paths"
+        echo "  opencloud fleet refresh"
+        echo "  opencloud fleet verify"
+        echo "  opencloud fleet proof"
         echo "  opencloud fleet select [main|worker|reviewer]"
         echo "  opencloud version"
         echo "  opencloud help"
