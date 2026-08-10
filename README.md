@@ -201,3 +201,20 @@ reported as `WOULD_INSTALL` entries.
 The bootstrap is intentionally limited to the small Ubuntu package set needed
 by Open Cloud Assistant; Hermes, Vellum, OpenCode and provider credentials
 remain handled by their dedicated installer stages.
+
+## Release validation
+
+Before a public release, run:
+
+    ./bin/opencloud release check
+
+The release gate covers public-source auditing, syntax validation, smoke
+testing, deterministic reliability testing, and clean-HOME installer
+dry-run validation.
+
+Current validation scope includes real Ubuntu 24.04 ARM64 clean-machine
+installation and hosted x86_64 CI/source compatibility.
+
+Real x86_64 machine acceptance remains deferred.
+
+Browser support remains preview.

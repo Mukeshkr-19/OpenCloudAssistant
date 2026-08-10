@@ -141,3 +141,27 @@ Before creating a stable tag, run:
     ./bin/opencloud release check
 
 A stable tag must not be created when that command fails.
+
+## v0.2.0 release
+
+Completed:
+
+- [x] GitHub Actions CI
+- [x] Fleet fault injection
+- [x] Hermes concurrency reliability
+- [x] self-repair rollback reliability
+- [x] service persistence and controlled recovery
+- [x] prerequisite bootstrap
+- [x] safe uninstall
+- [x] runtime-integrity doctor
+- [x] reproducible release gate
+- [x] release checklist
+- [x] changelog and release notes
+
+Deferred without blocking v0.2.0:
+
+- [ ] real x86_64 machine acceptance
+- [ ] optional-channel end-to-end expansion
+- [ ] browser graduation from preview
+
+Future feature development belongs to post-v0.2.0 work.
