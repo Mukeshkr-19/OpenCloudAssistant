@@ -128,6 +128,12 @@ if [ -x "$ROOT/scripts/doctor-services.sh" ]; then
     fi
 fi
 
+if "$ROOT/scripts/doctor-runtime.sh"; then
+    :
+else
+    FAILURES=$((FAILURES + 1))
+fi
+
 if [ "$FAILURES" -eq 0 ]; then
     echo "DOCTOR_STATUS: PASS"
     exit 0

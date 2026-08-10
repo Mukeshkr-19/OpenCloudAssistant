@@ -36,4 +36,12 @@ else
     echo "HERMES_LIVE_INSTALL_SMOKE: SKIP (Hermes Git source unavailable)"
 fi
 "$ROOT/tests/smoke/setup-install.sh"
+"$ROOT/tests/smoke/prerequisites.sh"
+
+"$ROOT/tests/smoke/uninstall.sh"
+
+"$ROOT/tests/smoke/doctor-runtime.sh"
+
+"$ROOT/tests/smoke/release.sh"
+
 echo "SMOKE_TESTS: PASS"

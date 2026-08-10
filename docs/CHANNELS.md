@@ -207,3 +207,24 @@ Because messaging selections change whether the Hermes gateway is required, appl
 - `SKIP` — optional channel was not selected.
 
 A `SKIP` is not a failure.
+
+
+## Release acceptance requirements
+
+The stable core release promise is the Linux assistant and CLI operator path.
+
+Optional messaging adapters are interfaces, not separate brains and are not
+automatically release blockers simply because support code exists.
+
+For release documentation:
+
+- CLI must remain supported and validated.
+- iMessage remains an important optional personal-deployment channel.
+- At least one non-Apple adapter may be documented as the recommended
+  cross-platform option.
+- Telegram, Discord, browser, and other adapters must state their real
+  validation status rather than implying end-to-end validation.
+- Browser support remains preview until its runtime path is separately
+  validated.
+- A broken selected/configured adapter must fail doctor; an unselected
+  optional adapter must remain SKIP.

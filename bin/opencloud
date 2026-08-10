@@ -27,6 +27,25 @@ case "$COMMAND" in
         shift || true
         exec "$ROOT/scripts/services.sh" "$@"
         ;;
+    uninstall)
+        shift || true
+        exec "$ROOT/scripts/uninstall.sh" "${@:-}"
+        ;;
+
+    release)
+        shift || true
+
+        case "${1:-check}" in
+            check)
+                exec "$ROOT/scripts/release-check.sh" --check
+                ;;
+            *)
+                echo "Usage: opencloud release check" >&2
+                exit 2
+                ;;
+        esac
+        ;;
+
     version)
         if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
             echo "Open Cloud Assistant $(git -C "$ROOT" rev-parse --short HEAD)"
@@ -39,6 +58,8 @@ case "$COMMAND" in
         echo
         echo "Usage:"
         echo "  opencloud doctor"
+        echo "  opencloud uninstall"
+        echo "  opencloud release check"
         echo "  opencloud providers status"
         echo "  opencloud providers configure"
         echo "  opencloud channels configure"

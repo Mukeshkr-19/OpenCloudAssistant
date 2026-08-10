@@ -111,3 +111,33 @@ Open Cloud Assistant reaches stable v1.0 only when a new user can:
 - [x] iMessage remains optional
 - [x] Apple-specific questions appear only when iMessage is selected
 - [x] Doctor reports unconfigured optional channels as SKIP, not FAIL
+
+
+## 2026 engineering completion gate
+
+Completed engineering milestones:
+
+- [x] GitHub Actions CI on Ubuntu x86_64 and ARM64 runners
+- [x] deterministic Fleet failure injection and cooldown recovery
+- [x] bounded Hermes concurrency proof
+- [x] self-repair staged validation and rollback fault injection
+- [x] service persistence configuration and controlled recovery
+- [x] automatic Ubuntu prerequisite bootstrap
+- [x] safe ownership-conscious uninstall command
+- [x] runtime-integrity doctor checks
+- [x] reproducible release-check command
+
+Validation scope:
+
+- ARM64 Ubuntu has a real clean-install and idempotency proof.
+- x86_64 source and hosted-CI compatibility are validated.
+- real x86_64 machine acceptance is currently deferred and must not be
+  represented as completed.
+- optional messaging adapters must publish their actual validation status.
+- browser integration remains preview until separately validated.
+
+Before creating a stable tag, run:
+
+    ./bin/opencloud release check
+
+A stable tag must not be created when that command fails.

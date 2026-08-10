@@ -33,7 +33,7 @@ run_checks() {
     local hermes_root="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
     local hermes_source="${OPEN_CLOUD_HERMES_SOURCE:-$hermes_root}"
 
-    "$ROOT/install/00-preflight.sh"
+    "$ROOT/install/00-preflight.sh" --dry-run
     "$ROOT/install/10-hermes.sh" --dry-run
     "$ROOT/install/20-vellum.sh" --dry-run
 
@@ -84,7 +84,7 @@ run_install() {
     echo "============================================================"
 
     echo "[1/14] Preflight"
-    "$ROOT/install/00-preflight.sh"
+    "$ROOT/install/00-preflight.sh" --install
 
     echo "[2/14] Hermes"
     "$ROOT/install/10-hermes.sh" --install
