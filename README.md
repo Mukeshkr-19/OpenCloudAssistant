@@ -1,19 +1,24 @@
-<h1 align="center">☁️ Open Cloud Assistant</h1>
+# ☁️ Open Cloud Assistant
 
-<p align="center"><strong>A free-first, self-hosted, always-on personal AI assistant stack for Ubuntu.</strong></p>
+**A free-first, self-hosted cloud AI assistant for Ubuntu.**
 
-<p align="center">
-  <a href="https://github.com/Mukeshkr-19/OpenCloudAssistant/releases"><img alt="Release" src="https://img.shields.io/github/v/release/Mukeshkr-19/OpenCloudAssistant?include_prereleases&amp;label=release"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Mukeshkr-19/OpenCloudAssistant"></a>
-  <img alt="Ubuntu 24.04" src="https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&amp;logoColor=white">
-  <img alt="ARM64 validated" src="https://img.shields.io/badge/ARM64-release%20validated-success">
-  <img alt="Free-first routing" src="https://img.shields.io/badge/routing-free--first-6f42c1">
-</p>
+Hermes orchestration · Vellum personal context · dynamic model routing · bounded parallel workers · guarded self-repair
 
-<p align="center"><strong>Hermes orchestration · Vellum personal context · dynamic AI routing · parallel workers · restricted self-repair</strong></p>
+[![Release](https://img.shields.io/github/v/release/Mukeshkr-19/OpenCloudAssistant?display_name=tag)](https://github.com/Mukeshkr-19/OpenCloudAssistant/releases)
+[![CI](https://github.com/Mukeshkr-19/OpenCloudAssistant/actions/workflows/ci.yml/badge.svg)](https://github.com/Mukeshkr-19/OpenCloudAssistant/actions/workflows/ci.yml)
+[![Reliability](https://github.com/Mukeshkr-19/OpenCloudAssistant/actions/workflows/reliability.yml/badge.svg)](https://github.com/Mukeshkr-19/OpenCloudAssistant/actions/workflows/reliability.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> [!IMPORTANT]
-> **v0.1.0 is a prerelease.** The Ubuntu 24.04 ARM64 installation path and CLI workflow have been validated. Telegram and Discord configuration are included but still need public end-to-end acceptance testing before a stable v1.0. Browser/Open WebUI is preview-only in this release. iMessage is optional.
+Open Cloud Assistant turns an Ubuntu server into an always-available assistant
+that can route across changing free AI capacity, retrieve personal context,
+split complex work across temporary workers, and recover safely from selected
+code failures.
+
+> [!NOTE]
+> **Current release: v0.2.0.**
+> Ubuntu 24.04 ARM64 has real clean-machine and idempotency validation.
+> x86_64 has hosted CI/source compatibility validation; real-machine
+> acceptance remains deferred. Browser integration remains preview.
 
 ## What it is
 
@@ -45,78 +50,117 @@ flowchart TD
     H -. approved repair .-> R[Restricted OpenCode<br/>stage → validate → backup → deploy/rollback]
 ```
 
-## Release status
+## Validated release scope
 
-| Area | v0.1.0 status |
-|---|---|
-| Ubuntu 24.04 ARM64 install | ✅ Release-validated |
-| Second install / idempotency | ✅ Validated |
-| CLI installation and diagnostics | ✅ Validated |
-| Dynamic NVIDIA discovery | ✅ Implemented |
-| OpenRouter `openrouter/free` fallback | ✅ Implemented |
-| Vellum context bridge | ✅ Implemented |
-| Parallel workers | ✅ Implemented, up to 3 concurrent children |
-| Restricted self-repair | ✅ Smoke-tested |
-| Telegram setup | 🧪 Configuration implemented; public E2E pending |
-| Discord setup | 🧪 Configuration implemented; public E2E pending |
-| Browser / Open WebUI | ⚠️ Preview; E2E runtime not release-validated |
-| iMessage / Apple | ➕ Optional; never required |
-| Ubuntu x86_64 | 🧪 Accepted by preflight; clean E2E proof still pending |
+| Scope | Status |
+| --- | --- |
+| Ubuntu 24.04 ARM64 | ✅ Real clean-machine install + idempotent reinstall validated |
+| Core CLI lifecycle | ✅ Install, Fleet operations, doctor, safe uninstall, and release gate validated |
+| Reliability | ✅ Fleet failover/recovery, Hermes concurrency, self-repair rollback, and service recovery validated |
+| Ubuntu x86_64 | ✅ Hosted CI/source compatibility; real-machine acceptance deferred |
 
-## Quick start on an Ubuntu server
+Optional channels are intentionally kept out of this core validation table.
+Their individual status lives in the Channels documentation instead of
+cluttering the main project overview.
 
-Install the operating-system prerequisites:
+## Reliability and recovery
 
-```bash
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl git xz-utils unzip python3 python3-venv python3-pip sudo dbus-user-session procps
-```
+Open Cloud Assistant treats failure handling as part of the product.
 
-Clone and validate before making changes:
+The deterministic reliability suite covers:
 
-```bash
-git clone https://github.com/Mukeshkr-19/OpenCloudAssistant.git
-cd OpenCloudAssistant
-./setup.sh --dry-run
-```
+- candidate isolation and recovery;
+- rate-limit failover;
+- server-error failover;
+- network failover and recovery;
+- provider cooldown recovery;
+- Hermes execution with up to three concurrent child workers;
+- invalid staged-repair rejection;
+- trusted pre-deployment backup creation;
+- the real rollback path after simulated deployment validation failure;
+- Fleet timer persistence;
+- controlled service recovery.
 
-For the simplest first installation, start with CLI only:
+Run it directly with:
 
-```bash
-OPEN_CLOUD_CHANNELS=cli ./setup.sh --install
-```
+    OPEN_CLOUD_HERMES_ROOT="$HOME/.hermes/hermes-agent" ./tests/reliability/run.sh
 
-Configure at least one usable AI provider. NVIDIA + OpenRouter is the recommended free-first combination:
+Synthetic worker timing is test-harness evidence only. It is not presented as
+provider latency or a production SLO.
 
-```bash
-./bin/opencloud providers configure
-./bin/opencloud fleet refresh
-./bin/opencloud fleet proof
-./bin/opencloud doctor
-```
+## Quick start
 
-Then start a CLI conversation:
+Open Cloud Assistant automatically bootstraps missing supported Ubuntu
+prerequisites during installation.
 
-```bash
-export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
-hermes chat
-```
+Clone the repository and inspect the plan:
 
-> [!NOTE]
-> In v0.1.0, the project command wrapper is guaranteed at `./bin/opencloud` while you are inside the repository. If `opencloud` is already on your `PATH`, you can omit `./bin/`.
+    git clone https://github.com/Mukeshkr-19/OpenCloudAssistant.git
+    cd OpenCloudAssistant
+    ./setup.sh --dry-run
 
-## Add messaging later
+Install the validated CLI core:
 
-You do not need Telegram, Discord, Apple hardware, or a browser UI to complete the core install. When you are ready:
+    OPEN_CLOUD_CHANNELS=cli ./setup.sh --install
 
-```bash
-./bin/opencloud channels configure
-./bin/opencloud channels status
-./bin/opencloud services install
-./bin/opencloud doctor
-```
+Configure a usable provider and refresh the dynamic Fleet:
 
-Telegram is the recommended cross-platform messaging path. See [Channels](docs/CHANNELS.md) for BotFather setup, the explicit user allowlist, Discord setup, Browser preview status, and optional iMessage notes.
+    ./bin/opencloud providers configure
+    ./bin/opencloud fleet refresh
+    ./bin/opencloud fleet proof
+    ./bin/opencloud doctor
+
+Start Hermes:
+
+    export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
+    hermes chat
+
+While inside the repository, the project command surface is available through
+`./bin/opencloud`.
+
+## Optional channels
+
+The stable core does not require Telegram, Discord, Apple hardware, or a
+browser UI.
+
+After the CLI path is healthy:
+
+    ./bin/opencloud channels configure
+    ./bin/opencloud channels status
+    ./bin/opencloud services install
+    ./bin/opencloud doctor
+
+**Telegram** is the recommended cross-platform messaging option.
+
+**Discord** remains an optional adapter.
+
+**iMessage** is an optional Apple-specific personal deployment path.
+
+**Browser / Open WebUI** remains preview and is not represented as
+release-validated production functionality.
+
+See [Channels](docs/CHANNELS.md) for adapter-specific setup and validation
+status.
+
+## Operations
+
+The normal operator surface is intentionally small:
+
+    ./bin/opencloud doctor
+    ./bin/opencloud providers status
+    ./bin/opencloud fleet proof
+    ./bin/opencloud channels status
+    ./bin/opencloud uninstall
+    ./bin/opencloud release check
+
+`opencloud uninstall` is a non-mutating plan by default.
+
+Apply the ownership-aware safe uninstall with:
+
+    ./bin/opencloud uninstall --yes
+
+Personal configuration, Hermes history, Vellum memory, and Fleet health
+history are preserved by default.
 
 ## Where configuration lives
 
@@ -152,13 +196,21 @@ Existing engineering references under `docs/` remain useful for implementation d
 
 ## Provider policy
 
-Permanent source policy does **not** pin changing NVIDIA or OpenCode Zen model IDs. Runtime discovery verifies currently available candidates. The stable explicit OpenRouter route is:
+Open Cloud Assistant is **free-first**, but free capacity is treated as
+dynamic infrastructure rather than a permanent promise.
 
-```text
-openrouter/free
-```
+Concrete NVIDIA and OpenCode Zen model identifiers are discovered and verified
+at runtime instead of being permanently pinned in source.
 
-Gemini is intentionally blocked by the public routing integration until it is independently configured and verified. Free provider capacity, quotas, latency, and model availability are controlled by external providers and can change without a repository update.
+OpenRouter uses the stable free routing endpoint:
+
+`openrouter/free`
+
+Gemini remains blocked by the public routing integration until independently
+configured and verified.
+
+Provider quotas, latency, model availability, and free capacity are external
+conditions and can change without a repository update.
 
 ## Security model
 
@@ -172,14 +224,21 @@ Open Cloud Assistant connects agents to real tools and personal context. Treat i
 
 Read [SECURITY.md](SECURITY.md) before exposing any integration to the internet.
 
-## Validation for contributors
+## Validate changes
 
-```bash
-./scripts/public-audit.sh
-./tests/smoke/run.sh
-```
+Before publishing changes, run:
 
-The smoke suite covers public privacy checks, brain integration references, self-repair, Fleet runtime/discovery, Hermes↔Vellum integration, channels, services, live Hermes integration, and the install branch.
+    ./scripts/public-audit.sh
+    ./tests/smoke/run.sh
+    OPEN_CLOUD_HERMES_ROOT="$HOME/.hermes/hermes-agent" ./tests/reliability/run.sh
+    ./bin/opencloud release check
+
+These layers cover public privacy checks, source/workflow syntax, installer
+behavior, Fleet runtime and discovery, Hermes/Vellum integration, bounded
+worker orchestration, channels, services, self-repair rollback behavior, and
+clean-HOME installation planning.
+
+`./bin/opencloud release check` is the final release gate.
 
 ## Upstream projects
 
@@ -201,20 +260,3 @@ reported as `WOULD_INSTALL` entries.
 The bootstrap is intentionally limited to the small Ubuntu package set needed
 by Open Cloud Assistant; Hermes, Vellum, OpenCode and provider credentials
 remain handled by their dedicated installer stages.
-
-## Release validation
-
-Before a public release, run:
-
-    ./bin/opencloud release check
-
-The release gate covers public-source auditing, syntax validation, smoke
-testing, deterministic reliability testing, and clean-HOME installer
-dry-run validation.
-
-Current validation scope includes real Ubuntu 24.04 ARM64 clean-machine
-installation and hosted x86_64 CI/source compatibility.
-
-Real x86_64 machine acceptance remains deferred.
-
-Browser support remains preview.
