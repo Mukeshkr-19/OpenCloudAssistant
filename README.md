@@ -166,6 +166,27 @@ Ubuntu runners without creating OCI resources.
 
 See [`infra/terraform/oci/README.md`](infra/terraform/oci/README.md).
 
+## Operational evidence
+
+Open Cloud Assistant can generate a sanitized point-in-time operational
+snapshot from the real host without publishing raw logs, prompts, personal
+memory, credentials, IP addresses, or session identifiers.
+
+The evidence records observable facts such as host uptime at collection time,
+doctor status, systemd timer state, service state, and aggregate scheduled-job
+success/failure counts.
+
+Run:
+
+    ./scripts/collect-operational-evidence.sh \
+        --output docs/evidence/operational-snapshot-arm64.md \
+        --append-history docs/evidence/operational-history.md
+
+The history is intentionally a sequence of observations rather than a claimed
+uptime SLA or production SLO.
+
+See [`docs/evidence/`](docs/evidence/).
+
 ## Operations
 
 The normal operator surface is intentionally small:

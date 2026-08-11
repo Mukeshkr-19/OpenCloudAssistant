@@ -44,4 +44,6 @@ fi
 
 "$ROOT/tests/smoke/release.sh"
 
+./tests/smoke/operational-evidence.sh
+
 echo "SMOKE_TESTS: PASS"
