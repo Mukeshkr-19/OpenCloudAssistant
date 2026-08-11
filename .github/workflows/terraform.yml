@@ -1,0 +1,49 @@
+name: Terraform
+
+on:
+  push:
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/terraform.yml"
+  pull_request:
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/terraform.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Terraform validate / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.15.8"
+          terraform_wrapper: false
+
+      - name: Terraform format
+        run: terraform fmt -check -recursive infra/terraform/oci
+
+      - name: Terraform init
+        working-directory: infra/terraform/oci
+        run: terraform init -backend=false -input=false
+
+      - name: Terraform validate
+        working-directory: infra/terraform/oci
+        run: terraform validate -no-color

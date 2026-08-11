@@ -142,6 +142,30 @@ release-validated production functionality.
 See [Channels](docs/CHANNELS.md) for adapter-specific setup and validation
 status.
 
+## Infrastructure as code
+
+Open Cloud Assistant includes a focused Oracle Cloud Infrastructure Terraform
+deployment under `infra/terraform/oci`.
+
+The module provisions the host layer rather than pretending the VM already
+exists:
+
+- VCN and public subnet;
+- Internet Gateway and route table;
+- SSH-only inbound security policy from a caller-supplied CIDR;
+- Canonical Ubuntu 24.04 compute;
+- SSH key injection;
+- cloud-init bootstrap;
+- optional handoff to the Open Cloud Assistant installer.
+
+Terraform credentials, state, and real variable files are intentionally kept
+out of Git.
+
+Repository CI validates the Terraform configuration on hosted x86_64 and ARM64
+Ubuntu runners without creating OCI resources.
+
+See [`infra/terraform/oci/README.md`](infra/terraform/oci/README.md).
+
 ## Operations
 
 The normal operator surface is intentionally small:

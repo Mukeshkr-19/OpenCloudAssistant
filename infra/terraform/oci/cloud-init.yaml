@@ -1,0 +1,35 @@
+#cloud-config
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+
+write_files:
+  - path: /etc/opencloudassistant-iac
+    owner: root:root
+    permissions: "0644"
+    content: |
+      managed_by=terraform
+      auto_install_opencloud=${auto_install_opencloud}
+
+runcmd:
+  - |
+      set -eu
+
+      echo "Open Cloud Assistant OCI bootstrap started"           > /var/log/opencloudassistant-iac.log
+
+      if [ "${auto_install_opencloud}" = "true" ]; then
+          if [ ! -d /home/ubuntu/OpenCloudAssistant/.git ]; then
+              runuser -u ubuntu --                   git clone                   --depth 1                   --branch "${opencloud_ref}"                   "${opencloud_repository}"                   /home/ubuntu/OpenCloudAssistant
+          fi
+
+          runuser -u ubuntu --               bash -lc "cd /home/ubuntu/OpenCloudAssistant && OPEN_CLOUD_CHANNELS=cli ./setup.sh --install"
+
+          echo "Open Cloud Assistant installer completed"               >> /var/log/opencloudassistant-iac.log
+      else
+          echo "Host provisioning complete; automatic OpenCloud installation disabled"               >> /var/log/opencloudassistant-iac.log
+      fi

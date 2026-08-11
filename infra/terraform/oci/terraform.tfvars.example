@@ -1,0 +1,26 @@
+tenancy_ocid     = "ocid1.tenancy.oc1..REPLACE_ME"
+compartment_ocid = "ocid1.compartment.oc1..REPLACE_ME"
+region           = "us-ashburn-1"
+
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+
+# Replace this documentation address with your trusted public IP in /32 form.
+ssh_allowed_cidr = "203.0.113.10/32"
+
+instance_display_name = "opencloud-assistant"
+instance_shape        = "VM.Standard.A1.Flex"
+
+ocpus         = 1
+memory_in_gbs = 6
+
+boot_volume_size_in_gbs = 50
+
+vcn_cidr    = "10.40.0.0/16"
+subnet_cidr = "10.40.10.0/24"
+
+# Safe default: Terraform provisions the host but does not run setup.sh.
+auto_install_opencloud = false
+
+freeform_tags = {
+  Environment = "portfolio"
+}
