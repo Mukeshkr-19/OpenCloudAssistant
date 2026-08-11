@@ -8,6 +8,7 @@ TARGET_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
 AGENT_NAME="${OPEN_CLOUD_REPAIR_AGENT:-hermes-repair}"
 REPAIR_TIMEOUT="${OPEN_CLOUD_REPAIR_TIMEOUT:-900}"
 BACKUP_KEEP="${OPEN_CLOUD_REPAIR_BACKUP_KEEP:-5}"
+SANDBOX_NETWORK="${OPEN_CLOUD_REPAIR_SANDBOX_NETWORK:-shared}"
 
 usage() {
     printf "%s\n" \
@@ -23,6 +24,140 @@ require_command() {
         echo "ERROR: required command missing: $cmd" >&2
         return 1
     fi
+}
+
+run_opencode_sandbox() {
+    local stage="$1"
+    local prompt="$2"
+    local sandbox_home="$3"
+    local opencode_path=""
+    local opencode_real=""
+    local opencode_dir=""
+    local agent_file="$HOME/.config/opencode/agents/$AGENT_NAME.md"
+    local auth_file="$HOME/.local/share/opencode/auth.json"
+    local config_json="$HOME/.config/opencode/opencode.json"
+    local config_jsonc="$HOME/.config/opencode/opencode.jsonc"
+    local sandbox_path="/usr/bin:/bin"
+    local -a args=()
+
+    require_command bwrap
+
+    opencode_path="$(command -v opencode)"
+    opencode_real="$(readlink -f "$opencode_path" 2>/dev/null || printf "%s" "$opencode_path")"
+    opencode_dir="$(dirname "$opencode_real")"
+
+    [ -x "$opencode_real" ] || {
+        echo "ERROR: resolved OpenCode binary is not executable" >&2
+        return 1
+    }
+
+    [ -f "$agent_file" ] || {
+        echo "ERROR: restricted OpenCode agent configuration missing" >&2
+        return 1
+    }
+
+    [ "$stage" != "$TARGET_ROOT" ] || {
+        echo "ERROR: staging tree must differ from production target" >&2
+        return 1
+    }
+
+    mkdir -p \
+        "$sandbox_home/.config/opencode/agents" \
+        "$sandbox_home/.local/share/opencode" \
+        "$sandbox_home/.local/state" \
+        "$sandbox_home/.cache"
+
+    chmod 700 "$sandbox_home"
+
+    args=(
+        --unshare-all
+    )
+
+    case "$SANDBOX_NETWORK" in
+        shared)
+            args+=(--share-net)
+            ;;
+        none)
+            ;;
+        *)
+            echo "ERROR: invalid sandbox network mode: $SANDBOX_NETWORK" >&2
+            return 2
+            ;;
+    esac
+
+    args+=(
+        --die-with-parent
+        --new-session
+        --ro-bind / /
+        --proc /proc
+        --dev /dev
+        --tmpfs /tmp
+        --tmpfs /run
+        --bind "$sandbox_home" "$HOME"
+        --bind "$stage" "$stage"
+        --tmpfs "$TARGET_ROOT"
+        --ro-bind "$opencode_dir" "$opencode_dir"
+        --ro-bind "$agent_file" "$agent_file"
+    )
+
+    if [ -d "$HOME/.bun/bin" ]; then
+        args+=(
+            --ro-bind "$HOME/.bun/bin" "$HOME/.bun/bin"
+        )
+        sandbox_path="$HOME/.bun/bin:$sandbox_path"
+    fi
+
+    if [ -f "$config_json" ]; then
+        args+=(
+            --ro-bind "$config_json" "$config_json"
+        )
+    fi
+
+    if [ -f "$config_jsonc" ]; then
+        args+=(
+            --ro-bind "$config_jsonc" "$config_jsonc"
+        )
+    fi
+
+    if [ -f "$auth_file" ]; then
+        args+=(
+            --ro-bind "$auth_file" "$auth_file"
+        )
+    fi
+
+    args+=(
+        --clearenv
+        --setenv HOME "$HOME"
+        --setenv USER "${USER:-opencloud}"
+        --setenv LOGNAME "${LOGNAME:-${USER:-opencloud}}"
+        --setenv PATH "$opencode_dir:$sandbox_path"
+        --setenv XDG_CONFIG_HOME "$HOME/.config"
+        --setenv XDG_DATA_HOME "$HOME/.local/share"
+        --setenv XDG_STATE_HOME "$HOME/.local/state"
+        --setenv XDG_CACHE_HOME "$HOME/.cache"
+        --setenv OPENCODE_CONFIG_DIR "$HOME/.config/opencode"
+        --setenv TERM "${TERM:-dumb}"
+        --chdir "$stage"
+    )
+
+    if [ -n "${OPEN_CLOUD_FAULT_MODE:-}" ]; then
+        args+=(
+            --setenv OPEN_CLOUD_FAULT_MODE "$OPEN_CLOUD_FAULT_MODE"
+        )
+    fi
+
+    echo "REPAIR_SANDBOX: bubblewrap network=$SANDBOX_NETWORK"
+    echo "REPAIR_SANDBOX: isolated-home"
+    echo "REPAIR_SANDBOX: production-target-masked"
+    echo "REPAIR_SANDBOX: controlled-host-writes=stage,sandbox-home"
+
+    # opencode run contract is executed through the resolved binary.
+    timeout "$REPAIR_TIMEOUT" \
+        bwrap "${args[@]}" \
+        "$opencode_real" run \
+        --agent "$AGENT_NAME" \
+        --dir "$stage" \
+        "$prompt"
 }
 
 validate_tree() {
@@ -207,6 +342,7 @@ run_repair() {
     local before_digest=""
     local after_digest=""
     local prompt=""
+    local sandbox_home=""
 
     require_command opencode
     require_command rsync
@@ -235,6 +371,7 @@ run_repair() {
 
     work_root="$(mktemp -d "$STATE_ROOT/work/repair-${timestamp}-XXXXXX")"
     stage="$work_root/stage"
+    sandbox_home="$work_root/sandbox-home"
     backup="$STATE_ROOT/backups/$timestamp"
 
     echo "REPAIR: creating isolated staging tree"
@@ -255,13 +392,9 @@ auth data, personal data, or external directories.
 Do not deploy or restart anything.
 The trusted outer harness validates and deploys the result."
 
-    echo "REPAIR: invoking restricted OpenCode agent"
+    echo "REPAIR: invoking OS-sandboxed restricted OpenCode agent"
 
-    if ! timeout "$REPAIR_TIMEOUT" \
-        opencode run \
-        --agent "$AGENT_NAME" \
-        --dir "$stage" \
-        "$prompt"
+    if ! run_opencode_sandbox "$stage" "$prompt" "$sandbox_home"
     then
         rm -rf "$work_root"
         echo "ERROR: OpenCode repair did not complete successfully" >&2

@@ -46,7 +46,13 @@ make_fake_tools() {
     local home="$1"
     local bin="$home/.local/bin"
 
-    mkdir -p "$bin"
+    mkdir -p "$bin" "$home/.config/opencode/agents"
+
+    printf "%s\n" \
+        "---" \
+        "description: deterministic repair fixture" \
+        "---" \
+        > "$home/.config/opencode/agents/hermes-repair.md"
 
     printf "%s\n" \
         "#!/usr/bin/env bash" \
@@ -128,6 +134,7 @@ run_stage_validation_case() {
     OPEN_CLOUD_HERMES_ROOT="$target" \
     OPEN_CLOUD_REPAIR_STATE="$state" \
     OPEN_CLOUD_REPAIR_TIMEOUT=10 \
+    OPEN_CLOUD_REPAIR_SANDBOX_NETWORK=shared \
     OPEN_CLOUD_FAULT_MODE=stage-invalid \
     OPEN_CLOUD_REAL_PYTHON="$REAL_PYTHON" \
     "$HARNESS" \
@@ -192,6 +199,7 @@ run_deploy_rollback_case() {
     OPEN_CLOUD_HERMES_ROOT="$target" \
     OPEN_CLOUD_REPAIR_STATE="$state" \
     OPEN_CLOUD_REPAIR_TIMEOUT=10 \
+    OPEN_CLOUD_REPAIR_SANDBOX_NETWORK=shared \
     OPEN_CLOUD_FAULT_MODE=deploy-validation \
     OPEN_CLOUD_REAL_PYTHON="$REAL_PYTHON" \
     "$HARNESS" \

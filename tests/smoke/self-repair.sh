@@ -25,6 +25,19 @@ grep -qF "external_directory: deny" integrations/self-repair/hermes-repair-agent
 grep -qF "opencode run" integrations/self-repair/hermes-code-repair
 grep -qF -- "--agent" integrations/self-repair/hermes-code-repair
 grep -qF -- "--dir" integrations/self-repair/hermes-code-repair
+grep -qF "bwrap" integrations/self-repair/hermes-code-repair
+grep -qF -- "--unshare-all" integrations/self-repair/hermes-code-repair
+grep -qF -- "--share-net" integrations/self-repair/hermes-code-repair
+grep -qF -- "--tmpfs" integrations/self-repair/hermes-code-repair
+grep -qF "REPAIR_SANDBOX: bubblewrap" integrations/self-repair/hermes-code-repair
+grep -qF "production-target-masked" integrations/self-repair/hermes-code-repair
+grep -qF "controlled-host-writes=stage,sandbox-home" integrations/self-repair/hermes-code-repair
+grep -qF "bubblewrap" install/00-preflight.sh
+grep -qF "SELF_REPAIR_OS_SANDBOX: BUBBLEWRAP" install/60-self-repair.sh
+grep -qF "apparmor-profiles" install/00-preflight.sh
+grep -qF "ensure_bwrap_apparmor_profile" install/60-self-repair.sh
+grep -qF "bwrap-userns-restrict" install/60-self-repair.sh
+grep -qF "APPARMOR_BWRAP_PROFILE: REQUIRED_ON_RESTRICTED_UBUNTU" install/60-self-repair.sh
 
 if grep -RInEi "/home/ubuntu|cloud-assistant-core|assistant-core|(^|[^A-Za-z0-9_])sanju([^A-Za-z0-9_]|$)|100\.[0-9]+\.[0-9]+\.[0-9]+" \
     integrations/self-repair install/60-self-repair.sh

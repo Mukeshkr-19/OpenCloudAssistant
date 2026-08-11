@@ -45,17 +45,60 @@ personal deployment path, or private checkpoint dependency.
 Deployments may add their own trusted backup workflow outside the restricted
 repair agent.
 
-## Safety boundary
+## OS-level sandbox boundary
 
-OpenCode permissions are used to restrict agent tools. They are not treated as
-an operating-system sandbox. The staging-copy workflow therefore remains a
-separate boundary between agent edits and the live Hermes tree.
+The restricted OpenCode process now runs through Bubblewrap on supported Ubuntu
+hosts.
+
+The sandbox adds an operating-system boundary around the AI editing process:
+
+- mount, user, PID, IPC, and UTS namespaces are isolated;
+- the host filesystem is mounted read-only by default;
+- the normal user home is replaced with an isolated temporary home;
+- the staged source tree and ephemeral sandbox home are the only controlled writable host-backed mounts;
+- the live Hermes target is masked from the sandbox;
+- temporary and runtime directories are isolated;
+- Git metadata is still excluded before the agent starts;
+- the trusted outer harness remains the only component allowed to create the
+  production backup or deploy into the live target.
+
+OpenCode configuration required for the restricted repair agent is exposed only
+as narrowly scoped read-only mounts.
+
+When OpenCode provider authentication exists at its standard runtime location,
+that authentication file is mounted read-only because the OpenCode client needs
+it to call the configured model provider. The complete host home is not
+mounted into the sandbox. OpenCode external-directory permissions remain an
+additional control around agent file access.
+
+Production repair keeps host networking available because OpenCode must reach a
+remote model provider. The agent itself still has shell, web search, web fetch,
+Git, subagent, and external-directory capabilities denied. The deterministic sandbox reliability test uses the same shared-network mode as production and makes no provider calls.
+
+This boundary is therefore an OS filesystem and process isolation control, not a claim that the remote model client has zero network access.
+
+### Ubuntu AppArmor user-namespace policy
+
+Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
+
+On systems where that restriction is active, Open Cloud Assistant uses the
+Ubuntu-provided `bwrap-userns-restrict` AppArmor profile so Bubblewrap can
+construct the repair sandbox without globally disabling the operating-system
+user-namespace restriction.
+
+The installer does not set
+`kernel.apparmor_restrict_unprivileged_userns=0`.
+
+This preserves the host security policy while granting Bubblewrap the
+narrowly defined namespace capability required for the sandbox.
 
 ## Validation
 
 Run:
 
     integrations/self-repair/hermes-code-repair --self-test
+    tests/reliability/self-repair-sandbox.sh
+    tests/reliability/self-repair-rollback.sh
 
 The self-test does not invoke an AI model and does not modify the live Hermes
 installation. It verifies staging, syntax validation, change detection, and

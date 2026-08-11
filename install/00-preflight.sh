@@ -92,6 +92,8 @@ PACKAGES=(
     dbus-user-session
     procps
     rsync
+    bubblewrap
+    apparmor-profiles
 )
 
 for pkg in "${PACKAGES[@]}"; do
