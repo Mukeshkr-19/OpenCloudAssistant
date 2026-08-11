@@ -31,6 +31,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-yaml rsync
 
+      - name: P9 sandbox host preparation
+        run: |
+          sudo apt-get install -y bubblewrap apparmor apparmor-profiles
+
+          if [ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ] && [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = "1" ]; then
+              PROFILE_SOURCE=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+              PROFILE_TARGET=/etc/apparmor.d/bwrap-userns-restrict
+
+              if [ -f "$PROFILE_SOURCE" ]; then
+                  sudo install -m 0644 "$PROFILE_SOURCE" "$PROFILE_TARGET"
+                  sudo apparmor_parser -r "$PROFILE_TARGET"
+              fi
+          fi
+
+          bwrap --version
       - name: Fetch captured Hermes baseline
         run: |
           set -euo pipefail
