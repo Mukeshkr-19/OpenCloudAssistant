@@ -6,7 +6,7 @@ Do not "fix" a temporary provider outage by permanently hard-coding whichever NV
 
 ## Recommended free-first setup
 
-For v0.1.0, configure:
+For current release, configure:
 
 1. **NVIDIA** — dynamic primary/reviewer capacity when verified;
 2. **OpenRouter** — stable `openrouter/free` fallback route.
@@ -104,7 +104,7 @@ Expected doctor output is:
 SKIP  Gemini lane  blocked until independently verified
 ```
 
-Do not add a Gemini key expecting the v0.1.0 public router to start using it automatically.
+Do not add a Gemini key expecting the current release public router to start using it automatically.
 
 ## Refresh and verify Fleet
 

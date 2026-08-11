@@ -2,7 +2,7 @@
 
 Open Cloud Assistant is **not Apple-only**. The assistant core runs on Ubuntu and can be installed with CLI only.
 
-v0.1.0 channel status:
+Current channel status:
 
 | Channel | Status |
 |---|---|
@@ -161,11 +161,11 @@ API_SERVER_KEY=<generated secret>
 
 If an unsafe/nonlocal host is present, the wizard resets it to localhost.
 
-**v0.1.0 does not claim a release-validated browser runtime.** The service doctor intentionally fails Browser when it is selected so a local config file cannot be mistaken for a working public web deployment.
+**current release does not claim a release-validated browser runtime.** The service doctor intentionally fails Browser when it is selected so a local config file cannot be mistaken for a working public web deployment.
 
 Do not expose port 8642 directly to the internet. When experimenting, use an authenticated/private tunnel and understand the upstream Hermes API security model.
 
-If you want a clean prerelease doctor result, do not select Browser yet.
+If you want a clean current doctor result, do not select Browser yet.
 
 ## iMessage / Apple — optional
 

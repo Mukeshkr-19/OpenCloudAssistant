@@ -15,7 +15,7 @@ split complex work across temporary workers, and recover safely from selected
 code failures.
 
 > [!NOTE]
-> **Current release: v0.2.0.**
+> **Current release: v0.3.0.**
 > Ubuntu 24.04 ARM64 has real clean-machine and idempotency validation.
 > x86_64 has hosted CI/source compatibility validation; real-machine
 > acceptance remains deferred. Browser integration remains preview.
@@ -187,6 +187,18 @@ uptime SLA or production SLO.
 
 See [`docs/evidence/`](docs/evidence/).
 
+## Automatic prerequisite bootstrap
+
+`./setup.sh --install` checks the supported Ubuntu host and installs missing
+base operating-system packages through `apt-get` only when they are required.
+
+`./setup.sh --dry-run` never installs packages. Missing prerequisites are
+reported as `WOULD_INSTALL` entries.
+
+The bootstrap is intentionally limited to the small Ubuntu package set needed
+by Open Cloud Assistant; Hermes, Vellum, OpenCode and provider credentials
+remain handled by their dedicated installer stages.
+
 ## Operations
 
 The normal operator surface is intentionally small:
@@ -292,16 +304,3 @@ Open Cloud Assistant is an independent integration project built around upstream
 ## License
 
 Original Open Cloud Assistant integration, deployment, and documentation work is released under the [MIT License](LICENSE). Third-party components remain governed by their own licenses.
-
-
-## Automatic prerequisite bootstrap
-
-`./setup.sh --install` checks the supported Ubuntu host and installs missing
-base operating-system packages through `apt-get` only when they are required.
-
-`./setup.sh --dry-run` never installs packages. Missing prerequisites are
-reported as `WOULD_INSTALL` entries.
-
-The bootstrap is intentionally limited to the small Ubuntu package set needed
-by Open Cloud Assistant; Hermes, Vellum, OpenCode and provider credentials
-remain handled by their dedicated installer stages.

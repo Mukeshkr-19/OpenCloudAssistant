@@ -1,6 +1,6 @@
 # Open Cloud Assistant Roadmap
 
-This roadmap reflects the actual v0.1.0 prerelease state rather than the original bootstrap checklist.
+This roadmap tracks the validated public project from its historical v0.1.0 prerelease through the current v0.3.0 engineering baseline. Historical checklist entries intentionally retain their original release labels.
 
 ## Phase 1 — Public repository foundation
 
@@ -164,4 +164,26 @@ Deferred without blocking v0.2.0:
 - [ ] optional-channel end-to-end expansion
 - [ ] browser graduation from preview
 
-Future feature development belongs to post-v0.2.0 work.
+Future feature development belongs to post-v0.3.0 work.
+
+## v0.3.0 engineering baseline
+
+Completed after the immutable v0.2.0 release:
+
+- [x] OS-level Bubblewrap sandbox around the self-repair AI editing process
+- [x] Ubuntu AppArmor user-namespace integration without globally disabling the restriction
+- [x] deterministic sandbox filesystem/write-boundary acceptance
+- [x] existing trusted backup and rollback regression retained
+- [x] OCI Terraform root module
+- [x] Terraform provider lock for Linux amd64 and arm64
+- [x] hosted Terraform validation on x86_64 and ARM64
+- [x] sanitized real ARM64 operational evidence
+- [x] longitudinal evidence collector with privacy guards
+- [x] semantic CLI version reporting
+
+Current explicit limitations remain:
+
+- real x86_64 machine acceptance is deferred;
+- Telegram and Discord public end-to-end acceptance is pending;
+- Browser/Open WebUI remains preview;
+- Gemini remains blocked until independently verified.

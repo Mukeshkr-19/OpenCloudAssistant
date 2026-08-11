@@ -2,7 +2,7 @@
 
 You do not need Oracle Cloud to run Open Cloud Assistant. The public server reference targets Ubuntu 24.04 and the preflight accepts ARM64 (`aarch64`/`arm64`) and x86_64 (`x86_64`/`amd64`).
 
-> The clean release proof for v0.1.0 is Ubuntu 24.04 ARM64. x86_64 is accepted by the installer checks but still needs a clean end-to-end release proof before stable v1.0.
+> The clean release proof for current release is Ubuntu 24.04 ARM64. x86_64 is accepted by the installer checks but still needs a clean end-to-end release proof before stable v1.0.
 
 ## Recommended host characteristics
 
@@ -13,7 +13,7 @@ You do not need Oracle Cloud to run Open Cloud Assistant. The public server refe
 - Python 3;
 - enough memory for Hermes/Vellum plus the browser dependencies installed by upstream tooling.
 
-The known ARM64 release validation used a 2 OCPU / 12 GB class host. Smaller hosts may work but are not the v0.1.0 release reference.
+The known ARM64 release validation used a 2 OCPU / 12 GB class host. Smaller hosts may work but are not the current release release reference.
 
 ## SSH/networking
 

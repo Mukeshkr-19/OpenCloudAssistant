@@ -1,6 +1,10 @@
 # Oracle Cloud Setup
 
-This guide creates the Ubuntu ARM64 host used by the validated Open Cloud Assistant v0.1.0 deployment path.
+> **Infrastructure as code:** a validated OCI Terraform deployment is available
+> under [`../infra/terraform/oci`](../infra/terraform/oci/README.md). This guide
+> remains the manual OCI Console path.
+
+This guide creates the Ubuntu ARM64 host used by the validated Open Cloud Assistant current release deployment path.
 
 Oracle changes its console UI over time, so labels may move slightly. The architecture choices matter more than the exact screen layout.
 

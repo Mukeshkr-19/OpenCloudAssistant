@@ -47,10 +47,13 @@ case "$COMMAND" in
         ;;
 
     version)
+        VERSION_VALUE="$(cat "$ROOT/VERSION" 2>/dev/null || printf "%s" "unknown")"
+
         if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-            echo "Open Cloud Assistant $(git -C "$ROOT" rev-parse --short HEAD)"
+            VERSION_SHA="$(git -C "$ROOT" rev-parse --short HEAD)"
+            echo "Open Cloud Assistant v${VERSION_VALUE} (${VERSION_SHA})"
         else
-            echo "Open Cloud Assistant"
+            echo "Open Cloud Assistant v${VERSION_VALUE}"
         fi
         ;;
     help|-h|--help)

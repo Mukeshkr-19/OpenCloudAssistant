@@ -11,7 +11,7 @@ Then use the smallest relevant check below.
 
 ## `opencloud: command not found`
 
-v0.1.0 guarantees the wrapper inside the repository, not a global shell command.
+current release guarantees the wrapper inside the repository, not a global shell command.
 
 Use:
 
@@ -111,7 +111,7 @@ The core assistant should not fail merely because Zen is unavailable.
 
 ## Doctor: Gemini is `SKIP`
 
-Expected in v0.1.0:
+Expected current behavior:
 
 ```text
 SKIP  Gemini lane  blocked until independently verified
@@ -121,9 +121,9 @@ Do not remove the guard just to make every line say PASS.
 
 ## Doctor fails because Browser is selected
 
-Expected prerelease behavior. The Browser wizard prepares protected localhost API configuration, but the service layer intentionally marks the Browser runtime as an uncompleted release gate.
+Expected current behavior. The Browser wizard prepares protected localhost API configuration, but the service layer intentionally marks the Browser runtime as an uncompleted release gate.
 
-For the supported v0.1.0 path, reconfigure without Browser:
+For the supported current release path, reconfigure without Browser:
 
 ```bash
 ./bin/opencloud channels configure

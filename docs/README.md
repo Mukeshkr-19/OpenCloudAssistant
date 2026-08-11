@@ -34,10 +34,17 @@ Use this page as the documentation map for the public project.
 
 ## Command convention
 
-The v0.1.0 repository always contains its command wrapper at:
+The current release repository always contains its command wrapper at:
 
 ```bash
 ./bin/opencloud
 ```
 
 Documentation uses that form so commands work even when no global `opencloud` symlink is present. If your shell already resolves `opencloud`, either form is fine.
+
+## Infrastructure and operational evidence
+
+- **OCI Terraform:** [`../infra/terraform/oci/README.md`](../infra/terraform/oci/README.md)
+- **Operational evidence:** [`evidence/README.md`](evidence/README.md)
+- **Self-repair sandbox proof:** [`evidence/self-repair-sandbox-arm64.md`](evidence/self-repair-sandbox-arm64.md)
+- **Current real-host snapshot:** [`evidence/operational-snapshot-arm64.md`](evidence/operational-snapshot-arm64.md)

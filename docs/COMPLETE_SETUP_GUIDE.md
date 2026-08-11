@@ -1,8 +1,8 @@
 # Complete Setup Guide
 
-This is the beginner path for Open Cloud Assistant v0.1.0. It starts before you have a server and ends with a validated CLI assistant, configured AI providers, optional messaging, and always-on maintenance services.
+This is the beginner path for Open Cloud Assistant current release. It starts before you have a server and ends with a validated CLI assistant, configured AI providers, optional messaging, and always-on maintenance services.
 
-> **Release scope:** Ubuntu 24.04 on ARM64 is the clean-install path validated for this prerelease. The installer accepts x86_64, but a clean x86_64 end-to-end release proof is still pending. Browser/Open WebUI is preview-only. Telegram and Discord configuration are implemented, but public end-to-end messaging acceptance remains a stable-release gate.
+> **Release scope:** Ubuntu 24.04 on ARM64 is the clean-install path validated for this release. The installer accepts x86_64, but a clean x86_64 end-to-end release proof is still pending. Browser/Open WebUI is preview-only. Telegram and Discord configuration are implemented, but public end-to-end messaging acceptance remains a stable-release gate.
 
 ## 1. What you need
 
@@ -75,7 +75,7 @@ sudo apt-get update
 sudo apt-get install -y ca-certificates curl git xz-utils unzip python3 python3-venv python3-pip sudo dbus-user-session procps
 ```
 
-The public preflight checks the critical commands, but v0.1.0 does not automatically install every base OS package for you. Installing this list first matches the clean Ubuntu ARM64 release proof.
+The supported installer checks the required Ubuntu base packages. `./setup.sh --install` can bootstrap missing supported packages through `apt-get`, while `./setup.sh --dry-run` reports them as `WOULD_INSTALL` without changing the host. The list below remains useful when preparing the machine manually.
 
 ## 5. Clone Open Cloud Assistant
 
@@ -154,7 +154,7 @@ When no channel selection already exists, an interactive terminal displays:
 
 Multiple selections are allowed, such as `1,4` for Telegram + CLI.
 
-For a first public-prerelease deployment, CLI-only first is simpler because Browser is still preview and Telegram/Discord E2E acceptance is not yet complete.
+For a first public deployment, CLI-only first is simpler because Browser is still preview and Telegram/Discord E2E acceptance is not yet complete.
 
 ## 7. Make the installed CLIs visible in this shell
 
@@ -243,7 +243,7 @@ Doctor uses three states:
 
 A `SKIP` for Discord or iMessage is normal when you did not select them. `Gemini lane` is intentionally `SKIP` in this release because the public Fleet guard keeps Gemini blocked until independently verified.
 
-If you selected Browser, the service doctor intentionally reports the Browser runtime release gate as a failure because v0.1.0 has only the protected localhost configuration, not a release-validated browser service.
+If you selected Browser, the service doctor intentionally reports the Browser runtime release gate as a failure because current release has only the protected localhost configuration, not a release-validated browser service.
 
 ## 10. Start your first CLI conversation
 
@@ -316,7 +316,7 @@ Finally, message the bot from an allowed account.
 6. Run `./bin/opencloud services install` again.
 7. Check `./bin/opencloud services logs` if the bot does not connect.
 
-See [CHANNELS.md](CHANNELS.md) for current prerelease acceptance status and troubleshooting details.
+See [CHANNELS.md](CHANNELS.md) for current release acceptance status and troubleshooting details.
 
 ## 13. Keep it running after logout/reboot
 
@@ -400,9 +400,9 @@ For contributors or before a release update:
 
 Do not use `./setup.sh --test`; that is not a supported public command. Use `./setup.sh --dry-run` for the non-mutating setup check.
 
-## 17. What is not finished in v0.1.0
+## 17. What is not finished in current release
 
-The prerelease is intentionally transparent about its remaining gates:
+The release is intentionally transparent about its remaining gates:
 
 - real public Telegram end-to-end acceptance;
 - real public Discord end-to-end acceptance;

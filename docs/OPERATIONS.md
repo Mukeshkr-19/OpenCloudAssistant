@@ -131,7 +131,7 @@ Then verify:
 
 ## Re-run installation safely
 
-v0.1.0 was validated with a complete second install. Before re-running after source changes:
+current release was validated with a complete second install. Before re-running after source changes:
 
 ```bash
 ./setup.sh --dry-run
@@ -147,7 +147,7 @@ The live Hermes integration installer validates compatibility, creates local bac
 
 ## Updating the public repository
 
-There is no dedicated `opencloud upgrade` command in v0.1.0. Use normal Git carefully:
+There is no dedicated `opencloud upgrade` command in current release. Use normal Git carefully:
 
 ```bash
 cd ~/OpenCloudAssistant
@@ -193,7 +193,7 @@ chmod 600 ~/.opencloud/config.env
 chmod 600 ~/.opencloud/channels.json 2>/dev/null || true
 ```
 
-## Backup status in v0.1.0
+## Backup status
 
 Open Cloud Assistant has targeted rollback backups for integration/repair workflows, but it does **not** yet ship a complete user-facing backup/restore product.
 
@@ -203,4 +203,4 @@ Until a supported backup command exists, use your cloud provider's VM/block-volu
 
 ## Browser preview
 
-If Browser is selected, service doctor intentionally reports the release-validation gate. This is not fixed by exposing port 8642 to the internet. Either keep Browser unselected for the v0.1.0 stable path or treat it as experimental localhost-only functionality.
+If Browser is selected, service doctor intentionally reports the release-validation gate. This is not fixed by exposing port 8642 to the internet. Either keep Browser unselected for the current release stable path or treat it as experimental localhost-only functionality.

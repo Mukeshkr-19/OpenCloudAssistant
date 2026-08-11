@@ -112,7 +112,7 @@ The dispatcher tracks model/provider health and cooldowns. Failure switching is 
 
 Fleet discovery and Fleet permission are separate concerns. The generic dispatcher can understand that a provider exists, but the Hermes integration can still forbid routing to it.
 
-v0.1.0 keeps Gemini blocked until independently verified.
+current release keeps Gemini blocked until independently verified.
 
 ## Restricted self-repair
 
