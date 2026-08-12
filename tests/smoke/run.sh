@@ -28,6 +28,7 @@ test -x scripts/public-audit.sh
 "$ROOT/tests/smoke/fleet-install.sh"
 "$ROOT/tests/smoke/fleet-registry.sh"
 "$ROOT/tests/smoke/hermes-vellum.sh"
+"$ROOT/tests/smoke/task-profile.sh"
 "$ROOT/tests/smoke/channels.sh"
 "$ROOT/tests/smoke/services.sh"
 if [ -d "$HERMES_SOURCE/.git" ]; then

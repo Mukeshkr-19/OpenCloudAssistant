@@ -8,6 +8,7 @@ BASE="${OPEN_CLOUD_FLEET_HOME:-$HOME/.local/share/hermes-fleet}"
 REGISTRY="$BASE/registry"
 SRC_REFRESH="$ROOT/integrations/fleet/registry/refresh.py"
 SRC_VERIFY="$ROOT/integrations/fleet/registry/verify.py"
+SRC_RUNTIME="$ROOT/integrations/fleet/fleet_runtime.py"
 MODE="${1:---help}"
 
 render_file() {
@@ -20,14 +21,16 @@ render_file() {
 check_sources() {
     test -f "$SRC_REFRESH"
     test -f "$SRC_VERIFY"
+    test -f "$SRC_RUNTIME"
 
     local tmp
     tmp="$(mktemp -d)"
 
     render_file "$SRC_REFRESH" "$tmp/refresh.py"
     render_file "$SRC_VERIFY" "$tmp/verify.py"
+    cp "$SRC_RUNTIME" "$tmp/fleet_runtime.py"
 
-    python3 -m py_compile "$tmp/refresh.py" "$tmp/verify.py"
+    python3 -m py_compile "$tmp/refresh.py" "$tmp/verify.py" "$tmp/fleet_runtime.py"
 
     rm -rf "$tmp"
 
@@ -50,6 +53,7 @@ case "$MODE" in
 
         install -m 755 "$tmp/refresh.py" "$REGISTRY/refresh.py"
         install -m 755 "$tmp/verify.py" "$REGISTRY/verify.py"
+        install -m 644 "$SRC_RUNTIME" "$BASE/fleet_runtime.py"
 
         rm -rf "$tmp"
 

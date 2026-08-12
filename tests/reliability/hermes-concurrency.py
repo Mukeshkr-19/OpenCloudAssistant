@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import ast
 import contextvars
+import importlib.util
 import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -97,14 +101,10 @@ def verify_delegate_contract(max_children: int) -> None:
         if isinstance(node, ast.Call):
 
             if (
-                is_name(
-                    node.func,
-                    "DaemonThreadPoolExecutor",
-                )
-                or is_attr(
-                    node.func,
-                    "DaemonThreadPoolExecutor",
-                )
+                isinstance(node.func, ast.Name)
+                and node.func.id.endswith("ThreadPoolExecutor")
+                or isinstance(node.func, ast.Attribute)
+                and node.func.attr.endswith("ThreadPoolExecutor")
             ):
 
                 for kw in node.keywords:
@@ -154,10 +154,16 @@ def verify_delegate_contract(max_children: int) -> None:
         "delegate_task batch-size guard missing",
     )
 
-    require(
-        max_children == 3,
-        "OpenCloud reliability contract expects exactly 3 children",
-    )
+    require(max_children == 4, "OpenCloud reliability contract expects 4 children")
+
+    for required_text, message in (
+        ("_get_child_timeout()", "child timeout enforcement missing"),
+        ("_get_max_spawn_depth()", "spawn-depth enforcement missing"),
+        ("_get_inherit_mcp_toolsets()", "MCP inheritance contract missing"),
+        ("_unregister_subagent", "worker cleanup contract missing"),
+        ("if len(tasks) > max_children:", "dynamic batch ceiling missing"),
+    ):
+        require(required_text in source, message)
 
     print(
         "PASS delegate_task executor source contract"
@@ -168,6 +174,25 @@ def verify_delegate_contract(max_children: int) -> None:
     )
 
 
+def runtime_executor():
+    source = DELEGATE_SOURCE.read_text(encoding="utf-8")
+    if "DaemonThreadPoolExecutor(max_workers=max_children)" in source:
+        with tempfile.TemporaryDirectory(prefix="opencloud-daemon-compat-") as tmp:
+            materialized = Path(tmp) / "daemon_pool.py"
+            shutil.copy2(HERMES_ROOT / "tools/daemon_pool.py", materialized)
+            subprocess.run(
+                [sys.executable, str(ROOT / "integrations/hermes/daemon_pool_compat.py"), str(materialized)],
+                check=True,
+            )
+            spec = importlib.util.spec_from_file_location("opencloud_daemon_pool_test", materialized)
+            require(spec is not None and spec.loader is not None, "cannot load materialized daemon executor")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module.DaemonThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor
+    return ThreadPoolExecutor
+
+
 def run_parallel_proof(max_children: int) -> None:
 
     sys.path.insert(
@@ -175,9 +200,7 @@ def run_parallel_proof(max_children: int) -> None:
         str(HERMES_ROOT),
     )
 
-    from tools.daemon_pool import (
-        DaemonThreadPoolExecutor,
-    )
+    RuntimeExecutor = runtime_executor()
 
     child_sleep = 0.300
 
@@ -244,7 +267,7 @@ def run_parallel_proof(max_children: int) -> None:
 
     wall_start = time.perf_counter()
 
-    with DaemonThreadPoolExecutor(
+    with RuntimeExecutor(
         max_workers=max_children
     ) as executor:
 
@@ -296,13 +319,13 @@ def run_parallel_proof(max_children: int) -> None:
     require(
         len(unique_threads)
         == max_children,
-        "children did not occupy three worker threads",
+        "children did not occupy the configured worker threads",
     )
 
     require(
         peak_active
         == max_children,
-        "three-way concurrency was not observed",
+        "configured concurrency was not observed",
     )
 
     latest_start = max(
@@ -348,7 +371,7 @@ def run_parallel_proof(max_children: int) -> None:
     )
 
     print(
-        "PASS three concurrent Hermes executor workers"
+        "PASS configured concurrent Hermes executor workers"
     )
 
     print(
@@ -409,6 +432,17 @@ def run_parallel_proof(max_children: int) -> None:
     )
 
 
+def run_single_worker_proof(max_children: int) -> None:
+    RuntimeExecutor = runtime_executor()
+
+    calls = []
+    with RuntimeExecutor(max_workers=max_children) as executor:
+        result = executor.submit(lambda: calls.append(threading.get_ident()) or "done")
+        require(result.result(timeout=5.0) == "done", "single worker did not complete")
+    require(len(calls) == 1, "simple task unexpectedly filled the worker pool")
+    print("PASS simple task uses one worker rather than filling capacity")
+
+
 def main() -> None:
 
     policy = json.loads(
@@ -435,8 +469,18 @@ def main() -> None:
         policy.get(
             "max_spawn_depth"
         )
-        == 1,
+        == 2,
         "unexpected spawn-depth policy",
+    )
+
+    require(
+        policy.get("max_iterations") == 12,
+        "unexpected child iteration policy",
+    )
+
+    require(
+        policy.get("child_timeout_seconds") == 120,
+        "unexpected child timeout policy",
     )
 
     require(
@@ -467,6 +511,10 @@ def main() -> None:
     )
 
     run_parallel_proof(
+        max_children
+    )
+
+    run_single_worker_proof(
         max_children
     )
 

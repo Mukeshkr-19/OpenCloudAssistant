@@ -13,6 +13,10 @@ import yaml
 
 from hermes_cli.model_switch import list_provider_models
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fleet_runtime import fleet_root, registry_lock, verification_ttl_ms
+
 
 HOME = Path.home()
 
@@ -20,15 +24,11 @@ HERMES = HOME / ".hermes"
 
 CONFIG = HERMES / "config.yaml"
 
-ROOT = (
-    HOME
-    / ".local"
-    / "share"
-    / "hermes-fleet"
-    / "registry"
-)
+ROOT = fleet_root() / "registry"
 
 OUTPUT = ROOT / "models.json"
+
+VERIFICATION_TTL_MS = verification_ttl_ms()
 
 
 PROVIDERS = {
@@ -673,6 +673,21 @@ def main():
                     type(exc).__name__,
             }
 
+            # Discovery failure is not authoritative removal. Keep the last
+            # known rows available, but mark them stale so operators can see
+            # that this refresh did not confirm them.
+            group = spec["providerGroup"]
+            retained = 0
+            for old_row in previous.values():
+                if old_row.get("provider") != provider:
+                    continue
+                carried = dict(old_row)
+                carried["discoveryStale"] = True
+                carried["discoveryErrorType"] = type(exc).__name__
+                all_models.append(carried)
+                retained += 1
+            provider_status[provider]["retainedModelCount"] = retained
+            provider_status[provider]["degraded"] = True
             continue
 
 
@@ -759,10 +774,17 @@ def main():
                 "unverified"
             )
 
+            verified_at = old_row.get("verifiedAtMs") or old_row.get("lastProbeMs")
+            verification_stale = bool(
+                verification == "verified"
+                and (not verified_at or now - int(verified_at) >= VERIFICATION_TTL_MS)
+            )
+
 
             eligible = (
                 verification
                 == "verified"
+                and not verification_stale
                 and excluded
                 is None
             )
@@ -793,6 +815,15 @@ def main():
 
                 "verification":
                     verification,
+
+                "verifiedAtMs":
+                    verified_at,
+
+                "verificationStale":
+                    verification_stale,
+
+                "discoveryStale":
+                    False,
 
                 "productionEligible":
                     eligible,
@@ -889,6 +920,9 @@ def main():
 
         "updatedAtMs":
             now,
+
+        "lastVerificationRunMs":
+            old.get("lastVerificationRunMs", 0),
 
         "providerStatus":
             provider_status,
@@ -1016,4 +1050,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with registry_lock(ROOT):
+        main()

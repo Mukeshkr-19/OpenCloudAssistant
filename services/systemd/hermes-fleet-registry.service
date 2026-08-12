@@ -7,5 +7,6 @@ Wants=network-online.target
 Type=oneshot
 UMask=0077
 EnvironmentFile=-__OPEN_CLOUD_CONFIG__
+Environment=OPEN_CLOUD_FLEET_HOME=__FLEET_HOME__
 Environment=PATH=__OPEN_CLOUD_HOME__/.local/bin:__OPEN_CLOUD_HOME__/.bun/bin:__OPEN_CLOUD_HOME__/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=__HERMES_PYTHON__ __FLEET_REGISTRY__/refresh.py

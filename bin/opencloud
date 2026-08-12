@@ -23,6 +23,28 @@ case "$COMMAND" in
         shift || true
         exec python3 "$ROOT/scripts/channels.py" "$@"
         ;;
+    task-profile)
+        shift || true
+        case "${1:-help}" in
+            apply)
+                shift || true
+                exec python3 "$ROOT/scripts/task-profile.py" apply "$@"
+                ;;
+            verify)
+                shift || true
+                exec python3 "$ROOT/scripts/task-profile.py" verify "$@"
+                ;;
+            help|-h|--help)
+                echo "Usage:"
+                echo "  opencloud task-profile apply --name NAME"
+                echo "  opencloud task-profile verify --name NAME"
+                ;;
+            *)
+                echo "Usage: opencloud task-profile [apply|verify] --name NAME" >&2
+                exit 2
+                ;;
+        esac
+        ;;
     services)
         shift || true
         exec "$ROOT/scripts/services.sh" "$@"
@@ -67,6 +89,8 @@ case "$COMMAND" in
         echo "  opencloud providers configure"
         echo "  opencloud channels configure"
         echo "  opencloud channels status"
+        echo "  opencloud task-profile apply --name NAME"
+        echo "  opencloud task-profile verify --name NAME"
         echo "  opencloud fleet status"
         echo "  opencloud fleet paths"
         echo "  opencloud fleet refresh"

@@ -44,15 +44,23 @@ Canonical public orchestration policy:
 
 ```text
 orchestrator_enabled = true
-max_concurrent_children = 3
-max_iterations = 50
-max_spawn_depth = 1
+    max_concurrent_children = 4
+    max_iterations = 12
+    child_timeout_seconds = 120
+    max_spawn_depth = 2
 inherit_mcp_toolsets = true
 ```
 
 Workers are temporary executions for pieces of the **same task**. They are not persistent personas such as a permanent research agent, coding agent, and reviewer agent.
 
-Limiting spawn depth to one prevents uncontrolled recursive agent trees while still allowing useful parallel work.
+The four-worker limit is capacity, not a target. Simple work stays on Hermes or
+one child. Depth two permits a bounded orchestrator wave; the timeout and child
+iteration cap prevent abandoned workers from wandering indefinitely. The pinned
+Hermes baseline does not expose a hard aggregate worker budget across repeated
+waves, so OpenCloud does not claim one.
+
+Private task profiles can impose stricter turn, concurrency, depth, timeout, and
+per-tool MCP limits as described in [TASK_PROFILES.md](TASK_PROFILES.md).
 
 ## Vellum: separate personal-context layer
 
@@ -129,7 +137,7 @@ flowchart LR
     P -->|pass| K[Keep validated repair]
 ```
 
-The coding model does **not** own Git push, production service control, secret files, or broad filesystem/network access. It edits a staging copy under restricted tool permissions. The outer harness performs validation, backup, deployment, and rollback.
+The coding model does **not** own Git push, production service control, or production-tree writes. It may fully edit or rewrite the staged repair copy under a restricted OpenCode policy. Bubblewrap masks the production target and replaces HOME, while other host paths remain read-only visible and shared-network mode permits provider access. The outer harness performs validation, backup, deployment, verification, and rollback.
 
 The public repair workflow does not automatically commit/push Git or restart Hermes.
 

@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Deterministic Fleet discovery retention and verification-TTL checks."""
+
+import importlib.util
+import json
+import sys
+import tempfile
+import types
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def main():
+    hermes_cli = types.ModuleType("hermes_cli")
+    model_switch = types.ModuleType("hermes_cli.model_switch")
+    model_switch.list_provider_models = lambda _: []
+    runtime = types.ModuleType("hermes_cli.runtime_provider")
+    runtime.resolve_runtime_provider = lambda *args, **kwargs: None
+    agent = types.ModuleType("agent")
+    credentials = types.ModuleType("agent.credential_pool")
+    credentials.load_pool = lambda: None
+    sys.modules.update({"hermes_cli": hermes_cli, "hermes_cli.model_switch": model_switch,
+                        "hermes_cli.runtime_provider": runtime, "agent": agent,
+                        "agent.credential_pool": credentials})
+    refresh = load("fleet_refresh", ROOT / "integrations/fleet/registry/refresh.py")
+    verify = load("fleet_verify", ROOT / "integrations/fleet/registry/verify.py")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        output = Path(tmp) / "models.json"
+        old = {
+            "models": [
+                {"provider": "opencode-zen", "providerGroup": "zen", "id": "keep",
+                 "verification": "verified", "verifiedAtMs": 1, "lastProbeMs": 1,
+                 "productionEligible": True, "excludedReason": None},
+                {"provider": "nvidia", "providerGroup": "nvidia", "id": "remove",
+                 "verification": "verified", "verifiedAtMs": 1, "lastProbeMs": 1,
+                 "productionEligible": True, "excludedReason": None},
+            ]
+        }
+        output.write_text(json.dumps(old))
+        refresh.ROOT = Path(tmp)
+        refresh.OUTPUT = output
+        refresh.CONFIG = Path(tmp) / "missing.yaml"
+        refresh.configured_seeds = lambda: {"zen": set(), "nvidia": set()}
+
+        for error in (TimeoutError(), ValueError("malformed"), OSError("http")):
+            output.write_text(json.dumps(old))
+            refresh.discover = lambda aliases, exc=error: (_ for _ in ()).throw(exc)
+            refresh.main()
+            data = json.loads(output.read_text())
+            assert {row["id"] for row in data["models"]} == {"keep", "remove"}
+            assert all(row["discoveryStale"] for row in data["models"])
+
+        # Empty discovery is failure-equivalent; a successful authoritative
+        # response for NVIDIA removes its old model.
+        def discovery(aliases):
+            if "opencode-zen" in aliases:
+                raise RuntimeError("empty")
+            return "nvidia", [{"id": "replacement", "metadata": {}}]
+        output.write_text(json.dumps(old))
+        refresh.discover = discovery
+        refresh.main()
+        data = json.loads(output.read_text())
+        assert {row["id"] for row in data["models"]} == {"keep", "replacement"}
+
+        assert verify.verification_is_fresh({"verification": "verified", "verifiedAtMs": 100}, 101)
+        assert not verify.verification_is_fresh(
+            {"verification": "verified", "verifiedAtMs": 100}, 100 + verify.VERIFICATION_TTL_MS
+        )
+        stale = {
+            "models": [{"provider": "opencode-zen", "providerGroup": "zen", "id": "stale",
+                        "verification": "verified", "verifiedAtMs": 1,
+                        "lastProbeMs": 1, "excludedReason": None, "configuredSeed": True}],
+            "productionModels": {"zen": ["stale"], "nvidia": []},
+        }
+        output.write_text(json.dumps(stale))
+        verify.REGISTRY = output
+        verify.TARGET = {"zen": 1, "nvidia": 0}
+        verify.probe = lambda provider, model: (True, "verified", False, "synthetic")
+        verify.time.time = lambda: 1_000_000
+        verify.main()
+        reprobed = json.loads(output.read_text())["models"][0]
+        assert reprobed["verification"] == "verified"
+        assert reprobed["verifiedAtMs"] == 1_000_000_000
+        reprobed["verifiedAtMs"] = 1
+        output.write_text(json.dumps({"models": [reprobed], "productionModels": {"zen": ["stale"], "nvidia": []}}))
+        verify.probe = lambda provider, model: (False, "no_tool_call", False, "synthetic")
+        verify.time.time = lambda: 2_000_000
+        verify.main()
+        failed = json.loads(output.read_text())
+        assert failed["models"][0]["verification"] == "incompatible"
+        assert failed["productionModels"]["zen"] == []
+
+    print("PASS failed discovery retains degraded last-known-good rows")
+    print("PASS successful discovery authoritatively removes absent models")
+    print("PASS model verification freshness expires at configured TTL")
+    print("PASS stale verified model is re-probed and refreshes verifiedAtMs")
+    print("PASS failed stale re-probe demotes model from production")
+    print("FLEET_REGISTRY_STATE_RELIABILITY: PASS")
+
+
+if __name__ == "__main__":
+    main()

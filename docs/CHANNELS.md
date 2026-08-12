@@ -173,6 +173,12 @@ Selecting iMessage asks optionally for Photon project configuration. The channel
 
 No Apple device, Apple ID, Photon project, or iMessage credential is required for CLI, Telegram, or Discord installations.
 
+OpenCloud configures the upstream BlueBubbles/iMessage display as final-only.
+Tool progress, reasoning, streaming, interim assistant messages, long-running
+notices, iteration detail, and thinking progress stay out of the conversation.
+This does not remove CLI/operator diagnostics. The upstream adapter splits long
+final responses into ordered messages.
+
 ## Advanced channels
 
 Selecting Advanced delegates configuration to upstream:

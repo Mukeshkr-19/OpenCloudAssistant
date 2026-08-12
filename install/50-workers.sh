@@ -13,9 +13,10 @@ p = Path(sys.argv[1])
 data = json.loads(p.read_text())
 required = {
     "orchestrator_enabled": True,
-    "max_concurrent_children": 3,
-    "max_iterations": 50,
-    "max_spawn_depth": 1,
+    "max_concurrent_children": 4,
+    "max_iterations": 12,
+    "child_timeout_seconds": 120,
+    "max_spawn_depth": 2,
     "inherit_mcp_toolsets": True,
 }
 for key, value in required.items():

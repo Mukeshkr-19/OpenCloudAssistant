@@ -43,6 +43,10 @@ printf "%s\n" "delegation:" "  max_concurrent_children: 3" \
 printf "%s\n" "def main():" "    return 0" \
     > "$H/.config/hermes-vellum/mcp/server.py"
 
+printf "%s\n" "#!/usr/bin/env python3" "raise SystemExit(0)" \
+    > "$H/.config/hermes-vellum/mcp/worker.py"
+chmod 755 "$H/.config/hermes-vellum/mcp/worker.py"
+
 printf "%s\n" "#!/usr/bin/env bash" "exit 0" \
     > "$H/.local/bin/hermes-code-repair"
 

@@ -12,15 +12,13 @@ from typing import Any
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fleet_runtime import fleet_root
+
 
 HOME = Path.home()
 
-BASE = (
-    HOME
-    / ".local"
-    / "share"
-    / "hermes-fleet"
-)
+BASE = fleet_root()
 
 FLEET_CONFIG = (
     BASE

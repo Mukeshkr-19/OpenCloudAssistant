@@ -5,6 +5,7 @@ export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:---dry-run}"
+FLEET="${OPEN_CLOUD_FLEET_HOME:-$HOME/.local/share/hermes-fleet}"
 
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 
@@ -24,10 +25,12 @@ show_retained() {
     echo "    Hermes source, configuration, sessions and history"
     echo "  $HOME/.local/share/vellum"
     echo "    Vellum memory and runtime state"
-    echo "  $HOME/.local/share/hermes-fleet"
+    echo "  $FLEET"
     echo "    Fleet registry and health history"
     echo "  $HOME/.config/hermes-vellum"
     echo "    Vellum bridge state and integration files"
+    echo "  $HOME/.opencloud/task-profiles"
+    echo "    private local task profiles"
     echo "  hermes-gateway.service"
     echo "    upstream Hermes service is not deleted or disabled"
 }

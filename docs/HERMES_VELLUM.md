@@ -22,9 +22,10 @@ The MCP server runs through the local Hermes Python environment and receives ser
 The canonical public policy explicitly configures:
 
     orchestrator_enabled = true
-    max_concurrent_children = 3
-    max_iterations = 50
-    max_spawn_depth = 1
+    max_concurrent_children = 4
+    max_iterations = 12
+    child_timeout_seconds = 120
+    max_spawn_depth = 2
     inherit_mcp_toolsets = true
 
 The installer does not replace unrelated delegation configuration such as user-defined provider or model settings.
@@ -57,11 +58,22 @@ For explicit remember, save, update, correct, or forget requests, Hermes uses
 start_vellum_task once and polls the same task with get_vellum_task until the
 mutation completes or fails.
 
+The bridge installer places both `server.py` and `worker.py` under
+`~/.config/hermes-vellum/mcp/`. Mutation tasks launch the worker with the same
+Python interpreter that is running the MCP server; no separately named or
+privately provisioned Vellum virtual environment is required. The worker uses
+the supported `vellum message` command and stores
+only bounded task state under the private bridge directory.
+
 The asynchronous task path is not required for ordinary personal-context
 retrieval.
 
 Normal user-facing responses must not expose MCP metadata, task IDs, raw JSON,
 model routing, stack traces, or internal retrieval diagnostics.
+
+Restrictive private task profiles can allow only `get_user_context` from the
+Vellum server. Delegated children inherit the parent's MCP surface by
+intersection and cannot regain other Vellum tools.
 
 ## Gateway lifecycle notifications
 

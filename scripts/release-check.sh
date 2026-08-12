@@ -6,6 +6,10 @@ cd "$ROOT"
 
 MODE="${1:---check}"
 ALLOW_DIRTY="${OPEN_CLOUD_RELEASE_ALLOW_DIRTY:-0}"
+YAML_PYTHON="${OPEN_CLOUD_HERMES_PYTHON:-$HOME/.hermes/hermes-agent/venv/bin/python}"
+if [ ! -x "$YAML_PYTHON" ] || ! "$YAML_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+    YAML_PYTHON="$(command -v python3)"
+fi
 
 static_checks() {
 
@@ -37,7 +41,7 @@ for p in Path(\".\").rglob(\"*.py\"):
 print(\"SOURCE_SYNTAX: PASS\")
 "
 
-    python3 -c "
+    "$YAML_PYTHON" -c "
 import yaml
 from pathlib import Path
 

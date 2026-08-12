@@ -11,7 +11,7 @@ PATCH2="$ROOT/integrations/hermes/hermes-live.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
-FILES="agent/agent_init.py agent/chat_completion_helpers.py tools/delegate_tool.py agent/hermes_fleet_bridge.py"
+FILES="agent/agent_init.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py cron/scheduler.py gateway/run.py agent/hermes_fleet_bridge.py"
 MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1"
 
 require_source() {
@@ -52,6 +52,15 @@ validate_tree() {
         }
     done
 
+    grep -qF "OPEN_CLOUD_RESTRICTIVE_CRON_FAIL_CLOSED_V1" "$tree/cron/scheduler.py" || {
+        echo "ERROR: restrictive cron fail-closed marker missing" >&2
+        return 1
+    }
+    grep -qF "HERMES_SILENT_GATEWAY_LIFECYCLE_NOTICE_V1" "$tree/gateway/run.py" || {
+        echo "ERROR: gateway lifecycle compatibility marker missing" >&2
+        return 1
+    }
+
     for rel in $FILES; do
         compile_file "$tree/$rel"
     done
@@ -72,6 +81,12 @@ materialize() {
     git -C "$out" apply --check "$PATCH2"
     git -C "$out" apply "$PATCH2"
 
+    if [ -f "$out/tools/daemon_pool.py" ]; then
+        python3 "$ROOT/integrations/hermes/daemon_pool_compat.py" "$out/tools/daemon_pool.py"
+    fi
+    python3 "$ROOT/integrations/hermes/restrictive_cron.py" "$out/cron/scheduler.py"
+    python3 "$ROOT/integrations/hermes/silent_gateway_lifecycle.py" "$out/gateway/run.py"
+
     validate_tree "$out"
 }
 
@@ -83,6 +98,8 @@ already_installed() {
     for marker in $MARKERS; do
         grep -RqsF "$marker" "$HERMES_ROOT/agent" "$HERMES_ROOT/tools" || return 1
     done
+    grep -qF "OPEN_CLOUD_RESTRICTIVE_CRON_FAIL_CLOSED_V1" "$HERMES_ROOT/cron/scheduler.py" || return 1
+    grep -qF "HERMES_SILENT_GATEWAY_LIFECYCLE_NOTICE_V1" "$HERMES_ROOT/gateway/run.py" || return 1
 }
 
 backup_live() {
@@ -198,13 +215,3 @@ case "$MODE" in
         exit 2
         ;;
 esac
-
-# OPEN_CLOUD_SILENT_GATEWAY_LIFECYCLE_V1
-GATEWAY_RUN="$TARGET_HOME/.hermes/hermes-agent/gateway/run.py"
-GATEWAY_PATCH="$ROOT/integrations/hermes/silent_gateway_lifecycle.py"
-
-if [ -f "$GATEWAY_RUN" ] && [ -f "$GATEWAY_PATCH" ]; then
-    python3 "$GATEWAY_PATCH" "$GATEWAY_RUN"
-    python3 -m py_compile "$GATEWAY_RUN"
-    grep -qF "HERMES_SILENT_GATEWAY_LIFECYCLE_NOTICE_V1" "$GATEWAY_RUN"
-fi

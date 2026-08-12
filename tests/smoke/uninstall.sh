@@ -51,6 +51,9 @@ printf "%s\n" \
 
 chmod 755 "$BIN/systemctl"
 
+mkdir -p "$HOME_DIR/.opencloud/task-profiles"
+printf '%s\n' '{"private":true}' > "$HOME_DIR/.opencloud/task-profiles/example.json"
+
 PLAN="$(
     HOME="$HOME_DIR" \
     PATH="$BIN:/usr/bin:/bin" \
@@ -73,6 +76,7 @@ test -f "$HOME_DIR/.opencloud/config.env"
 test -f "$HOME_DIR/.hermes/config.yaml"
 test -f "$HOME_DIR/.local/share/vellum/keep.txt"
 test -f "$HOME_DIR/.local/share/hermes-fleet/keep.txt"
+test -f "$HOME_DIR/.opencloud/task-profiles/example.json"
 
 HELP="$(bin/opencloud help)"
 [[ "$HELP" == *"opencloud uninstall"* ]]

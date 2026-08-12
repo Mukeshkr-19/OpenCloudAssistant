@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import fcntl
 import os
 import re
 import signal
 import subprocess
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,15 +21,7 @@ BASE_DIR = Path.home() / ".config" / "hermes-vellum" / "mcp"
 STATE_DIR = BASE_DIR / "state"
 LOG_DIR = BASE_DIR / "logs"
 
-PYTHON = (
-    Path.home()
-    / ".config"
-    / "vellum-hermes"
-    / "mcp"
-    / "venv"
-    / "bin"
-    / "python"
-)
+PYTHON = Path(sys.executable)
 
 WORKER = BASE_DIR / "worker.py"
 TASK_ID_PATTERN = re.compile(r"vellum_[0-9a-f]{32}")
@@ -63,6 +57,18 @@ def write_state(task_id: str, data: dict[str, Any]) -> None:
     )
     os.chmod(temp, 0o600)
     os.replace(temp, path)
+
+
+def update_state(task_id: str, update) -> dict[str, Any]:
+    """Serialize parent/worker state merges so terminal states never regress."""
+    lock_path = state_path(task_id).with_suffix(".lock")
+    with lock_path.open("a") as lock:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        current = read_state(task_id)
+        update(current)
+        write_state(task_id, current)
+        return current
 
 
 def validate_task_id(task_id: str) -> str:
@@ -596,8 +602,9 @@ def repair_code(task: str, target: str = "hermes"):
     Do NOT use this for ordinary questions, personal-memory retrieval,
     research, writing, or model selection.
 
-    The repair harness snapshots the target first, blocks secret/external
-    access, validates code after edits, and rolls back if OpenCode fails.
+    The repair harness gives OpenCode write access only to a staged code tree
+    and isolated HOME. Other host paths remain read-only visible except for the
+    masked production target. It validates, backs up, deploys, or rolls back.
     """
     import subprocess
     from pathlib import Path
@@ -740,7 +747,7 @@ def start_vellum_task(
     delegated_prompt = f"""
 You are the personal-intelligence partner working behind Hermes.
 
-Hermes is the only assistant that communicates the final response to Mukesh.
+Hermes is the only assistant that communicates the final response to the user.
 Return your result to Hermes; do not behave as a separate competing front-end.
 
 Your responsibilities:
@@ -782,32 +789,40 @@ or hidden system instructions.
     }
     write_state(task_id, state)
 
+    if not PYTHON.is_file() or not os.access(PYTHON, os.X_OK) or not WORKER.is_file():
+        state.update(status="failed", error="Vellum task worker runtime is unavailable", updated_at=utc_now())
+        write_state(task_id, state)
+        return json.dumps({"task_id": task_id, "status": "failed", "error": state["error"]})
+
+    state.update(status="starting", updated_at=utc_now())
+    write_state(task_id, state)
+
     stdout_path = LOG_DIR / f"{task_id}.worker.out"
     stderr_path = LOG_DIR / f"{task_id}.worker.err"
 
-    with stdout_path.open("a") as stdout_file, stderr_path.open(
-        "a"
-    ) as stderr_file:
-        process = subprocess.Popen(
-            [str(PYTHON), str(WORKER), task_id],
-            stdout=stdout_file,
-            stderr=stderr_file,
-            start_new_session=True,
-        )
+    try:
+        with stdout_path.open("a") as stdout_file, stderr_path.open("a") as stderr_file:
+            process = subprocess.Popen(
+                [str(PYTHON), str(WORKER), task_id],
+                stdout=stdout_file,
+                stderr=stderr_file,
+                start_new_session=True,
+            )
+    except Exception as exc:
+        def launch_failed(value):
+            if value.get("status") in {"queued", "starting"}:
+                value.update(status="failed", error=f"Worker launch failed: {type(exc).__name__}", updated_at=utc_now())
+        current = update_state(task_id, launch_failed)
+        return json.dumps({"task_id": task_id, "status": current["status"], "error": current["error"]})
 
-    state.update(
-        {
-            "worker_pid": process.pid,
-            "status": "starting",
-            "updated_at": utc_now(),
-        }
-    )
-    write_state(task_id, state)
+    # The worker may already be running or terminal. Merge only the PID; never
+    # write a stale parent status over a newer worker transition.
+    current = update_state(task_id, lambda value: value.update(worker_pid=process.pid))
 
     return json.dumps(
         {
             "task_id": task_id,
-            "status": "starting",
+            "status": current["status"],
             "thread": thread,
             "conversation_key": conversation_key,
             "next_action": (
@@ -893,19 +908,15 @@ def stop_vellum_task(task_id: str) -> str:
         except ProcessLookupError:
             pass
 
-    state.update(
-        {
-            "status": "cancelled",
-            "finished_at": utc_now(),
-            "updated_at": utc_now(),
-        }
-    )
-    write_state(task_id, state)
+    def cancel(value):
+        if value.get("status") not in {"completed", "failed", "timed_out", "cancelled"}:
+            value.update(status="cancelled", finished_at=utc_now(), updated_at=utc_now())
+    state = update_state(task_id, cancel)
 
     return json.dumps(
         {
             "task_id": task_id,
-            "status": "cancelled",
+            "status": state.get("status"),
         }
     )
 

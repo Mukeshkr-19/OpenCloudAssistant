@@ -28,6 +28,12 @@ grep -qF -- "--dir" integrations/self-repair/hermes-code-repair
 grep -qF "bwrap" integrations/self-repair/hermes-code-repair
 grep -qF -- "--unshare-all" integrations/self-repair/hermes-code-repair
 grep -qF -- "--share-net" integrations/self-repair/hermes-code-repair
+grep -qF "flock -n" integrations/self-repair/hermes-code-repair
+grep -qF "repair-in-progress" integrations/self-repair/hermes-code-repair
+grep -qF "os.fsync" integrations/self-repair/hermes-code-repair
+grep -qF "write_transaction_marker" integrations/self-repair/hermes-code-repair
+grep -qF "read_transaction_backup" integrations/self-repair/hermes-code-repair
+grep -qF "trap interrupted INT TERM" integrations/self-repair/hermes-code-repair
 grep -qF -- "--tmpfs" integrations/self-repair/hermes-code-repair
 grep -qF "REPAIR_SANDBOX: bubblewrap" integrations/self-repair/hermes-code-repair
 grep -qF "production-target-masked" integrations/self-repair/hermes-code-repair

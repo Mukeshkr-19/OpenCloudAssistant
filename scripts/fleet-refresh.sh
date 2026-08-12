@@ -19,7 +19,7 @@ load_provider_env() {
 
     while IFS="=" read -r key value; do
         case "$key" in
-            NVIDIA_API_KEY|OPENROUTER_API_KEY)
+            NVIDIA_API_KEY|OPENROUTER_API_KEY|OPEN_CLOUD_MODEL_VERIFICATION_TTL_SECONDS)
                 export "$key=$value"
                 ;;
         esac

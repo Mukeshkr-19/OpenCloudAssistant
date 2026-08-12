@@ -14,6 +14,21 @@ productionModels, and quarantineModels.
 The verification process updates compatibility state, production eligibility, and
 lastVerificationRunMs in the same registry.
 
+Successful compatibility is fresh for 24 hours by default. After that, a model
+becomes eligible for another synthetic tool-call probe; successful probes refresh
+`verifiedAtMs`, while failures remove production eligibility. Override the interval
+with `OPEN_CLOUD_MODEL_VERIFICATION_TTL_SECONDS` in `~/.opencloud/config.env`.
+The value must be an integer from `0` through `31536000` seconds. `0` disables
+freshness caching, making every verified model eligible for re-probe on each
+verifier run; negative, malformed, and larger values fail with a concise
+configuration error rather than a traceback.
+
+All Fleet components resolve their root from `OPEN_CLOUD_FLEET_HOME`, defaulting
+to `~/.local/share/hermes-fleet`. The dispatcher, registry workers, session-pin
+key, Hermes bridge, doctor, and systemd rendering share that policy.
+Discovery freshness, provider cooldowns, quarantine, and capability verification
+remain separate states. Refresh and verification serialize through `registry.lock`.
+
 ## Native proof
 
 A native-proof.json file may exist on an already-proven deployment, but it is not

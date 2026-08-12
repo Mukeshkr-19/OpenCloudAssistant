@@ -13,6 +13,11 @@ The service layer manages:
 
 Registry discovery and compatibility verification run periodically.
 
+Verifier probes retain their 45-second individual timeout. The verifier oneshot
+also has a 15-minute `TimeoutStartSec` ceiling for the complete bounded pass, so
+a pathological provider sequence becomes a failed run instead of occupying the
+timer indefinitely.
+
 Provider credentials are loaded at runtime from:
 
     ~/.opencloud/config.env
@@ -29,7 +34,9 @@ service installation delegates gateway creation to:
     hermes gateway install
 
 Open Cloud Assistant adds a systemd drop-in to load the local Open Cloud
-Assistant configuration environment.
+Assistant configuration environment and the canonical Fleet root. The same
+upstream gateway also runs Hermes' multiplexed cron scheduler for every served
+private task profile; OpenCloud does not install a second gateway or scheduler.
 
 CLI-only installations do not require the messaging gateway.
 

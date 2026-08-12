@@ -35,6 +35,7 @@ OPEN_CLOUD_FLEET_HOME="$TMP/fleet" install/75-fleet-registry.sh --install
 
 test -f "$TMP/fleet/registry/refresh.py"
 test -f "$TMP/fleet/registry/verify.py"
+test -f "$TMP/fleet/fleet_runtime.py"
 
 echo "SMOKE: isolated install PASS"
 
@@ -48,7 +49,8 @@ chmod 600 "$CONFIG"
 
 OPEN_CLOUD_CONFIG="$CONFIG" scripts/providers.sh status
 
-test "$(stat -c %a "$CONFIG")" = "600"
+MODE="$(stat -c %a "$CONFIG" 2>/dev/null || stat -f %Lp "$CONFIG")"
+test "$MODE" = "600"
 
 echo "SMOKE: provider config PASS"
 
