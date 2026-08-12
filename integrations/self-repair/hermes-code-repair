@@ -302,7 +302,7 @@ copy_code_tree() {
     local dst="$2"
 
     mkdir -p "$dst"
-    rsync -a --delete \
+    rsync -a --checksum --delete \
         --exclude ".git/" \
         --exclude ".env" \
         --exclude ".env.*" \
