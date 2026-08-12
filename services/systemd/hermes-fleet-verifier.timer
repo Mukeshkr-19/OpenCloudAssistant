@@ -2,10 +2,9 @@
 Description=Periodically verify Open Cloud Assistant dynamic model compatibility
 
 [Timer]
-OnBootSec=15min
+OnActiveSec=15min
 OnUnitActiveSec=6h
 RandomizedDelaySec=10min
-Persistent=true
 Unit=hermes-fleet-verifier.service
 
 [Install]

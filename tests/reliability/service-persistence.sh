@@ -20,6 +20,34 @@ require_contains() {
     }
 }
 
+require_timer_contract() {
+    local file="$1"
+    local initial="$2"
+    local initial_sources
+    local schedule_sources
+
+    require_contains "$file" "OnActiveSec=$initial"
+    require_contains "$file" "OnUnitActiveSec=6h"
+    require_contains "$file" "RandomizedDelaySec=10min"
+
+    initial_sources="$(grep -Ec '^(OnActiveSec|OnBootSec|OnStartupSec|OnCalendar)=' "$file")"
+    [ "$initial_sources" = "1" ] || {
+        echo "FAIL expected exactly one initial schedule source in $file" >&2
+        exit 1
+    }
+
+    schedule_sources="$(grep -Ec '^(OnActiveSec|OnBootSec|OnStartupSec|OnUnitActiveSec|OnUnitInactiveSec|OnCalendar)=' "$file")"
+    [ "$schedule_sources" = "2" ] || {
+        echo "FAIL expected only initial and recurring schedule sources in $file" >&2
+        exit 1
+    }
+
+    if grep -q '^Persistent=' "$file"; then
+        echo "FAIL Persistent only applies to OnCalendar timers: $file" >&2
+        exit 1
+    fi
+}
+
 echo "Open Cloud Assistant service persistence reliability test"
 
 echo
@@ -33,15 +61,8 @@ require_contains     services/systemd/hermes-fleet-registry.timer     "WantedBy=
 
 require_contains     services/systemd/hermes-fleet-verifier.timer     "WantedBy=timers.target"
 
-require_contains     services/systemd/hermes-fleet-registry.timer     "OnBootSec=8min"
-
-require_contains     services/systemd/hermes-fleet-verifier.timer     "OnBootSec=15min"
-
-for timer in services/systemd/hermes-fleet-registry.timer services/systemd/hermes-fleet-verifier.timer; do
-    require_contains "$timer" "OnUnitActiveSec=6h"
-    require_contains "$timer" "RandomizedDelaySec=10min"
-    require_contains "$timer" "Persistent=true"
-done
+require_timer_contract services/systemd/hermes-fleet-registry.timer 8min
+require_timer_contract services/systemd/hermes-fleet-verifier.timer 15min
 
 require_contains     "$INSTALLER"     "systemctl --user enable \\"
 
@@ -99,7 +120,11 @@ case "$command" in
     restart)
         for unit in "$@"; do
             touch "$STATE/$unit.active"
-            printf '%s\n' 123456789 > "$STATE/$unit.next"
+            if grep -q '^OnActiveSec=' "${FAKE_SYSTEMD_DIR:?}/$unit"; then
+                printf '%s\n' 123456789 > "$STATE/$unit.next"
+            else
+                printf '%s\n' infinity > "$STATE/$unit.next"
+            fi
             count="$(cat "$STATE/$unit.restarts" 2>/dev/null || printf '%s' 0)"
             printf '%s\n' "$((count + 1))" > "$STATE/$unit.restarts"
         done
@@ -121,6 +146,7 @@ chmod 755 "$BIN/loginctl"
 run_fake_install() {
     PATH="$BIN:$PATH" \
     FAKE_SYSTEMD_STATE="$SYSTEMD_STATE" \
+    FAKE_SYSTEMD_DIR="$HOME_TARGET/.config/systemd/user" \
     OPEN_CLOUD_HOME="$HOME_TARGET" \
     OPEN_CLOUD_FLEET_HOME="$FLEET" \
     OPEN_CLOUD_SYSTEMD_DIR="$HOME_TARGET/.config/systemd/user" \

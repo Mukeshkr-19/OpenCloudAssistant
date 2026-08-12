@@ -2,10 +2,9 @@
 Description=Periodically refresh Open Cloud Assistant dynamic model registry
 
 [Timer]
-OnBootSec=8min
+OnActiveSec=8min
 OnUnitActiveSec=6h
 RandomizedDelaySec=10min
-Persistent=true
 Unit=hermes-fleet-registry.service
 
 [Install]
