@@ -159,8 +159,12 @@ case "$MODE" in
         rm -rf "$TMP"
 
         systemctl --user daemon-reload
-        systemctl --user enable --now hermes-fleet-registry.timer
-        systemctl --user enable --now hermes-fleet-verifier.timer
+        systemctl --user enable \
+            hermes-fleet-registry.timer \
+            hermes-fleet-verifier.timer
+        systemctl --user restart \
+            hermes-fleet-registry.timer \
+            hermes-fleet-verifier.timer
 
         if gateway_required; then
             command -v hermes >/dev/null 2>&1 || {

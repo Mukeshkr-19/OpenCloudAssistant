@@ -33,9 +33,23 @@ require_contains     services/systemd/hermes-fleet-registry.timer     "WantedBy=
 
 require_contains     services/systemd/hermes-fleet-verifier.timer     "WantedBy=timers.target"
 
-require_contains     "$INSTALLER"     "systemctl --user enable --now hermes-fleet-registry.timer"
+require_contains     services/systemd/hermes-fleet-registry.timer     "OnBootSec=8min"
 
-require_contains     "$INSTALLER"     "systemctl --user enable --now hermes-fleet-verifier.timer"
+require_contains     services/systemd/hermes-fleet-verifier.timer     "OnBootSec=15min"
+
+for timer in services/systemd/hermes-fleet-registry.timer services/systemd/hermes-fleet-verifier.timer; do
+    require_contains "$timer" "OnUnitActiveSec=6h"
+    require_contains "$timer" "RandomizedDelaySec=10min"
+    require_contains "$timer" "Persistent=true"
+done
+
+require_contains     "$INSTALLER"     "systemctl --user enable \\"
+
+require_contains     "$INSTALLER"     "systemctl --user restart \\"
+
+require_contains     "$INSTALLER"     "hermes-fleet-registry.timer"
+
+require_contains     "$INSTALLER"     "hermes-fleet-verifier.timer"
 
 require_contains     "$INSTALLER"     "systemctl --user enable --now hermes-gateway.service"
 
@@ -45,9 +59,107 @@ require_contains     "$INSTALLER"     "enable-linger"
 
 echo "PASS Fleet registry boot target contract"
 echo "PASS Fleet verifier boot target contract"
-echo "PASS installer enable-now contract"
+echo "PASS Fleet timer cadence contract"
+echo "PASS installer enable and rearm contract"
 echo "PASS gateway persistence contract"
 echo "PASS linger management contract"
+
+echo
+echo "DETERMINISTIC TIMER REARM"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+BIN="$TMP/bin"
+HOME_TARGET="$TMP/home"
+FLEET="$HOME_TARGET/.local/share/hermes-fleet"
+SYSTEMD_STATE="$TMP/systemd-state"
+mkdir -p "$BIN" "$FLEET/registry" "$SYSTEMD_STATE"
+touch "$FLEET/registry/refresh.py" "$FLEET/registry/verify.py"
+
+cat > "$BIN/systemctl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+STATE="${FAKE_SYSTEMD_STATE:?}"
+[ "${1:-}" = "--user" ] && shift
+command="${1:?}"
+shift
+
+case "$command" in
+    daemon-reload)
+        exit 0
+        ;;
+    enable)
+        for unit in "$@"; do
+            [ "$unit" = "--now" ] && continue
+            touch "$STATE/$unit.enabled"
+        done
+        ;;
+    restart)
+        for unit in "$@"; do
+            touch "$STATE/$unit.active"
+            printf '%s\n' 123456789 > "$STATE/$unit.next"
+            count="$(cat "$STATE/$unit.restarts" 2>/dev/null || printf '%s' 0)"
+            printf '%s\n' "$((count + 1))" > "$STATE/$unit.restarts"
+        done
+        ;;
+    *)
+        echo "unexpected fake systemctl command: $command" >&2
+        exit 1
+        ;;
+esac
+SH
+chmod 755 "$BIN/systemctl"
+
+cat > "$BIN/loginctl" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' yes
+SH
+chmod 755 "$BIN/loginctl"
+
+run_fake_install() {
+    PATH="$BIN:$PATH" \
+    FAKE_SYSTEMD_STATE="$SYSTEMD_STATE" \
+    OPEN_CLOUD_HOME="$HOME_TARGET" \
+    OPEN_CLOUD_FLEET_HOME="$FLEET" \
+    OPEN_CLOUD_SYSTEMD_DIR="$HOME_TARGET/.config/systemd/user" \
+    "$INSTALLER" --install >/dev/null
+}
+
+assert_timer_state() {
+    local unit="$1"
+    local next
+    test -f "$SYSTEMD_STATE/$unit.enabled"
+    test -f "$SYSTEMD_STATE/$unit.active"
+    next="$(cat "$SYSTEMD_STATE/$unit.next")"
+    [ -n "$next" ] && [ "$next" != "infinity" ]
+}
+
+run_fake_install
+assert_timer_state "$REGISTRY_TIMER"
+assert_timer_state "$VERIFIER_TIMER"
+echo "PASS fresh install enables, activates, and schedules both timers"
+
+run_fake_install
+[ "$(cat "$SYSTEMD_STATE/$REGISTRY_TIMER.restarts")" = "2" ]
+[ "$(cat "$SYSTEMD_STATE/$VERIFIER_TIMER.restarts")" = "2" ]
+echo "PASS repeated install re-arms both active timers idempotently"
+
+printf '%s\n' infinity > "$SYSTEMD_STATE/$REGISTRY_TIMER.next"
+printf '%s\n' infinity > "$SYSTEMD_STATE/$VERIFIER_TIMER.next"
+run_fake_install
+assert_timer_state "$REGISTRY_TIMER"
+assert_timer_state "$VERIFIER_TIMER"
+[ "$(cat "$SYSTEMD_STATE/$REGISTRY_TIMER.restarts")" = "3" ]
+[ "$(cat "$SYSTEMD_STATE/$VERIFIER_TIMER.restarts")" = "3" ]
+echo "PASS upgrade re-arms elapsed timers with finite next triggers"
+
+if find "$SYSTEMD_STATE" -name '*.service.active' | grep -q .; then
+    echo "FAIL installer synchronously launched a Fleet service" >&2
+    exit 1
+fi
+echo "PASS timer rearm does not directly launch Fleet services"
 
 if [ "${OPEN_CLOUD_LIVE_SERVICE_TEST:-0}" != "1" ]; then
     echo "LIVE_SERVICE_RECOVERY: SKIP"
@@ -93,12 +205,22 @@ do
 
     active="$(systemctl --user is-active "$unit" 2>/dev/null || true)"
 
+    next="$(
+        systemctl --user show "$unit" \
+            -p NextElapseUSecMonotonic --value 2>/dev/null || true
+    )"
+
     [ "$active" = "active" ] || {
         echo "FAIL: $unit did not recover after restart" >&2
         exit 1
     }
 
-    echo "PASS $unit restart recovery"
+    [ -n "$next" ] && [ "$next" != "infinity" ] && [ "$next" != "0" ] || {
+        echo "FAIL: $unit has no finite next trigger after restart" >&2
+        exit 1
+    }
+
+    echo "PASS $unit restart recovery with finite next trigger"
 done
 
 GATEWAY_PRESENT=0
