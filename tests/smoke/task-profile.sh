@@ -17,6 +17,50 @@ printf '%s\n' '{"version":1,"mode":"read-only-research","parent_max_turns":15,"m
 chmod 600 "$PROFILE"
 printf '%s\n' 'model: {default: example-model}' > "$CONFIG"
 printf '%s\n' 'def main(): return 0' > "$H/.config/hermes-vellum/mcp/server.py"
+
+verify_profile_config() {
+    "$PY" - "$CONFIG" "$H/.hermes/config.yaml" <<'PY'
+import sys, yaml
+profile, default = map(lambda path: yaml.safe_load(open(path)), sys.argv[1:])
+assert profile["agent"]["max_turns"] == 15
+assert profile["delegation"]["max_concurrent_children"] == 4
+assert profile["mcp_servers"]["vellum-bridge"]["tools"]["include"] == ["get_user_context"]
+assert "repair_code" not in profile["mcp_servers"]["vellum-bridge"]["tools"]["include"]
+assert profile["gateway"]["multiplex_profiles"] is True
+assert default["gateway"]["multiplex_profiles"] is True
+PY
+    grep -qxF 'OPEN_CLOUD_RESTRICTIVE_PROFILE=1' "$(dirname "$CONFIG")/.env"
+}
+
+if [ ! -f "$HERMES_ROOT/cron/jobs.py" ] || \
+   [ ! -f "$HERMES_ROOT/cron/scheduler_provider.py" ] || \
+   [ ! -f "$HERMES_ROOT/gateway/run.py" ]; then
+    set +e
+    PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HOME="$H" OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT" OPEN_CLOUD_HERMES_PYTHON="$PY" \
+        scripts/task-profile.py apply --name example-research > "$TMP/missing-runtime.log" 2>&1
+    RC=$?
+    set -e
+    [ "$RC" -ne 0 ]
+    grep -Eq 'ERROR: Hermes (cron runtime is missing|runtime cannot tick profile-scoped cron jobs)' "$TMP/missing-runtime.log"
+    verify_profile_config
+
+    if OPEN_CLOUD_HOME="$H" scripts/task-profile.py verify --name ../escape >/dev/null 2>&1; then
+        echo "FAIL: traversal profile name accepted" >&2; exit 1
+    fi
+    ln -s "$PROFILE" "$H/.opencloud/task-profiles/linked-profile.json"
+    mkdir -p "$H/.hermes/profiles/linked-profile"
+    printf '{}\n' > "$H/.hermes/profiles/linked-profile/config.yaml"
+    if OPEN_CLOUD_HOME="$H" scripts/task-profile.py verify --name linked-profile >/dev/null 2>&1; then
+        echo "FAIL: symlink profile accepted" >&2; exit 1
+    fi
+
+    echo "PASS task-profile config materialization and missing-runtime fail-closed behavior"
+    echo "PASS traversal and symlink profile inputs fail closed"
+    echo "TASK_PROFILE_CRON_MATERIALIZATION_SMOKE: SKIP (Hermes source unavailable; required pinned-runtime coverage is tests/reliability/task-profile-cron.py)"
+    echo "TASK_PROFILE_SMOKE: PASS"
+    exit 0
+fi
+
 PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HOME="$H" OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT" OPEN_CLOUD_HERMES_PYTHON="$PY" scripts/task-profile.py apply --name example-research > "$TMP/apply-1.log" 2>&1 &
 P1=$!
 PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HOME="$H" OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT" OPEN_CLOUD_HERMES_PYTHON="$PY" scripts/task-profile.py apply --name example-research > "$TMP/apply-2.log" 2>&1 &
@@ -24,20 +68,7 @@ P2=$!
 wait "$P1" || { cat "$TMP/apply-1.log" >&2; exit 1; }
 wait "$P2" || { cat "$TMP/apply-2.log" >&2; exit 1; }
 PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HOME="$H" OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT" OPEN_CLOUD_HERMES_PYTHON="$PY" scripts/task-profile.py verify --name example-research
-"$PY" - "$CONFIG" <<'PY'
-import sys, yaml
-d = yaml.safe_load(open(sys.argv[1]))
-assert d["agent"]["max_turns"] == 15
-assert d["delegation"]["max_concurrent_children"] == 4
-assert d["mcp_servers"]["vellum-bridge"]["tools"]["include"] == ["get_user_context"]
-assert "repair_code" not in d["mcp_servers"]["vellum-bridge"]["tools"]["include"]
-assert d["gateway"]["multiplex_profiles"] is True
-PY
-"$PY" - "$H/.hermes/config.yaml" <<'PY'
-import sys, yaml
-assert yaml.safe_load(open(sys.argv[1]))["gateway"]["multiplex_profiles"] is True
-PY
-grep -qxF 'OPEN_CLOUD_RESTRICTIVE_PROFILE=1' "$(dirname "$CONFIG")/.env"
+verify_profile_config
 "$PY" - "$PROFILE" "$(dirname "$CONFIG")/cron/jobs.json" <<'PY'
 import json, stat, sys
 profile, store = map(lambda p: json.load(open(p)), sys.argv[1:])
