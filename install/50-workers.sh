@@ -15,7 +15,8 @@ required = {
     "orchestrator_enabled": True,
     "max_concurrent_children": 4,
     "max_iterations": 12,
-    "child_timeout_seconds": 120,
+    "child_timeout_seconds": 180,
+    "provider_request_timeout_seconds": 45,
     "max_spawn_depth": 2,
     "inherit_mcp_toolsets": True,
 }

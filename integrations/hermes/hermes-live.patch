@@ -371,7 +371,7 @@ index 13e2143..bf5d55f 100644
 
      # Inherit the parent's OpenRouter provider-preference filters by default
      # (so subagents routed to the same provider honour the same routing
-@@ -1545,6 +1653,15 @@ def _build_child_agent(
+@@ -1545,6 +1653,16 @@ def _build_child_agent(
              **child_optional_kwargs,
          )
      child._print_fn = getattr(parent_agent, "_print_fn", None)
@@ -384,6 +384,57 @@ index 13e2143..bf5d55f 100644
 +            ]
 +        )
 +        child._hermes_fleet_session_key = None
++        child._api_max_retries = 1
      # Now the child exists, its session id can ride on every relayed event
      # (including the spawn_requested below — first emit happens after this).
      child_session_ref["session_id"] = getattr(child, "session_id", "") or ""
+@@ -2779,1 +2896,12 @@
++def _batch_outcome(results, expected_count):
++    successful = sum(entry.get("status") == "completed" for entry in results)
++    all_succeeded = len(results) == expected_count and successful == expected_count
++    return {
++        "status": "completed" if all_succeeded else "failed",
++        "all_succeeded": all_succeeded,
++        "successful_workers": successful,
++        "required_workers": expected_count,
++    }
++
++
+ def delegate_task(
+@@ -3149,6 +3277,7 @@ def delegate_task(
+         combined: Dict[str, Any] = {
+             "results": results,
+             "total_duration_seconds": total_duration,
++            **_batch_outcome(results, n_tasks),
+         }
+         if live_paths:
+             combined["live_transcripts"] = list(live_paths)
+diff --git a/agent/agent_runtime_helpers.py b/agent/agent_runtime_helpers.py
+index 1bdce7a..2fc40f1 100644
+--- a/agent/agent_runtime_helpers.py
++++ b/agent/agent_runtime_helpers.py
+@@ -1253,5 +1253,8 @@ def try_recover_primary_transport(
+     already manage connection pools and retries server-side — if our
+     retries through them are exhausted, one more rebuilt client won't help.
+     """
++    if getattr(agent, "_hermes_fleet_role", None) == "worker":
++        return False
++
+     if agent._fallback_activated:
+         return False
+diff --git a/agent/auxiliary_client.py b/agent/auxiliary_client.py
+index d66d5d8..f8e98bb 100644
+--- a/agent/auxiliary_client.py
++++ b/agent/auxiliary_client.py
+@@ -2430,6 +2430,7 @@ _paid_lane_warned: set = set()
+ def _is_free_model(model: Optional[str]) -> bool:
+-    """True when ``model`` is an OpenRouter free SKU (``:free`` suffix)."""
+-    return bool(model) and str(model).strip().endswith(":free")
+-
+-
++    """True for OpenRouter's free router or a concrete ``:free`` SKU."""
++    normalized = str(model or "").strip()
++    return normalized == "openrouter/free" or normalized.endswith(":free")
++
++
+ def _aux_openrouter_settings() -> Tuple[bool, str]:

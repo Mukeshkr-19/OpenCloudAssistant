@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..6eb5c06
 --- /dev/null
 +++ b/agent/hermes_fleet_bridge.py
-@@ -0,0 +1,1196 @@
+@@ -0,0 +1,1204 @@
 +"""
 +Hermes <-> dynamic Fleet integration.
 +
@@ -721,6 +721,14 @@ index 0000000..6eb5c06
 +                    candidate
 +                ),
 +        })
++
++    if role == "worker":
++        cross_provider = [
++            candidate
++            for candidate in result
++            if candidate["_hermes_fleet_provider_group"] != _group(primary)
++        ]
++        return (cross_provider or result)[:1]
 +
 +    return result
 +

@@ -123,9 +123,9 @@ class HermesFleet:
 
         self.db.executescript(
             """
+            PRAGMA busy_timeout=10000;
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
-            PRAGMA busy_timeout=10000;
 
             CREATE TABLE IF NOT EXISTS candidate_health (
                 candidate_key TEXT PRIMARY KEY,
@@ -589,6 +589,36 @@ class HermesFleet:
         touch: bool = True,
     ) -> dict | None:
 
+        if not touch:
+            return self._select(
+                role,
+                touch=False,
+            )
+
+        self.db.execute(
+            "BEGIN IMMEDIATE"
+        )
+
+        try:
+            selected = self._select(
+                role,
+                touch=True,
+            )
+            self.db.commit()
+            return selected
+
+        except Exception:
+            self.db.rollback()
+            raise
+
+
+    def _select(
+        self,
+        role: str,
+        *,
+        touch: bool,
+    ) -> dict | None:
+
         candidates = (
             self.candidates(
                 role
@@ -639,6 +669,27 @@ class HermesFleet:
 
         if not by_pool:
             return None
+
+        if role == "worker":
+            reuse_delay = self._policy_seconds(
+                "workerRouteReuseDelaySeconds",
+                5,
+            )
+            reusable = {
+                priority: [
+                    candidate
+                    for candidate in pool
+                    if now() - self._last_used(candidate["candidateKey"]) >= reuse_delay
+                ]
+                for priority, pool in by_pool.items()
+            }
+            reusable = {
+                priority: pool
+                for priority, pool in reusable.items()
+                if pool
+            }
+            if reusable:
+                by_pool = reusable
 
 
         first_pool = min(
@@ -711,9 +762,6 @@ class HermesFleet:
                     now(),
                 ),
             )
-
-            self.db.commit()
-
 
         return selected
 

@@ -72,11 +72,14 @@ x=d[\"delegation\"]
 assert x[\"orchestrator_enabled\"] is True
 assert x[\"max_concurrent_children\"] == 4
 assert x[\"max_iterations\"] == 12
-assert x[\"child_timeout_seconds\"] == 120
+assert x[\"child_timeout_seconds\"] == 180
 assert x[\"max_spawn_depth\"] == 2
 assert x[\"inherit_mcp_toolsets\"] is True
 assert x[\"provider\"] == \"user-provider\"
 assert x[\"model\"] == \"user-defined-model\"
+assert d[\"providers\"][\"opencode-zen\"][\"request_timeout_seconds\"] == 45
+assert d[\"providers\"][\"nvidia\"][\"request_timeout_seconds\"] == 45
+assert d[\"providers\"][\"openrouter\"][\"request_timeout_seconds\"] == 45
 assert \"existing-server\" in d[\"mcp_servers\"]
 assert d[\"mcp_servers\"][\"vellum-bridge\"][\"enabled\"] is True
 assert d[\"display\"][\"platforms\"][\"bluebubbles\"][\"tool_progress\"] == \"off\"

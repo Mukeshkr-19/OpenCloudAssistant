@@ -100,11 +100,20 @@ def main():
         assert failed["models"][0]["verification"] == "incompatible"
         assert failed["productionModels"]["zen"] == []
 
+        stale["models"][0]["verification"] = "verified"
+        stale["models"][0]["verifiedAtMs"] = 1
+        output.write_text(json.dumps(stale))
+        verify.MAX_ATTEMPTS = {"zen": 0, "nvidia": 0}
+        verify.time.time = lambda: 3_000_000
+        verify.main()
+        assert json.loads(output.read_text())["productionModels"]["zen"] == []
+
     print("PASS failed discovery retains degraded last-known-good rows")
     print("PASS successful discovery authoritatively removes absent models")
     print("PASS model verification freshness expires at configured TTL")
     print("PASS stale verified model is re-probed and refreshes verifiedAtMs")
     print("PASS failed stale re-probe demotes model from production")
+    print("PASS stale verified model cannot survive an exhausted probe budget")
     print("FLEET_REGISTRY_STATE_RELIABILITY: PASS")
 
 

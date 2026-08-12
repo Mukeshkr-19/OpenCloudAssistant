@@ -29,7 +29,8 @@ data = json.loads(p.read_text())
 assert data["orchestrator_enabled"] is True
 assert data["max_concurrent_children"] == 4
 assert data["max_iterations"] == 12
-assert data["child_timeout_seconds"] == 120
+assert data["child_timeout_seconds"] == 180
+assert data["provider_request_timeout_seconds"] == 45
 assert data["max_spawn_depth"] == 2
 assert "vellum-bridge" in data["required_mcp_toolsets"]
 '

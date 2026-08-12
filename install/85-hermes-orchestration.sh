@@ -44,7 +44,8 @@ d=json.load(open(sys.argv[1]))
 assert d[\"orchestrator_enabled\"] is True
 assert d[\"max_concurrent_children\"] == 4
 assert d[\"max_iterations\"] == 12
-assert d[\"child_timeout_seconds\"] == 120
+assert d[\"child_timeout_seconds\"] == 180
+assert d[\"provider_request_timeout_seconds\"] == 45
 assert d[\"max_spawn_depth\"] == 2
 assert d[\"inherit_mcp_toolsets\"] is True
 assert \"vellum-bridge\" in d[\"required_mcp_toolsets\"]
