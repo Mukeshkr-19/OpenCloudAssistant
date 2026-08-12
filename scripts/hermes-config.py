@@ -23,7 +23,8 @@ def load_policy(path):
     data = load_json(path)
     bounds = {
         "max_concurrent_children": (1, 8), "max_iterations": (1, 50),
-        "child_timeout_seconds": (1, 600), "max_spawn_depth": (1, 2),
+        "child_timeout_seconds": (1, 600), "provider_request_timeout_seconds": (1, 120),
+        "max_spawn_depth": (1, 2),
     }
     if data.get("orchestrator_enabled") is not True or data.get("inherit_mcp_toolsets") is not True:
         raise SystemExit("ERROR: canonical orchestration policy is invalid")
@@ -107,6 +108,14 @@ def desired_config(data, policy, server, python_cmd, profile=None):
     for key in ("orchestrator_enabled", "max_concurrent_children", "max_iterations",
                 "child_timeout_seconds", "max_spawn_depth", "inherit_mcp_toolsets"):
         delegation[key] = policy[key]
+    providers = data.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        raise SystemExit("ERROR: Hermes providers config must be a mapping")
+    for name in ("opencode-zen", "nvidia", "openrouter"):
+        provider = providers.setdefault(name, {})
+        if not isinstance(provider, dict):
+            raise SystemExit(f"ERROR: Hermes provider config must be a mapping: {name}")
+        provider["request_timeout_seconds"] = policy["provider_request_timeout_seconds"]
     mcp["vellum-bridge"] = {
         "enabled": True, "command": str(python_cmd), "args": [str(server)],
         "connect_timeout": 30.0,
@@ -135,6 +144,10 @@ def verify(data, policy, server, python_cmd, profile=None):
     for key, value in expected["delegation"].items():
         if (data.get("delegation") or {}).get(key) != value:
             raise SystemExit("ERROR: Hermes delegation mismatch: " + key)
+    for name, expected_provider in expected["providers"].items():
+        actual_provider = (data.get("providers") or {}).get(name) or {}
+        if actual_provider.get("request_timeout_seconds") != expected_provider["request_timeout_seconds"]:
+            raise SystemExit("ERROR: Hermes provider request timeout mismatch: " + name)
     bridge = (data.get("mcp_servers") or {}).get("vellum-bridge") or {}
     for key, value in expected["mcp_servers"]["vellum-bridge"].items():
         if bridge.get(key) != value:

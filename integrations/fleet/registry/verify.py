@@ -1178,6 +1178,7 @@ def main():
                 "verification"
             )
             == "verified"
+            and verification_is_fresh(row, now_ms)
             and not row.get(
                 "excludedReason"
             )

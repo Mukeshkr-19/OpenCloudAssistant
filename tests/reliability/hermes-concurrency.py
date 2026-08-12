@@ -174,6 +174,31 @@ def verify_delegate_contract(max_children: int) -> None:
     )
 
 
+def run_batch_outcome_proof() -> None:
+    tree = ast.parse(DELEGATE_SOURCE.read_text(encoding="utf-8"))
+    outcome_node = function_node(tree, "_batch_outcome")
+    require(outcome_node is not None, "batch success helper missing")
+    namespace = {}
+    exec(compile(ast.Module(body=[outcome_node], type_ignores=[]), str(DELEGATE_SOURCE), "exec"), namespace)
+    outcome = namespace["_batch_outcome"]
+
+    completed = {"status": "completed"}
+    assert outcome([completed, completed, completed], 3) == {
+        "status": "completed", "all_succeeded": True,
+        "successful_workers": 3, "required_workers": 3,
+    }
+    assert outcome([completed, {"status": "timeout"}, completed], 3)["all_succeeded"] is False
+    assert outcome([completed, {"status": "error"}, completed], 3)["status"] == "failed"
+    assert outcome([completed, {"status": "interrupted"}, completed], 3)["status"] == "failed"
+    assert outcome([completed, {"status": "cancelled"}, completed], 3)["status"] == "failed"
+    assert outcome([completed, {"status": "unknown"}, completed], 3)["status"] == "failed"
+    assert outcome([completed, completed], 3)["status"] == "failed"
+    assert outcome([completed | {"fallback_used": True}, completed, completed], 3)["all_succeeded"] is True
+    print("PASS batch success requires every delegated worker to succeed")
+    print("PASS timeout, error, interruption, cancellation, unknown, and missing result remain batch failures")
+    print("PASS recovered fallback completion counts as success")
+
+
 def runtime_executor():
     source = DELEGATE_SOURCE.read_text(encoding="utf-8")
     if "DaemonThreadPoolExecutor(max_workers=max_children)" in source:
@@ -479,8 +504,13 @@ def main() -> None:
     )
 
     require(
-        policy.get("child_timeout_seconds") == 120,
+        policy.get("child_timeout_seconds") == 180,
         "unexpected child timeout policy",
+    )
+
+    require(
+        policy.get("provider_request_timeout_seconds") == 45,
+        "unexpected provider request timeout policy",
     )
 
     require(
@@ -509,6 +539,8 @@ def main() -> None:
     verify_delegate_contract(
         max_children
     )
+
+    run_batch_outcome_proof()
 
     run_parallel_proof(
         max_children

@@ -59,6 +59,7 @@
 
     "providerRateTripCount": 2,
     "providerServerTripCount": 2,
-    "providerTripWindowSeconds": 60
+    "providerTripWindowSeconds": 60,
+    "workerRouteReuseDelaySeconds": 5
   }
 }

@@ -11,6 +11,7 @@ test -f config/fleet/hermes-fleet-policy.json
 test -f config/hermes/orchestration.json
 test -x tests/reliability/fleet-failover.py
 test -x tests/reliability/hermes-concurrency.py
+test -f tests/reliability/worker-fallback.py
 test -f tests/reliability/task-profile.py
 test -x tests/reliability/messaging-delivery.py
 test -x tests/reliability/self-repair-rollback.sh
@@ -53,6 +54,8 @@ HERMES_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
 if [ -f "$HERMES_ROOT/tools/delegate_tool.py" ]; then
 
     PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT"         python3         tests/reliability/hermes-concurrency.py
+
+    PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT"         "$HERMES_PYTHON"         tests/reliability/worker-fallback.py
 
     PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT"         "$HERMES_PYTHON"         tests/reliability/messaging-delivery.py
 

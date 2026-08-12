@@ -11,7 +11,7 @@ PATCH2="$ROOT/integrations/hermes/hermes-live.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
-FILES="agent/agent_init.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py cron/scheduler.py gateway/run.py agent/hermes_fleet_bridge.py"
+FILES="agent/agent_init.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py cron/scheduler.py gateway/run.py agent/hermes_fleet_bridge.py"
 MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1"
 
 require_source() {
