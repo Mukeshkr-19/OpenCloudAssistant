@@ -56,6 +56,14 @@ grep -RqsF "HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1" "$TMP/hermes/agent" "$TMP/h
 grep -qF "HERMES_SILENT_GATEWAY_LIFECYCLE_NOTICE_V1" "$TMP/hermes/gateway/run.py"
 test -f "$TMP/hermes/agent/hermes_fleet_bridge.py"
 
+cp "$TMP/hermes/gateway/run.py" "$TMP/expected-gateway.py"
+
+# Simulate an older OpenCloud-managed Hermes tree:
+# historical integration markers remain present, but a managed
+# file differs from the newly materialized desired tree.
+printf '\n# OPEN_CLOUD_STALE_INSTALL_FIXTURE\n' >> \
+    "$TMP/hermes/gateway/run.py"
+
 SECOND="$(
     OPEN_CLOUD_HOME="$TMP/home" \
     OPEN_CLOUD_HERMES_ROOT="$TMP/hermes" \
@@ -63,6 +71,33 @@ SECOND="$(
 )"
 
 printf "%s\n" "$SECOND"
-printf "%s\n" "$SECOND" | grep -qF "HERMES_LIVE_INSTALL: ALREADY_PRESENT"
 
+printf "%s\n" "$SECOND" |
+    grep -qF "HERMES_LIVE_INSTALL: PASS"
+
+printf "%s\n" "$SECOND" |
+    grep -qF "HERMES_LIVE_BACKUP:"
+
+cmp -s \
+    "$TMP/expected-gateway.py" \
+    "$TMP/hermes/gateway/run.py"
+
+! grep -qF \
+    "OPEN_CLOUD_STALE_INSTALL_FIXTURE" \
+    "$TMP/hermes/gateway/run.py"
+
+echo "PASS stale marker-present install is upgraded"
+
+THIRD="$(
+    OPEN_CLOUD_HOME="$TMP/home" \
+    OPEN_CLOUD_HERMES_ROOT="$TMP/hermes" \
+        install/35-hermes-live.sh --install
+)"
+
+printf "%s\n" "$THIRD"
+
+printf "%s\n" "$THIRD" |
+    grep -qF "HERMES_LIVE_INSTALL: ALREADY_PRESENT"
+
+echo "PASS exact desired install remains idempotent"
 echo "HERMES_LIVE_INSTALL_SMOKE: PASS"

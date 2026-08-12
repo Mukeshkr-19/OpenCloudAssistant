@@ -52,8 +52,19 @@ run_checks() {
     "$ROOT/install/75-fleet-registry.sh" --check
     "$ROOT/install/80-vellum-bridge.sh" --check
 
-    if [ -f "$hermes_source/tools/delegate_tool.py" ]; then
+    if [ "$hermes_source" != "$hermes_root" ] && [ -f "$hermes_source/tools/delegate_tool.py" ]; then
         OPEN_CLOUD_HERMES_SOURCE="$hermes_source" "$ROOT/install/85-hermes-orchestration.sh" --check
+    elif [ -d "$hermes_root/.git" ]; then
+        (
+            hermes_stage="$(mktemp -d)"
+            trap 'rm -rf "$hermes_stage"' EXIT
+
+            OPEN_CLOUD_HERMES_ROOT="$hermes_root" \
+                "$ROOT/install/30-brain-materialize.sh" --stage "$hermes_stage/hermes"
+
+            OPEN_CLOUD_HERMES_SOURCE="$hermes_stage/hermes" \
+                "$ROOT/install/85-hermes-orchestration.sh" --check
+        )
     else
         echo "HERMES_ORCHESTRATION_SOURCE_CHECK: DEFERRED_UNTIL_HERMES_INSTALL"
     fi

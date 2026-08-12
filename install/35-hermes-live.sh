@@ -90,16 +90,17 @@ materialize() {
     validate_tree "$out"
 }
 
-already_installed() {
-    local marker
+managed_tree_matches() {
+    local desired="$1"
+    local rel
 
-    test -f "$HERMES_ROOT/agent/hermes_fleet_bridge.py" || return 1
-
-    for marker in $MARKERS; do
-        grep -RqsF "$marker" "$HERMES_ROOT/agent" "$HERMES_ROOT/tools" || return 1
+    for rel in $FILES; do
+        test -e "$desired/$rel" || return 1
+        test -e "$HERMES_ROOT/$rel" || return 1
+        cmp -s "$desired/$rel" "$HERMES_ROOT/$rel" || return 1
     done
-    grep -qF "OPEN_CLOUD_RESTRICTIVE_CRON_FAIL_CLOSED_V1" "$HERMES_ROOT/cron/scheduler.py" || return 1
-    grep -qF "HERMES_SILENT_GATEWAY_LIFECYCLE_NOTICE_V1" "$HERMES_ROOT/gateway/run.py" || return 1
+
+    return 0
 }
 
 backup_live() {
@@ -154,7 +155,7 @@ install_live() {
 
     materialize "$TMP/tree"
 
-    if already_installed; then
+    if managed_tree_matches "$TMP/tree"; then
         validate_tree "$HERMES_ROOT"
         echo "HERMES_LIVE_INSTALL: ALREADY_PRESENT"
         return 0

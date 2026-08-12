@@ -33,7 +33,7 @@ check_source() {
     grep -qF "child_timeout_seconds" "$HERMES_SOURCE/tools/delegate_tool.py"
     grep -qF "_start_multiplex" "$HERMES_SOURCE/cron/scheduler_provider.py"
     grep -qF "profile_homes" "$HERMES_SOURCE/cron/scheduler_provider.py"
-    grep -qF "profile_homes=" "$HERMES_SOURCE/gateway/run.py"
+    grep -qF 'cron_start_kwargs["profile_homes"] = profile_homes' "$HERMES_SOURCE/gateway/run.py"
 }
 
 check_policy() {
