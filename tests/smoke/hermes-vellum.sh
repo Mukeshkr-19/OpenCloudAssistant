@@ -25,7 +25,11 @@ HERMES_SOURCE="$TMP/hermes-source"
 mkdir -p "$HERMES_SOURCE/tools" "$HERMES_SOURCE/cron" "$HERMES_SOURCE/gateway"
 printf "%s\\n" "orchestrator_enabled max_concurrent_children max_iterations child_timeout_seconds max_spawn_depth inherit_mcp_toolsets" > "$HERMES_SOURCE/tools/delegate_tool.py"
 printf "%s\\n" "def _start_multiplex(profile_homes):" "    return profile_homes" > "$HERMES_SOURCE/cron/scheduler_provider.py"
-printf "%s\\n" "profile_homes=[]" "scheduler.start(profile_homes=profile_homes)" > "$HERMES_SOURCE/gateway/run.py"
+printf "%s\n" \
+    "cron_start_kwargs = {}" \
+    "profile_homes = []" \
+    'cron_start_kwargs["profile_homes"] = profile_homes' \
+    > "$HERMES_SOURCE/gateway/run.py"
 
 OPEN_CLOUD_HERMES_SOURCE="$HERMES_SOURCE" \
 OPEN_CLOUD_HERMES_PYTHON="$PY" \
