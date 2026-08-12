@@ -56,6 +56,7 @@ printf '%s\n' '{"private":true}' > "$HOME_DIR/.opencloud/task-profiles/example.j
 
 PLAN="$(
     HOME="$HOME_DIR" \
+    OPEN_CLOUD_FLEET_HOME="$HOME_DIR/.local/share/hermes-fleet" \
     PATH="$BIN:/usr/bin:/bin" \
         scripts/uninstall.sh --dry-run
 )"
@@ -65,6 +66,7 @@ PLAN="$(
 test -f "$HOME_DIR/.config/systemd/user/hermes-fleet-registry.timer"
 
 HOME="$HOME_DIR" \
+OPEN_CLOUD_FLEET_HOME="$HOME_DIR/.local/share/hermes-fleet" \
 PATH="$BIN:/usr/bin:/bin" \
     scripts/uninstall.sh --yes
 

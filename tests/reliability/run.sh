@@ -25,7 +25,22 @@ if [ ! -x "$HERMES_PYTHON" ]; then HERMES_PYTHON="$(command -v python3)"; fi
 "$HERMES_PYTHON" tests/reliability/fleet-failover.py
 
 PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}" "$HERMES_PYTHON" tests/reliability/task-profile.py
-PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}" "$HERMES_PYTHON" tests/reliability/task-profile-cron.py
+CRON_HERMES_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
+
+if [ -f "$CRON_HERMES_ROOT/cron/scheduler_provider.py" ] && \
+   [ -f "$CRON_HERMES_ROOT/cron/jobs.py" ] && \
+   [ -f "$CRON_HERMES_ROOT/cron/scheduler.py" ] && \
+   [ -f "$CRON_HERMES_ROOT/gateway/run.py" ]; then
+
+    PYTHONDONTWRITEBYTECODE=1 \
+    OPEN_CLOUD_HERMES_ROOT="$CRON_HERMES_ROOT" \
+        "$HERMES_PYTHON" tests/reliability/task-profile-cron.py
+
+else
+
+    echo "TASK_PROFILE_CRON_RELIABILITY: SKIP (Hermes source unavailable)"
+
+fi
 PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/fleet-registry-state.py
 PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/fleet-verifier-timeout.py
 PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/fleet-runtime-config.py

@@ -326,11 +326,30 @@ run_signal_case() {
         "$HARNESS" --task "synthetic signal repair" > "$log" 2>&1 &
     local pid=$!
     local tries=0
-    while [ ! -f "$state/repair-in-progress" ] && [ "$tries" -lt 200 ]; do
+
+    # Synchronize on the actual deployment window, not merely marker
+    # creation. The durable transaction marker may exist before the
+    # delayed deployment window is observable, which makes an immediate
+    # SIGTERM timing-dependent under a loaded reliability suite.
+    while [ "$tries" -lt 400 ]; do
+        if [ -f "$state/repair-in-progress" ] && \
+           grep -qF "REPAIR: deploying validated staged tree" "$log" 2>/dev/null; then
+            break
+        fi
+
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "ERROR: signal-case repair exited before deployment window" >&2
+            cat "$log" >&2 || true
+            return 1
+        fi
+
         sleep 0.05
         tries=$((tries + 1))
     done
+
     test -f "$state/repair-in-progress"
+    grep -qF "REPAIR: deploying validated staged tree" "$log"
+
     kill -TERM "$pid"
     set +e
     wait "$pid"
