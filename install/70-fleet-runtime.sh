@@ -58,6 +58,7 @@ isolated_check() {
 
     result="$(
         HOME="$fake_home" \
+        OPEN_CLOUD_FLEET_HOME="$staged_base" \
         HERMES_FLEET_HEALTH_DB="$tmp/health.sqlite" \
         "$FLEET_PYTHON" "$staged_base/dispatcher.py" select main
     )"
@@ -68,6 +69,7 @@ isolated_check() {
     }
 
     HOME="$fake_home" \
+    OPEN_CLOUD_FLEET_HOME="$staged_base" \
     HERMES_FLEET_HEALTH_DB="$tmp/health.sqlite" \
     "$FLEET_PYTHON" "$staged_base/dispatcher.py" status >/dev/null
 

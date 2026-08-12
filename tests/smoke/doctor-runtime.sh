@@ -53,6 +53,7 @@ printf "%s\n" "#!/usr/bin/env bash" "exit 0" \
 chmod 755 "$H/.local/bin/hermes-code-repair"
 
 OPEN_CLOUD_HOME="$H" \
+OPEN_CLOUD_FLEET_HOME="$H/.local/share/hermes-fleet" \
     scripts/doctor-runtime.sh
 
 chmod 644 "$H/.opencloud/config.env"
@@ -61,6 +62,7 @@ set +e
 
 OUT="$(
     OPEN_CLOUD_HOME="$H" \
+    OPEN_CLOUD_FLEET_HOME="$H/.local/share/hermes-fleet" \
         scripts/doctor-runtime.sh 2>&1
 )"
 
