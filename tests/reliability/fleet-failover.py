@@ -184,6 +184,12 @@ class FleetCase:
         )
 
         os.environ[
+            "OPEN_CLOUD_FLEET_HOME"
+        ] = str(
+            self.base
+        )
+
+        os.environ[
             "HERMES_FLEET_HEALTH_DB"
         ] = str(
             self.health
