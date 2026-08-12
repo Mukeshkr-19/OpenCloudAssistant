@@ -227,7 +227,7 @@ class FleetCase:
 
         require(
             self.module.BASE
-            == self.base,
+            == self.base.resolve(),
             "dispatcher escaped isolated HOME",
         )
 

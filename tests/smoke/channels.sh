@@ -78,8 +78,12 @@ grep -qF "API_SERVER_ENABLED=true" "$CONFIG"
 
 echo "SMOKE: file permissions"
 
-test "$(stat -c %a "$CONFIG")" = "600"
-test "$(stat -c %a "$STATE")" = "600"
+file_mode() {
+    stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"
+}
+
+test "$(file_mode "$CONFIG")" = "600"
+test "$(file_mode "$STATE")" = "600"
 
 echo "SMOKE: selected-but-incomplete must FAIL"
 

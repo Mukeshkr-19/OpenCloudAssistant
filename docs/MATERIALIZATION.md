@@ -53,12 +53,16 @@ The canonical orchestration policy is stored in:
 The initial public policy requires:
 
 - orchestration enabled;
-- up to three concurrent child workers;
-- maximum spawn depth of one;
+- up to four concurrent child workers;
+- maximum spawn depth of two;
+- twelve iterations and a 120-second timeout per child;
 - MCP toolset inheritance for workers;
 - availability of the Vellum bridge when personal context is required.
 
 Child workers are execution workers spawned for parts of a complex task.
+
+Private task profiles are intentionally not materialized by the installer and
+are retained by uninstall and public repository upgrades.
 They are not permanent domain-specific agents.
 
 ## Safety during development

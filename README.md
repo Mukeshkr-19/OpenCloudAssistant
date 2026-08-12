@@ -41,10 +41,12 @@ flowchart TD
     H --> W1[Worker A]
     H --> W2[Worker B]
     H --> W3[Worker C]
+    H --> W4[Worker D]
     H --> F[Dynamic AI Fleet]
     W1 --> F
     W2 --> F
     W3 --> F
+    W4 --> F
     F --> H
     H --> U
     H -. approved repair .-> R[Restricted OpenCode<br/>stage → validate → backup → deploy/rollback]
@@ -74,7 +76,7 @@ The deterministic reliability suite covers:
 - server-error failover;
 - network failover and recovery;
 - provider cooldown recovery;
-- Hermes execution with up to three concurrent child workers;
+- Hermes execution with up to four concurrent child workers;
 - invalid staged-repair rejection;
 - trusted pre-deployment backup creation;
 - the real rollback path after simulated deployment validation failure;
@@ -141,6 +143,15 @@ release-validated production functionality.
 
 See [Channels](docs/CHANNELS.md) for adapter-specific setup and validation
 status.
+
+## Private task profiles
+
+OpenCloud supports local task profiles for bounded unattended research without
+putting personal prompts or policy in the public repository. Profiles live under
+`~/.opencloud/task-profiles/`, survive upgrades, and can restrict an MCP server
+to individual tools such as read-only `get_user_context`.
+
+See [Task Profiles](docs/TASK_PROFILES.md).
 
 ## Infrastructure as code
 

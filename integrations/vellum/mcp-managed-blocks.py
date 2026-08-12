@@ -509,8 +509,9 @@ def repair_code(task: str, target: str = "hermes"):
     Do NOT use this for ordinary questions, personal-memory retrieval,
     research, writing, or model selection.
 
-    The repair harness snapshots the target first, blocks secret/external
-    access, validates code after edits, and rolls back if OpenCode fails.
+    The repair harness gives OpenCode write access only to a staged code tree
+    and isolated HOME. Other host paths remain read-only visible except for the
+    masked production target. It validates, backs up, deploys, or rolls back.
     """
     import subprocess
     from pathlib import Path

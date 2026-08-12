@@ -69,6 +69,11 @@ for path in ROOT.rglob("*"):
         if pattern.search(data):
             content_findings.append((str(rel), name))
 
+    if rel.parts[:2] == ("integrations", "vellum") and re.search(
+        rb"\b(?:Mukesh|Sanjay)\b", data
+    ):
+        content_findings.append((str(rel), "personal-name-in-vellum"))
+
 if path_findings or content_findings:
     print("PUBLIC_AUDIT: FAIL")
 

@@ -23,14 +23,18 @@ A second valid installation returns ALREADY_PRESENT instead of applying patches 
 ## Complete installation
 
 The setup pipeline covers Hermes, Vellum, restricted self-repair, dynamic Fleet,
-the Hermes-to-Vellum bridge, parallel orchestration, channels, always-on services,
-and the final doctor.
+the Hermes-to-Vellum bridge, private task-profile support, parallel
+orchestration, channels, always-on services, and the final doctor.
 
 install/40-context-materialize.sh remains a compatibility validator because the full
 Vellum MCP server is installed by install/80-vellum-bridge.sh.
 
 install/50-workers.sh remains the canonical policy validator because actual Hermes
 orchestration configuration is applied by install/85-hermes-orchestration.sh.
+
+Private task profiles remain under `~/.opencloud/task-profiles` and are not
+materialized from the public repository. `opencloud task-profile apply --name
+NAME` applies one to a matching existing Hermes profile.
 
 ## Fresh-host dry-run semantics
 

@@ -9,6 +9,72 @@ AGENT_NAME="${OPEN_CLOUD_REPAIR_AGENT:-hermes-repair}"
 REPAIR_TIMEOUT="${OPEN_CLOUD_REPAIR_TIMEOUT:-900}"
 BACKUP_KEEP="${OPEN_CLOUD_REPAIR_BACKUP_KEEP:-5}"
 SANDBOX_NETWORK="${OPEN_CLOUD_REPAIR_SANDBOX_NETWORK:-shared}"
+TX_MARKER=""
+TX_BACKUP=""
+TX_ACTIVE=0
+
+write_transaction_marker() {
+    local backup="$1"
+    python3 - "$TX_MARKER" "$backup" "$STATE_ROOT/backups" <<'PY'
+import os, sys, tempfile
+from pathlib import Path
+marker = Path(sys.argv[1])
+backup = Path(sys.argv[2]).resolve()
+root = Path(sys.argv[3]).resolve()
+if backup.parent != root or not backup.is_dir():
+    raise SystemExit("ERROR: repair backup is outside the managed backup root")
+if marker.parent.is_symlink() or marker.is_symlink():
+    raise SystemExit("ERROR: repair transaction marker path is a symbolic link")
+fd, temp = tempfile.mkstemp(prefix=marker.name + ".", dir=marker.parent)
+try:
+    with os.fdopen(fd, "w") as handle:
+        handle.write(str(backup) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temp, 0o600)
+    os.replace(temp, marker)
+    directory = os.open(marker.parent, os.O_RDONLY)
+    try: os.fsync(directory)
+    finally: os.close(directory)
+finally:
+    try: os.unlink(temp)
+    except FileNotFoundError: pass
+PY
+}
+
+remove_transaction_marker() {
+    python3 - "$TX_MARKER" <<'PY'
+import os, sys
+from pathlib import Path
+path=Path(sys.argv[1])
+if path.is_symlink():
+    raise SystemExit("ERROR: repair transaction marker path is a symbolic link")
+try: path.unlink()
+except FileNotFoundError: pass
+directory=os.open(path.parent, os.O_RDONLY)
+try: os.fsync(directory)
+finally: os.close(directory)
+PY
+}
+
+read_transaction_backup() {
+    python3 - "$TX_MARKER" "$STATE_ROOT/backups" <<'PY'
+import sys
+from pathlib import Path
+marker=Path(sys.argv[1]); root=Path(sys.argv[2]).resolve()
+if marker.is_symlink() or not marker.is_file():
+    raise SystemExit("ERROR: repair transaction marker is not a regular file")
+lines=marker.read_text().splitlines()
+if len(lines) != 1:
+    raise SystemExit("ERROR: repair transaction marker is corrupt")
+backup=Path(lines[0])
+try: resolved=backup.resolve(strict=True)
+except OSError: raise SystemExit("ERROR: repair transaction backup is missing")
+if resolved.parent != root or not resolved.is_dir():
+    raise SystemExit("ERROR: repair transaction backup is outside the managed backup root")
+print(resolved)
+PY
+}
 
 usage() {
     printf "%s\n" \
@@ -236,7 +302,7 @@ copy_code_tree() {
     local dst="$2"
 
     mkdir -p "$dst"
-    rsync -a --delete \
+    rsync -a --checksum --delete \
         --exclude ".git/" \
         --exclude ".env" \
         --exclude ".env.*" \
@@ -253,6 +319,49 @@ rollback_tree() {
     copy_code_tree "$backup" "$target"
     validate_tree "$target"
     echo "ROLLBACK: PASS"
+}
+
+recover_transaction() {
+    [ -f "$TX_MARKER" ] || return 0
+    local backup
+    backup="$(read_transaction_backup)" || return 1
+    if [ -d "$backup" ]; then
+        echo "RECOVERY: restoring interrupted repair"
+        trap '' INT TERM
+        rollback_tree "$backup" "$TARGET_ROOT"
+        remove_transaction_marker
+        trap - INT TERM
+    else
+        echo "ERROR: repair transaction marker has no usable backup" >&2
+        return 1
+    fi
+}
+
+finish_transaction() {
+    remove_transaction_marker
+    TX_ACTIVE=0
+}
+
+rollback_on_exit() {
+    local status="$1"
+    if [ "$TX_ACTIVE" = "1" ] && [ -d "$TX_BACKUP" ]; then
+        # Do not let a second ordinary termination signal interrupt rollback.
+        # SIGKILL/power loss remain recoverable through the durable marker.
+        trap '' INT TERM
+        set +e
+        if rollback_tree "$TX_BACKUP" "$TARGET_ROOT"; then
+            remove_transaction_marker
+        else
+            echo "ERROR: rollback failed; retaining recovery marker" >&2
+        fi
+        set -e
+    fi
+    return "$status"
+}
+
+interrupted() {
+    echo "ERROR: repair interrupted; restoring pre-repair snapshot" >&2
+    exit 130
 }
 
 prune_backups() {
@@ -349,6 +458,7 @@ run_repair() {
     require_command timeout
     require_command python3
     require_command sha256sum
+    require_command flock
 
     [ -n "$task" ] || {
         echo "ERROR: repair task is empty" >&2
@@ -360,6 +470,21 @@ run_repair() {
         return 1
     }
 
+    [ ! -L "$STATE_ROOT" ] || {
+        echo "ERROR: repair state root cannot be a symbolic link" >&2
+        return 1
+    }
+    mkdir -p "$STATE_ROOT"
+    chmod 700 "$STATE_ROOT"
+    exec 9>"$STATE_ROOT/repair.lock"
+    if ! flock -n 9; then
+        echo "ERROR: another repair transaction is already running" >&2
+        return 1
+    fi
+
+    TX_MARKER="$STATE_ROOT/repair-in-progress"
+    recover_transaction
+
     echo "REPAIR: validating current source"
     validate_tree "$TARGET_ROOT" || {
         echo "ERROR: live source fails baseline syntax validation" >&2
@@ -367,17 +492,27 @@ run_repair() {
     }
 
     timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    for path in "$STATE_ROOT/work" "$STATE_ROOT/backups"; do
+        [ ! -L "$path" ] || {
+            echo "ERROR: repair managed state path cannot be a symbolic link" >&2
+            return 1
+        }
+    done
     mkdir -p "$STATE_ROOT/work" "$STATE_ROOT/backups"
+    chmod 700 "$STATE_ROOT/work" "$STATE_ROOT/backups"
 
     work_root="$(mktemp -d "$STATE_ROOT/work/repair-${timestamp}-XXXXXX")"
     stage="$work_root/stage"
     sandbox_home="$work_root/sandbox-home"
-    backup="$STATE_ROOT/backups/$timestamp"
 
     echo "REPAIR: creating isolated staging tree"
-    copy_code_tree "$TARGET_ROOT" "$stage"
-    reject_sensitive_artifacts "$stage"
-    validate_tree "$stage"
+    if ! copy_code_tree "$TARGET_ROOT" "$stage" || \
+       ! reject_sensitive_artifacts "$stage" || \
+       ! validate_tree "$stage"; then
+        rm -rf "$work_root"
+        echo "ERROR: could not create valid isolated staging tree" >&2
+        return 1
+    fi
     before_digest="$(tree_digest "$stage")"
 
     prompt="Repair the following Hermes defect.
@@ -401,7 +536,10 @@ The trusted outer harness validates and deploys the result."
         return 1
     fi
 
-    reject_sensitive_artifacts "$stage"
+    reject_sensitive_artifacts "$stage" || {
+        rm -rf "$work_root"
+        return 1
+    }
     echo "REPAIR: validating staged result"
     validate_tree "$stage" || {
         rm -rf "$work_root"
@@ -417,19 +555,46 @@ The trusted outer harness validates and deploys the result."
     fi
 
     echo "REPAIR: creating trusted pre-deployment backup"
-    copy_code_tree "$TARGET_ROOT" "$backup"
-    validate_tree "$backup"
+    backup="$(mktemp -d "$STATE_ROOT/backups/${timestamp}-$$-XXXXXX")" || {
+        rm -rf "$work_root"
+        echo "ERROR: could not create trusted backup destination" >&2
+        return 1
+    }
+    if ! copy_code_tree "$TARGET_ROOT" "$backup" || ! validate_tree "$backup"; then
+        rm -rf "$backup" "$work_root"
+        echo "ERROR: trusted pre-deployment backup failed validation" >&2
+        return 1
+    fi
+
+    TX_BACKUP="$backup"
+    if ! write_transaction_marker "$backup"; then
+        remove_transaction_marker
+        rm -rf "$backup" "$work_root"
+        echo "ERROR: could not record repair transaction" >&2
+        return 1
+    fi
+    TX_ACTIVE=1
+    trap 'rollback_on_exit $?' EXIT
+    trap interrupted INT TERM
 
     echo "REPAIR: deploying validated staged tree"
+    if [ -n "${OPEN_CLOUD_REPAIR_DEPLOY_DELAY:-}" ]; then
+        sleep "$OPEN_CLOUD_REPAIR_DEPLOY_DELAY"
+    fi
     copy_code_tree "$stage" "$TARGET_ROOT"
 
     if ! validate_tree "$TARGET_ROOT"; then
         echo "ERROR: deployed tree failed validation" >&2
+        trap '' INT TERM
         rollback_tree "$backup" "$TARGET_ROOT"
+        finish_transaction
+        trap - EXIT INT TERM
         rm -rf "$work_root"
         return 1
     fi
 
+    finish_transaction
+    trap - EXIT INT TERM
     rm -rf "$work_root"
     prune_backups
 

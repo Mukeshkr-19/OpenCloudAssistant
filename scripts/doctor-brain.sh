@@ -37,7 +37,7 @@ if "$PY" "$ROOT/scripts/hermes-config.py" verify \
     --server "$SERVER" \
     --python "$PY" >/dev/null 2>&1
 then
-    printf "PASS  %-24s %s\n" "Hermes orchestration" "3 children / depth 1 / MCP inheritance"
+    printf "PASS  %-24s %s\n" "Hermes orchestration" "4 children / depth 2 / bounded children / final-only iMessage"
 else
     printf "FAIL  %-24s %s\n" "Hermes orchestration" "configuration mismatch"
     FAIL=1

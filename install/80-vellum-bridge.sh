@@ -6,7 +6,9 @@ export PATH="$HOME/.local/bin:$HOME/.bun/bin:$HOME/bin:$PATH"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_HOME="${OPEN_CLOUD_HOME:-$HOME}"
 SOURCE="$ROOT/integrations/vellum/server.py"
+WORKER_SOURCE="$ROOT/integrations/vellum/worker.py"
 TARGET="$TARGET_HOME/.config/hermes-vellum/mcp/server.py"
+WORKER="$TARGET_HOME/.config/hermes-vellum/mcp/worker.py"
 STATE="$TARGET_HOME/.config/hermes-vellum/mcp/state"
 MODE="${1:---help}"
 
@@ -34,11 +36,16 @@ validate() {
     fi
 }
 
+validate_worker() {
+    python3 -c 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$1"
+}
+
 case "$MODE" in
     --check)
         TMP="$(mktemp -d)"
         render "$TMP/server.py"
         validate "$TMP/server.py"
+        validate_worker "$WORKER_SOURCE"
         rm -rf "$TMP"
         echo "VELLUM_BRIDGE_INSTALL_CHECK: PASS"
         ;;
@@ -47,11 +54,13 @@ case "$MODE" in
         TMP="$(mktemp -d)"
         render "$TMP/server.py"
         validate "$TMP/server.py"
+        validate_worker "$WORKER_SOURCE"
 
         mkdir -p "$(dirname "$TARGET")" "$STATE"
         chmod 700 "$(dirname "$TARGET")" "$STATE"
 
         install -m 700 "$TMP/server.py" "$TARGET"
+        install -m 700 "$WORKER_SOURCE" "$WORKER"
         rm -rf "$TMP"
 
         echo "VELLUM_BRIDGE_INSTALL: PASS"

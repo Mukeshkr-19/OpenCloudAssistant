@@ -15,17 +15,14 @@ from pathlib import Path
 from agent.credential_pool import load_pool
 from hermes_cli.runtime_provider import resolve_runtime_provider
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fleet_runtime import fleet_root, registry_lock, verification_ttl_ms
+
 
 HOME = Path.home()
 
-REGISTRY = (
-    HOME
-    / ".local"
-    / "share"
-    / "hermes-fleet"
-    / "registry"
-    / "models.json"
-)
+REGISTRY = fleet_root() / "registry" / "models.json"
 
 
 TARGET = {
@@ -38,6 +35,15 @@ MAX_ATTEMPTS = {
     "zen": 10,
     "nvidia": 8,
 }
+
+VERIFICATION_TTL_MS = verification_ttl_ms()
+
+
+def verification_is_fresh(row, now_ms):
+    if row.get("verification") != "verified":
+        return False
+    verified_at = row.get("verifiedAtMs") or row.get("lastProbeMs")
+    return bool(verified_at and now_ms - int(verified_at) < VERIFICATION_TTL_MS)
 
 
 ###############################################################################
@@ -809,6 +815,9 @@ def candidate_score(
 
         score += 1000
 
+    if row.get("verification") == "verified":
+        score += 500
+
 
     if AGENT_FAMILY.search(
         model
@@ -879,6 +888,8 @@ def main():
     )
 
 
+    now_ms = int(time.time() * 1000)
+
     for group in (
         "zen",
         "nvidia",
@@ -909,6 +920,7 @@ def main():
                     "verification"
                 )
                 == "verified"
+                and verification_is_fresh(row, now_ms)
                 and not row.get(
                     "excludedReason"
                 )
@@ -937,10 +949,7 @@ def main():
                 and not row.get(
                     "excludedReason"
                 )
-                and row.get(
-                    "verification"
-                )
-                != "verified"
+                and not verification_is_fresh(row, now_ms)
                 and likely_general(
                     row
                 )
@@ -976,6 +985,7 @@ def main():
                 len(verified)
                 >=
                 TARGET[group]
+                and row.get("verification") != "verified"
             ):
 
                 break
@@ -1040,6 +1050,9 @@ def main():
                     "verification"
                 ] = "verified"
 
+                row["verifiedAtMs"] = row["lastProbeMs"]
+                row["verificationStale"] = False
+
                 row[
                     "probeFailureCount"
                 ] = 0
@@ -1064,6 +1077,11 @@ def main():
 
 
             else:
+
+                # A stale capability result has now been re-probed and failed;
+                # it must not retain the old verified state.
+                row["verification"] = "unverified"
+                row["verificationStale"] = False
 
                 row[
                     "probeFailureCount"
@@ -1253,4 +1271,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with registry_lock(REGISTRY.parent):
+        main()

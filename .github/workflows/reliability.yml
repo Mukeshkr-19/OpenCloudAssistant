@@ -29,7 +29,7 @@ jobs:
       - name: Reliability dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-yaml rsync
+          sudo apt-get install -y python3-venv python3-yaml rsync
 
       - name: P9 sandbox host preparation
         run: |
@@ -64,6 +64,17 @@ jobs:
           git -C "$hermes_root" checkout             -q             --detach             FETCH_HEAD
 
           echo "HERMES_ROOT=$hermes_root" >> "$GITHUB_ENV"
+
+      - name: Install captured Hermes adapter dependency
+        run: |
+          set -euo pipefail
+
+          python3 -m venv --system-site-packages "$RUNNER_TEMP/reliability-venv"
+          reliability_python="$RUNNER_TEMP/reliability-venv/bin/python"
+          hermes_httpx="$("$reliability_python" -c 'import sys,tomllib; dependencies=tomllib.load(open(sys.argv[1],"rb"))["project"]["dependencies"]; matches=[item for item in dependencies if item.lower().startswith(("httpx==","httpx["))]; assert len(matches)==1 and "==" in matches[0], "captured Hermes must exactly pin httpx"; print(matches[0])' "$HERMES_ROOT/pyproject.toml")"
+          "$reliability_python" -m pip install "$hermes_httpx"
+          "$reliability_python" -c 'import importlib.metadata,sys; expected=sys.argv[1].split("==",1)[1].split(";",1)[0].strip(); assert importlib.metadata.version("httpx")==expected' "$hermes_httpx"
+          echo "OPEN_CLOUD_HERMES_PYTHON=$reliability_python" >> "$GITHUB_ENV"
 
       - name: Apply validated OpenCloud Hermes integration
         run: |

@@ -1,11 +1,25 @@
 {
   "orchestrator_enabled": true,
-  "max_concurrent_children": 3,
-  "max_iterations": 50,
-  "max_spawn_depth": 1,
+  "max_concurrent_children": 4,
+  "max_iterations": 12,
+  "child_timeout_seconds": 120,
+  "max_spawn_depth": 2,
   "inherit_mcp_toolsets": true,
   "required_mcp_toolsets": [
     "vellum-bridge"
   ],
-  "notes": "Open Cloud Assistant canonical orchestration policy. Installer translation into upstream Hermes config is handled separately."
+  "display": {
+    "platforms": {
+      "bluebubbles": {
+        "tool_progress": "off",
+        "show_reasoning": false,
+        "streaming": false,
+        "interim_assistant_messages": false,
+        "long_running_notifications": false,
+        "busy_ack_detail": false,
+        "thinking_progress": false
+      }
+    }
+  },
+  "notes": "Open Cloud Assistant canonical runtime policy. Capacity is a ceiling, not a worker target. Installer translation into supported upstream Hermes config is handled separately."
 }

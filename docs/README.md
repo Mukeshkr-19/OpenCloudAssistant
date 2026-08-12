@@ -9,6 +9,7 @@ Use this page as the documentation map for the public project.
 - **[Ubuntu / VPS Setup](UBUNTU_VPS_SETUP.md)** — use a non-Oracle Ubuntu server.
 - **[Providers](PROVIDERS.md)** — configure NVIDIA and OpenRouter, then refresh/verify the dynamic Fleet.
 - **[Channels](CHANNELS.md)** — CLI, Telegram, Discord, Browser preview, optional iMessage.
+- **[Task Profiles](TASK_PROFILES.md)** — private bounded research profiles and per-tool capabilities.
 - **[Operations](OPERATIONS.md)** — services, doctor, logs, restarts, upgrades, validation.
 - **[Troubleshooting](TROUBLESHOOTING.md)** — common failures and exact recovery checks.
 

@@ -55,7 +55,7 @@ status() {
 
     if [ -f "$CONFIG" ]; then
         echo "Config:       $CONFIG"
-        echo "Permissions:  $(stat -c %a "$CONFIG" 2>/dev/null || echo unknown)"
+        echo "Permissions:  $(stat -c %a "$CONFIG" 2>/dev/null || stat -f %Lp "$CONFIG" 2>/dev/null || echo unknown)"
     fi
 }
 

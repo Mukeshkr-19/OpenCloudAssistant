@@ -21,7 +21,7 @@ render_unit() {
     local src="$1"
     local dst="$2"
 
-    python3 -c "from pathlib import Path; import sys; s=Path(sys.argv[1]).read_text(); s=s.replace(\"__OPEN_CLOUD_HOME__\",sys.argv[3]); s=s.replace(\"__OPEN_CLOUD_CONFIG__\",sys.argv[4]); s=s.replace(\"__FLEET_REGISTRY__\",sys.argv[5]); s=s.replace(\"__HERMES_PYTHON__\",sys.argv[6]); Path(sys.argv[2]).write_text(s)" "$src" "$dst" "$TARGET_HOME" "$CONFIG" "$FLEET/registry" "$HERMES_PYTHON"
+    python3 -c "from pathlib import Path; import sys; s=Path(sys.argv[1]).read_text(); s=s.replace(\"__OPEN_CLOUD_HOME__\",sys.argv[3]); s=s.replace(\"__OPEN_CLOUD_CONFIG__\",sys.argv[4]); s=s.replace(\"__FLEET_REGISTRY__\",sys.argv[5]); s=s.replace(\"__HERMES_PYTHON__\",sys.argv[6]); s=s.replace(\"__FLEET_HOME__\",sys.argv[7]); Path(sys.argv[2]).write_text(s)" "$src" "$dst" "$TARGET_HOME" "$CONFIG" "$FLEET/registry" "$HERMES_PYTHON" "$FLEET"
 }
 
 selected_channels() {
@@ -81,7 +81,7 @@ validate_rendered() {
     do
         test -s "$out/$name"
 
-        if grep -q "__OPEN_CLOUD_\|__FLEET_REGISTRY__\|__HERMES_PYTHON__" "$out/$name"; then
+        if grep -q "__OPEN_CLOUD_\|__FLEET_REGISTRY__\|__HERMES_PYTHON__\|__FLEET_HOME__" "$out/$name"; then
             echo "ERROR: unresolved service placeholder in $name" >&2
             exit 1
         fi
@@ -177,6 +177,7 @@ case "$MODE" in
             printf "%s\n" \
                 "[Service]" \
                 "EnvironmentFile=-$CONFIG" \
+                "Environment=OPEN_CLOUD_FLEET_HOME=$FLEET" \
                 > "$SYSTEMD_DIR/hermes-gateway.service.d/opencloud.conf"
 
             chmod 644 "$SYSTEMD_DIR/hermes-gateway.service.d/opencloud.conf"

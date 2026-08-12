@@ -6,6 +6,14 @@ cd "$ROOT"
 
 echo "Open Cloud Assistant prerequisite bootstrap smoke test"
 
+grep -qF '"$ROOT/install/00-preflight.sh" --dry-run' setup.sh
+grep -qF '"$ROOT/install/00-preflight.sh" --install' setup.sh
+
+if [ "$(uname -s)" != "Linux" ]; then
+    echo "PREREQUISITE_BOOTSTRAP_SMOKE: SKIP (Ubuntu dpkg/apt required)"
+    exit 0
+fi
+
 install/00-preflight.sh --check
 
 OUT="$(
@@ -31,8 +39,5 @@ printf "%s\n" "$OUT"
 [[ "$OUT" == *"rsync"* ]]
 [[ "$OUT" == *"python3-yaml"* ]]
 [[ "$OUT" == *"PREFLIGHT_STATUS: PASS"* ]]
-
-grep -qF "\"\$ROOT/install/00-preflight.sh\" --dry-run" setup.sh
-grep -qF "\"\$ROOT/install/00-preflight.sh\" --install" setup.sh
 
 echo "PREREQUISITE_BOOTSTRAP_SMOKE: PASS"

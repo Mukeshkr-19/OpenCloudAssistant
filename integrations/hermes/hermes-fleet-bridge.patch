@@ -26,7 +26,7 @@ index 0000000..6eb5c06
 +from typing import Any, Optional
 +
 +
-+ROOT = Path.home() / ".local/share/hermes-fleet"
++ROOT = Path(os.environ.get("OPEN_CLOUD_FLEET_HOME", Path.home() / ".local/share/hermes-fleet")).expanduser().resolve()
 +
 +DISPATCHER = ROOT / "dispatcher.py"
 +CONFIG = ROOT / "fleet.json"

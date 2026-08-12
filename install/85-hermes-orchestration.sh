@@ -24,10 +24,16 @@ check_python() {
 
 check_source() {
     test -f "$HERMES_SOURCE/tools/delegate_tool.py"
+    test -f "$HERMES_SOURCE/cron/scheduler_provider.py"
+    test -f "$HERMES_SOURCE/gateway/run.py"
     grep -qF "max_concurrent_children" "$HERMES_SOURCE/tools/delegate_tool.py"
     grep -qF "max_spawn_depth" "$HERMES_SOURCE/tools/delegate_tool.py"
     grep -qF "orchestrator_enabled" "$HERMES_SOURCE/tools/delegate_tool.py"
     grep -qF "inherit_mcp_toolsets" "$HERMES_SOURCE/tools/delegate_tool.py"
+    grep -qF "child_timeout_seconds" "$HERMES_SOURCE/tools/delegate_tool.py"
+    grep -qF "_start_multiplex" "$HERMES_SOURCE/cron/scheduler_provider.py"
+    grep -qF "profile_homes" "$HERMES_SOURCE/cron/scheduler_provider.py"
+    grep -qF "profile_homes=" "$HERMES_SOURCE/gateway/run.py"
 }
 
 check_policy() {
@@ -36,9 +42,10 @@ check_policy() {
 import json,sys
 d=json.load(open(sys.argv[1]))
 assert d[\"orchestrator_enabled\"] is True
-assert d[\"max_concurrent_children\"] == 3
-assert d[\"max_iterations\"] == 50
-assert d[\"max_spawn_depth\"] == 1
+assert d[\"max_concurrent_children\"] == 4
+assert d[\"max_iterations\"] == 12
+assert d[\"child_timeout_seconds\"] == 120
+assert d[\"max_spawn_depth\"] == 2
 assert d[\"inherit_mcp_toolsets\"] is True
 assert \"vellum-bridge\" in d[\"required_mcp_toolsets\"]
 " "$POLICY"
@@ -62,7 +69,6 @@ case "$MODE" in
             echo "ERROR: Vellum bridge is not installed: $SERVER" >&2
             exit 1
         }
-
         "$HERMES_PYTHON" "$ROOT/scripts/hermes-config.py" apply \
             --config "$CONFIG" \
             --policy "$POLICY" \

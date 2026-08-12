@@ -31,3 +31,19 @@ Runtime model discovery: enabled
 Private memory included: no
 Runtime health databases included: no
 Credentials included: no
+
+## Additional local runtime validation
+
+On 2026-08-12, the pinned Hermes source above was also materialized and
+exercised in a disposable clone on macOS ARM64 with CPython 3.14. OpenCloud applies a narrow
+compatibility patch to Hermes' daemon thread-pool construction when the newer
+CPython worker signature is detected. The reliability gate tests observable
+behavior—bounded concurrency, real overlap, one worker for a one-task batch,
+cleanup, and depth controls—without requiring a particular executor class.
+
+This does not expand the deployment support claim beyond Ubuntu. It is a local
+compatibility test for OpenCloud's materialized Hermes integration.
+
+The separate local Mac checkout observed during that run (`67783ad4e...`) was
+stale relative to its recorded upstream and was test input only, not a supported
+deployment target. Compatibility remains pinned and fails closed on patch drift.

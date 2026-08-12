@@ -9,6 +9,11 @@ echo "Open Cloud Assistant complete installer smoke test"
 HELP="$(./setup.sh --help)"
 [[ "$HELP" == *"./setup.sh --install"* ]]
 
+if [ "$(uname -s)" != "Linux" ]; then
+    echo "SETUP_INSTALL_SMOKE: SKIP (Ubuntu installer preflight required)"
+    exit 0
+fi
+
 OUT="$(OPEN_CLOUD_SETUP_TEST_MODE=1 ./setup.sh --install 2>&1)"
 
 if [[ "$OUT" == *"HERMES_BRAIN_MATERIALIZATION: PASS"* ]]; then

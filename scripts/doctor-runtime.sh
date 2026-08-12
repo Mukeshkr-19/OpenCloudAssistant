@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_HOME="${OPEN_CLOUD_HOME:-$HOME}"
 
 OPEN_DIR="$TARGET_HOME/.opencloud"
@@ -10,9 +11,16 @@ CHANNELS="$OPEN_DIR/channels.json"
 FLEET="${OPEN_CLOUD_FLEET_HOME:-$TARGET_HOME/.local/share/hermes-fleet}"
 HERMES_CONFIG="$TARGET_HOME/.hermes/config.yaml"
 VELLUM_BRIDGE="$TARGET_HOME/.config/hermes-vellum/mcp/server.py"
+VELLUM_WORKER="$TARGET_HOME/.config/hermes-vellum/mcp/worker.py"
 REPAIR_HELPER="$TARGET_HOME/.local/bin/hermes-code-repair"
 
 FAIL=0
+PY="${OPEN_CLOUD_HERMES_PYTHON:-$TARGET_HOME/.hermes/hermes-agent/venv/bin/python}"
+if [ ! -x "$PY" ]; then PY="$(command -v python3)"; fi
+
+file_mode() {
+    stat -c "%a" "$1" 2>/dev/null || stat -f "%Lp" "$1" 2>/dev/null || true
+}
 
 pass() {
     printf "PASS  %-24s %s\n" "$1" "${2:-}"
@@ -31,7 +39,7 @@ echo "Runtime integrity"
 
 if [ -d "$OPEN_DIR" ]; then
 
-    mode="$(stat -c "%a" "$OPEN_DIR" 2>/dev/null || true)"
+    mode="$(file_mode "$OPEN_DIR")"
 
     if [ "$mode" = "700" ]; then
         pass "OpenCloud directory" "permissions 700"
@@ -45,7 +53,7 @@ fi
 
 if [ -f "$CONFIG" ]; then
 
-    mode="$(stat -c "%a" "$CONFIG" 2>/dev/null || true)"
+    mode="$(file_mode "$CONFIG")"
 
     if [ "$mode" = "600" ]; then
         pass "Provider config" "permissions 600"
@@ -101,7 +109,7 @@ fi
 
 if [ -f "$HERMES_CONFIG" ]; then
 
-    if python3 -c "import yaml,sys; d=yaml.safe_load(open(sys.argv[1])); raise SystemExit(0 if isinstance(d,dict) else 1)" "$HERMES_CONFIG" >/dev/null 2>&1
+    if "$PY" -c "import yaml,sys; d=yaml.safe_load(open(sys.argv[1])); raise SystemExit(0 if isinstance(d,dict) else 1)" "$HERMES_CONFIG" >/dev/null 2>&1
     then
         pass "Hermes config" "valid YAML"
     else
@@ -123,6 +131,31 @@ if [ -f "$VELLUM_BRIDGE" ]; then
 
 else
     fail "Vellum bridge" "missing; rerun ./setup.sh --install"
+fi
+
+if [ -x "$VELLUM_WORKER" ]; then
+    pass "Vellum task worker" "installed and executable"
+else
+    fail "Vellum task worker" "missing; rerun install/80-vellum-bridge.sh --install"
+fi
+
+PROFILE_DIR="$OPEN_DIR/task-profiles"
+if [ -d "$PROFILE_DIR" ]; then
+    while IFS= read -r profile; do
+        name="$(basename "$profile" .json)"
+        if OPEN_CLOUD_HOME="$TARGET_HOME" OPEN_CLOUD_HERMES_PYTHON="$PY" "$ROOT/scripts/task-profile.py" verify --name "$name" >/dev/null 2>&1; then
+            pass "Task profile $name" "valid restrictive profile"
+            if [ -f "$PROFILE_DIR/$name.state.json" ] && command -v systemctl >/dev/null 2>&1; then
+                if systemctl --user is-active hermes-gateway.service >/dev/null 2>&1; then
+                    pass "Task profile $name cron" "multiplex gateway active"
+                else
+                    fail "Task profile $name cron" "materialized job has no active Hermes gateway ticker"
+                fi
+            fi
+        else
+            fail "Task profile $name" "missing, malformed, overprivileged, or unapplied"
+        fi
+    done < <(find "$PROFILE_DIR" -maxdepth 1 -type f -name '*.json' ! -name '*.state.json' -print | sort)
 fi
 
 if [ -x "$REPAIR_HELPER" ]; then

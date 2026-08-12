@@ -22,6 +22,10 @@ skip() {
     printf "SKIP  %-24s %s\n" "$1" "${2:-not configured}"
 }
 
+file_mode() {
+    stat -c "%a" "$1" 2>/dev/null || stat -f "%Lp" "$1" 2>/dev/null || echo unknown
+}
+
 has_value() {
     local key="$1"
     [ -f "$CONFIG" ] || return 1
@@ -29,6 +33,22 @@ has_value() {
 }
 
 POLICY="$ROOT/config/fleet/hermes-fleet-policy.json"
+
+TTL_VALUE="${OPEN_CLOUD_MODEL_VERIFICATION_TTL_SECONDS:-}"
+if [ -z "$TTL_VALUE" ] && [ -f "$CONFIG" ]; then
+    TTL_VALUE="$(sed -n 's/^OPEN_CLOUD_MODEL_VERIFICATION_TTL_SECONDS=//p' "$CONFIG" | tail -1)"
+fi
+TTL_VALUE="${TTL_VALUE:-86400}"
+if OPEN_CLOUD_MODEL_VERIFICATION_TTL_SECONDS="$TTL_VALUE" PYTHONPATH="$ROOT/integrations/fleet" \
+    python3 -c 'from fleet_runtime import verification_ttl_ms; verification_ttl_ms()' >/dev/null 2>&1; then
+    if [ "$TTL_VALUE" = "0" ]; then
+        pass "Verification TTL" "0; re-probe on every verifier run"
+    else
+        pass "Verification TTL" "valid"
+    fi
+else
+    fail "Verification TTL" "must be an integer from 0 through 31536000 seconds"
+fi
 
 if [ -f "$POLICY" ] && python3 -m json.tool "$POLICY" >/dev/null 2>&1; then
     pass "Fleet policy" "valid"
@@ -46,6 +66,19 @@ else
     skip "Fleet runtime" "not installed yet"
 fi
 
+if [ -f "$BASE/session-pin.key" ] && [ "$(wc -c < "$BASE/session-pin.key")" -ge 32 ]; then
+    MODE="$(file_mode "$BASE/session-pin.key")"
+    if [ "$MODE" = "600" ]; then
+        pass "Fleet session pin" "valid key; permissions 600"
+    else
+        fail "Fleet session pin" "expected permissions 600; found $MODE"
+    fi
+elif [ -d "$BASE" ]; then
+    fail "Fleet session pin" "missing or shorter than 32 bytes"
+else
+    skip "Fleet session pin" "runtime not installed"
+fi
+
 if [ -f "$BASE/registry/refresh.py" ] && [ -f "$BASE/registry/verify.py" ]; then
     pass "Fleet discovery" "installed"
 else
@@ -53,7 +86,7 @@ else
 fi
 
 if [ -f "$CONFIG" ]; then
-    MODE="$(stat -c %a "$CONFIG" 2>/dev/null || echo unknown)"
+    MODE="$(file_mode "$CONFIG")"
 
     if [ "$MODE" = "600" ]; then
         pass "Provider config perms" "600"
