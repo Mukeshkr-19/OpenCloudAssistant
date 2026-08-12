@@ -9,6 +9,7 @@ import shutil
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Optional
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -83,7 +84,7 @@ def main():
             node for node in auxiliary_tree.body
             if isinstance(node, ast.FunctionDef) and node.name == "_is_free_model"
         )
-        namespace = {}
+        namespace = {"Optional": Optional}
         exec(compile(ast.Module(body=[free_model_node], type_ignores=[]), "auxiliary_client.py", "exec"), namespace)
         assert namespace["_is_free_model"]("openrouter/free") is True
         assert namespace["_is_free_model"]("nvidia/example:free") is True
