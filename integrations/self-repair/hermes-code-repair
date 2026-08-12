@@ -504,12 +504,15 @@ run_repair() {
     work_root="$(mktemp -d "$STATE_ROOT/work/repair-${timestamp}-XXXXXX")"
     stage="$work_root/stage"
     sandbox_home="$work_root/sandbox-home"
-    backup="$(mktemp -d "$STATE_ROOT/backups/${timestamp}-$$-XXXXXX")"
 
     echo "REPAIR: creating isolated staging tree"
-    copy_code_tree "$TARGET_ROOT" "$stage"
-    reject_sensitive_artifacts "$stage"
-    validate_tree "$stage"
+    if ! copy_code_tree "$TARGET_ROOT" "$stage" || \
+       ! reject_sensitive_artifacts "$stage" || \
+       ! validate_tree "$stage"; then
+        rm -rf "$work_root"
+        echo "ERROR: could not create valid isolated staging tree" >&2
+        return 1
+    fi
     before_digest="$(tree_digest "$stage")"
 
     prompt="Repair the following Hermes defect.
@@ -533,7 +536,10 @@ The trusted outer harness validates and deploys the result."
         return 1
     fi
 
-    reject_sensitive_artifacts "$stage"
+    reject_sensitive_artifacts "$stage" || {
+        rm -rf "$work_root"
+        return 1
+    }
     echo "REPAIR: validating staged result"
     validate_tree "$stage" || {
         rm -rf "$work_root"
@@ -549,11 +555,24 @@ The trusted outer harness validates and deploys the result."
     fi
 
     echo "REPAIR: creating trusted pre-deployment backup"
-    copy_code_tree "$TARGET_ROOT" "$backup"
-    validate_tree "$backup"
+    backup="$(mktemp -d "$STATE_ROOT/backups/${timestamp}-$$-XXXXXX")" || {
+        rm -rf "$work_root"
+        echo "ERROR: could not create trusted backup destination" >&2
+        return 1
+    }
+    if ! copy_code_tree "$TARGET_ROOT" "$backup" || ! validate_tree "$backup"; then
+        rm -rf "$backup" "$work_root"
+        echo "ERROR: trusted pre-deployment backup failed validation" >&2
+        return 1
+    fi
 
     TX_BACKUP="$backup"
-    write_transaction_marker "$backup"
+    if ! write_transaction_marker "$backup"; then
+        remove_transaction_marker
+        rm -rf "$backup" "$work_root"
+        echo "ERROR: could not record repair transaction" >&2
+        return 1
+    fi
     TX_ACTIVE=1
     trap 'rollback_on_exit $?' EXIT
     trap interrupted INT TERM

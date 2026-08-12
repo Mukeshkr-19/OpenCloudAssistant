@@ -179,8 +179,27 @@ run_stage_validation_case() {
         return 1
     fi
 
+    test ! -e "$state/repair-in-progress"
+    test -z "$(find "$state/work" -mindepth 1 -maxdepth 1 -print -quit)"
+
+    HOME="$home" \
+    PATH="$REAL_PATH" \
+    OPEN_CLOUD_HERMES_ROOT="$target" \
+    OPEN_CLOUD_REPAIR_STATE="$state" \
+    OPEN_CLOUD_REPAIR_TIMEOUT=10 \
+    OPEN_CLOUD_REPAIR_SANDBOX_NETWORK=shared \
+    OPEN_CLOUD_FAULT_MODE=stage-valid \
+    OPEN_CLOUD_REAL_PYTHON="$REAL_PYTHON" \
+    "$HARNESS" --task "run valid repair after rejected stage" >> "$log" 2>&1
+
+    grep -qF "REPAIR_STATUS: PASS" "$log"
+    grep -qF "return 99" "$target/example.py"
+    test ! -e "$state/repair-in-progress"
+
     echo "PASS staged validation rejects invalid repair"
     echo "PASS live target preserved before deployment"
+    echo "PASS rejected stage leaves no backup, marker, or work directory"
+    echo "PASS repair lock releases for a subsequent valid repair"
 }
 
 run_deploy_rollback_case() {
@@ -258,6 +277,7 @@ run_deploy_rollback_case() {
         "$expected"
 
     [ "$(cat "$state/target-validation-count")" -ge 3 ]
+    test ! -e "$state/repair-in-progress"
 
     echo "PASS trusted pre-deployment backup created"
     echo "PASS post-deployment validation failure injected"
