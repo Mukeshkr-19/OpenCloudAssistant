@@ -1,12 +1,13 @@
-# Open Cloud Assistant
+<div align="center">
 
-**A reliability-first cloud runtime for a persistent AI assistant.**
+# ☁️ Open Cloud Assistant
 
-Open Cloud Assistant deploys and operates Hermes orchestration, Vellum local
-context, and a health-aware model Fleet as one production system. It adds the
-infrastructure, lifecycle controls, fault handling, isolation, and deterministic
-validation needed to keep that system useful on an Ubuntu cloud host.
+**A self-hosted, reliability-first cloud AI assistant built to stay online.**
 
+**Hermes orchestration · Vellum context · dynamic Fleet routing**<br>
+**Bounded workers · sandboxed self-repair · OCI deployment**
+
+[![Release](https://img.shields.io/github/v/release/Mukeshkr-19/OpenCloudAssistant?display_name=tag)](https://github.com/Mukeshkr-19/OpenCloudAssistant/releases)
 [![CI](https://github.com/Mukeshkr-19/OpenCloudAssistant/actions/workflows/ci.yml/badge.svg)](https://github.com/Mukeshkr-19/OpenCloudAssistant/actions/workflows/ci.yml)
 [![Reliability](https://github.com/Mukeshkr-19/OpenCloudAssistant/actions/workflows/reliability.yml/badge.svg)](https://github.com/Mukeshkr-19/OpenCloudAssistant/actions/workflows/reliability.yml)
 [![Ubuntu 24.04](https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white)](docs/COMPATIBILITY.md)
@@ -14,25 +15,27 @@ validation needed to keep that system useful on an Ubuntu cloud host.
 [![Terraform](https://img.shields.io/badge/Terraform-OCI-844FBA?logo=terraform&logoColor=white)](infra/terraform/oci/README.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Engineering highlights
+</div>
 
-- **Infrastructure as Code:** Terraform-defined OCI networking, compute,
-  SSH policy, cloud-init bootstrap, and optional installer handoff for Ubuntu
-  24.04 ARM64.
-- **Multi-worker orchestration:** Hermes can delegate independent work to
-  bounded concurrent children, with machine-enforced batch outcomes and a
-  bounded worker lifetime.
-- **Dynamic model Fleet:** runtime discovery, compatibility verification,
-  freshness checks, SQLite health history, cooldowns, session pinning, and
-  bounded cross-provider fallback.
-- **Controlled context delegation:** Vellum remains a separate local knowledge
-  layer; restricted workers can receive allowlisted context without inheriting
-  privileged repair capabilities.
-- **Sandboxed repair pipeline:** staged edits, policy and syntax gates, trusted
-  backups, post-deployment verification, rollback, locking, and interruption
-  recovery, with Bubblewrap isolation on supported Ubuntu hosts.
-- **Reliability as code:** fault injection, concurrency tests, upgrade-path
-  coverage, captured-Hermes compatibility, and Ubuntu x86_64/ARM64 CI.
+Open Cloud Assistant turns an Ubuntu cloud host into a persistent AI runtime.
+Hermes coordinates technical work, Vellum supplies controlled personal context,
+Fleet selects verified model capacity, and the surrounding reliability layer
+keeps the system deployed, scheduled, tested, and recoverable.
+
+## Why Open Cloud Assistant?
+
+- ⚡ **Bounded multi-worker execution:** parallel delegation with strict,
+  machine-enforced success semantics.
+- 🧠 **Controlled personal context:** Vellum provides relevant local knowledge
+  without giving every worker full authority.
+- 🔀 **Dynamic model routing:** Fleet discovers, verifies, observes, and routes
+  across changing model capacity.
+- 🛡️ **Sandboxed self-repair:** staged changes pass validation, backup, and
+  rollback gates before they can remain deployed.
+- ☁️ **Infrastructure as Code:** Terraform-defined OCI infrastructure for the
+  accepted Ubuntu 24.04 ARM64 deployment.
+- 🧪 **Reliability as code:** deterministic fault injection, concurrency,
+  upgrade, recovery, and cross-architecture CI coverage.
 
 ## Architecture
 
@@ -41,28 +44,20 @@ Fleet selects only policy-allowed, currently verified model capacity.
 Open Cloud Assistant is the reliability and lifecycle layer around all three.
 
 ```mermaid
-flowchart LR
-    U["User / CLI"] --> H
-    T["Terraform for OCI"] -. provisions .-> HOST
-    P["Verified provider capacity"]
-
-    subgraph HOST["Oracle Cloud · Ubuntu 24.04 ARM64"]
-        subgraph OCA["Open Cloud Assistant reliability layer"]
-            H["Hermes orchestrator"] --> W["Bounded delegated workers"]
-            H <--> VB["Controlled Vellum bridge"]
-            H --> F["Fleet routing and health"]
-            W --> F
-            SD["systemd lifecycle and maintenance"] --> H
-            SD --> F
-            SR["Staged self-repair and rollback"] -. protects .-> H
-            D["Doctor · audit · validation"] -. verifies .-> H
-            D -. verifies .-> F
-        end
-        VB <--> V["Vellum local context / memory"]
-    end
-
-    F --> P
+flowchart TB
+    U["User"] --> H["Hermes<br/>Orchestrator"]
+    H --> W["Bounded<br/>Workers"]
+    W --> H
+    H --> V["Vellum<br/>Controlled Context"]
+    V --> H
+    H --> F["Fleet<br/>Verified Routing"]
+    W --> F
+    F --> M["Verified Model Capacity"]
 ```
+
+> **☁️ Open Cloud reliability layer**<br>
+> OCI + Terraform · systemd + linger · health + timers<br>
+> staged repair + rollback · CI + fault injection
 
 The public repository contains reusable integration code, policy, tests, and
 deployment tooling. Credentials, conversations, personal context, provider
@@ -83,10 +78,12 @@ worker must complete successfully before the batch can be reported successful.
 Delegated children receive an intersected capability set, so a restricted child
 cannot regain a privileged tool excluded by its parent policy.
 
-### Dynamic model Fleet
+## Dynamic model Fleet
 
 Fleet treats model availability as changing infrastructure rather than static
 configuration:
+
+**Discover → Verify → Observe → Route → Recover**
 
 - discovers eligible model candidates at runtime;
 - verifies tool-call compatibility before production selection;
@@ -105,7 +102,7 @@ OpenRouter retains the stable policy route `openrouter/free`.
 See [Fleet Runtime](docs/FLEET_RUNTIME.md) and
 [Dynamic Fleet Registry](docs/FLEET_REGISTRY.md).
 
-### Controlled Vellum context
+## Context without over-privilege
 
 Vellum is a separate local context and personal-knowledge layer, not a second
 orchestrator. Hermes requests relevant context through a managed local bridge.
@@ -145,10 +142,12 @@ services.
 See [Self-Repair Architecture](docs/SELF_REPAIR.md) and the
 [ARM64 sandbox acceptance record](docs/evidence/self-repair-sandbox-arm64.md).
 
-## Production deployment
+## Built for the cloud. Tested on the cloud.
 
-The validated production target is Oracle Cloud Infrastructure running Ubuntu
-24.04 on ARM64/aarch64. The deployment uses:
+> **Oracle Cloud Infrastructure · Ubuntu 24.04 · ARM64/aarch64**
+
+The accepted production environment runs on OCI, while the installation model
+remains suitable for a compatible Ubuntu 24.04 host. The deployment uses:
 
 - Terraform for the VCN, subnet, routing, security policy, compute instance,
   SSH key injection, and cloud-init;
@@ -170,7 +169,7 @@ point-in-time observations rather than an uptime claim or SLO. See
 [Operational Evidence](docs/evidence/README.md) and
 [OCI Terraform](infra/terraform/oci/README.md).
 
-## Validation and evidence
+## Tested like infrastructure
 
 Pull requests exercise seven core checks across the CI and reliability
 workflows:
