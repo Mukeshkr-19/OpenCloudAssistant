@@ -62,6 +62,12 @@ def load_task_profile(path):
         include = rule.get("include") if isinstance(rule, dict) else None
         if not isinstance(include, list) or not include or not all(isinstance(x, str) for x in include):
             raise SystemExit(f"ERROR: {server} requires a non-empty tools.include list")
+        required = rule.get("required") if isinstance(rule, dict) else None
+        if required is not None:
+            if not isinstance(required, list) or not all(isinstance(x, str) for x in required):
+                raise SystemExit(f"ERROR: {server}.required must be a string list")
+            if set(required) - set(include):
+                raise SystemExit(f"ERROR: {server}.required must be a subset of tools.include")
         if server == "vellum-bridge" and set(include) - {"get_user_context"}:
             raise SystemExit("ERROR: read-only Vellum access permits only get_user_context")
     task = data.get("task")
@@ -88,6 +94,40 @@ def load_task_profile(path):
             if value is not None and not isinstance(value, (str, list, dict)):
                 raise SystemExit(f"ERROR: task profile task.{key} has an unsupported type")
     return data
+
+
+def required_operations(profile):
+    """Derive explicitly-required operations for a task profile.
+
+    Returns ``(protected, required_to_execute)`` — two sorted lists of
+    fully-qualified MCP registry tool names (``mcp_<server>_<tool>``).
+
+    Only explicit signals populate these sets, never the enabled toolset.
+    ``protected`` operations must stay directly model-visible (survive
+    progressive disclosure); ``required_to_execute`` operations must produce
+    execution evidence on every run. Both are intersected with each server's
+    ``tools.include`` allowlist, so a denied tool can never be marked required.
+    """
+    task = profile.get("task") or {}
+    mcp_tools = profile.get("mcp_tools") or {}
+    protected = set()
+    must_execute = set()
+    for server, rule in mcp_tools.items():
+        if not isinstance(rule, dict):
+            continue
+        include = set(rule.get("include") or [])
+        required = rule.get("required") or []
+        if not isinstance(required, list):
+            required = []
+        required = [str(t) for t in required if isinstance(t, str)]
+        if server == "vellum-bridge" and task.get("use_vellum_context") is True:
+            required = list(dict.fromkeys([*required, "get_user_context"]))
+        for tool in required:
+            if tool in include:
+                fq = f"mcp_{server.replace('-', '_')}_{tool}"
+                protected.add(fq)
+                must_execute.add(fq)
+    return sorted(protected), sorted(must_execute)
 
 
 def load_config(path):
