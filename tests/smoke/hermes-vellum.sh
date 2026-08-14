@@ -78,7 +78,7 @@ assert x[\"inherit_mcp_toolsets\"] is True
 assert x[\"provider\"] == \"user-provider\"
 assert x[\"model\"] == \"user-defined-model\"
 assert d[\"providers\"][\"opencode-zen\"][\"request_timeout_seconds\"] == 45
-assert d[\"providers\"][\"nvidia\"][\"request_timeout_seconds\"] == 45
+assert d[\"providers\"][\"nvidia\"][\"request_timeout_seconds\"] == 60
 assert d[\"providers\"][\"openrouter\"][\"request_timeout_seconds\"] == 45
 assert \"existing-server\" in d[\"mcp_servers\"]
 assert d[\"mcp_servers\"][\"vellum-bridge\"][\"enabled\"] is True

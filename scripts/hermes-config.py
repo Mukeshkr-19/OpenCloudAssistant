@@ -155,7 +155,7 @@ def desired_config(data, policy, server, python_cmd, profile=None):
         provider = providers.setdefault(name, {})
         if not isinstance(provider, dict):
             raise SystemExit(f"ERROR: Hermes provider config must be a mapping: {name}")
-        provider["request_timeout_seconds"] = policy["provider_request_timeout_seconds"]
+        provider["request_timeout_seconds"] = 60 if name == "nvidia" else policy["provider_request_timeout_seconds"]
     mcp["vellum-bridge"] = {
         "enabled": True, "command": str(python_cmd), "args": [str(server)],
         "connect_timeout": 30.0,
