@@ -1,0 +1,309 @@
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+index 5699360..c8559dd 100644
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -103,6 +103,19 @@ def _summarize_cron_failure_for_delivery(job: dict, error: str | None) -> str:
+     text = (error or "unknown error").strip()
+     lower = text.lower()
+
++    # HERMES_CRON_FAILURE_CLASSIFICATION_V1_BEGIN
++    if "CronRequiredToolNotExecuted" in text:
++        return (
++            f"⚠️ Cron '{job_name}' failed: a required operation did not execute "
++            "(tool surface failure). Full details saved in cron output."
++        )
++    if "CronToolProtocolError" in text:
++        return (
++            f"⚠️ Cron '{job_name}' failed: unresolved internal tool protocol "
++            "was blocked from delivery. Full details saved in cron output."
++        )
++    # HERMES_CRON_FAILURE_CLASSIFICATION_V1_END
++
+     # Provider/API failures are the common noisy path. Keep these short.
+     if "429" in text or "rate limit" in lower or "usage limit" in lower:
+         reason = "rate limit"
+@@ -145,6 +158,116 @@ def _summarize_cron_failure_for_delivery(job: dict, error: str | None) -> str:
+     return f"⚠️ Cron '{job_name}' failed: {cleaned}"
+
+
++# HERMES_CRON_REQUIRED_TOOLS_RESOLVE_V1_BEGIN
++
++def _resolve_cron_required_tools(job: dict) -> frozenset:
++    """Explicitly-required operations that must stay directly model-visible.
++
++    These are the ALLOWED ∩ explicitly-required-direct operations for this
++    scheduled workflow. Distinct from ``required_to_execute``: a protected
++    operation is guaranteed to survive progressive disclosure, but is not
++    required to produce execution evidence unless the job also declares it in
++    ``required_to_execute``.
++    """
++    raw = job.get("required_tools") or []
++    if isinstance(raw, str):
++        raw = [raw]
++    return frozenset(str(n).strip() for n in raw if str(n).strip())
++
++
++def _resolve_cron_required_to_execute(job: dict) -> frozenset:
++    """Explicitly-required operations that must actually execute this run.
++
++    Never inferred from the enabled toolset: an enabled MCP server does not
++    imply every one of its tools must run on every tick. Only an explicit
++    named-operation requirement populates this set.
++    """
++    raw = job.get("required_to_execute") or []
++    if isinstance(raw, str):
++        raw = [raw]
++    return frozenset(str(n).strip() for n in raw if str(n).strip())
++
++
++# Recognized *unresolved* internal tool-call protocol that must never reach a
++# delivery channel. Mirrors the structural markers Hermes already strips from
++# visible content (cli._strip_reasoning_tags) plus the NVIDIA-NIM / Qwen style
++# ``<|tool_call|>`` tokens. Deliberately structural, not a prose/JSON censor:
++# ordinary text that merely mentions "tool call" / "tool_call" or arbitrary
++# JSON is never matched.
++_TOOL_PROTOCOL_TOKEN_RE = re.compile(r"<\|/?tool_calls?\|>", re.IGNORECASE)
++_TOOL_PROTOCOL_TAG_RE = re.compile(
++    r"</?(?:tool_call|tool_calls|function_call|function_calls)\b[^>]*>",
++    re.IGNORECASE,
++)
++_TOOL_PROTOCOL_FUNCTION_ATTR_RE = re.compile(
++    r"<function\b[^>]*\bname\s*=[^>]*>",
++    re.IGNORECASE,
++)
++
++
++def _contains_unresolved_tool_protocol(text: str) -> bool:
++    """True when ``text`` carries recognized, unresolved internal tool protocol.
++
++    Final cron text is prose: a real tool invocation is emitted as a structured
++    tool call, not raw markers in the final response. Seeing the markers here
++    means the model leaked unresolved protocol that must not be delivered.
++    """
++    if not isinstance(text, str) or not text.strip():
++        return False
++    return bool(
++        _TOOL_PROTOCOL_TOKEN_RE.search(text)
++        or _TOOL_PROTOCOL_TAG_RE.search(text)
++        or _TOOL_PROTOCOL_FUNCTION_ATTR_RE.search(text)
++    )
++
++
++def _executed_tool_names(messages) -> frozenset:
++    """Tool names actually invoked across a run's messages.
++
++    Accounts for both direct tool calls and the progressive-disclosure
++    ``tool_call`` bridge (whose ``arguments.name`` names the underlying tool).
++    """
++    executed = set()
++    for msg in messages or []:
++        if not isinstance(msg, dict):
++            continue
++        for tc in msg.get("tool_calls") or []:
++            fn = None
++            if isinstance(tc, dict):
++                fn = tc.get("function") or {}
++            else:
++                fn = getattr(tc, "function", None) or {}
++            if not isinstance(fn, dict):
++                continue
++            name = str(fn.get("name") or "").strip()
++            if not name:
++                continue
++            if name == "tool_call":
++                try:
++                    args = fn.get("arguments") or {}
++                    if isinstance(args, str):
++                        args = json.loads(args)
++                    inner = str((args or {}).get("name") or "").strip()
++                    if inner:
++                        executed.add(inner)
++                except Exception:
++                    pass
++            else:
++                executed.add(name)
++    return frozenset(executed)
++
++
++class CronRequiredToolNotExecuted(RuntimeError):
++    """A required operation never executed during this cron run.
++
++    Raised when ``required_to_execute`` names an operation that produced no
++    execution evidence, so the run is classified as a tool-surface failure
++    instead of a valid (possibly empty-context) result.
++    """
++
++# HERMES_CRON_REQUIRED_TOOLS_RESOLVE_V1_END
++
++
+ class CronPromptInjectionBlocked(Exception):
+     """Raised by _build_job_prompt when the fully-assembled prompt trips the
+     injection scanner. Caught in run_job so the operator sees a clean
+@@ -3018,6 +3141,7 @@ def run_job(
+     logger.info("Prompt: %s", prompt[:100])
+
+     agent = None
++    _protect_token = None
+
+     # Use ContextVars for per-job session/delivery state so parallel jobs
+     # don't clobber each other's targets (os.environ is process-global).
+@@ -3486,6 +3610,19 @@ def run_job(
+                 job_id, _mcp_exc,
+             )
+
++        # HERMES_CRON_REQUIRED_TOOLS_RESOLVE_V1
++        _required_tools = _resolve_cron_required_tools(job)
++        _required_to_execute = _resolve_cron_required_to_execute(job)
++        if _required_tools:
++            try:
++                from tools.tool_search import protect_required_tools
++                _protect_token = protect_required_tools(_required_tools)
++            except Exception as _protect_exc:
++                logger.debug(
++                    "Job '%s': required-tool protection unavailable: %s",
++                    job_id, type(_protect_exc).__name__,
++                )
++
+         agent = AIAgent(
+             model=model,
+             api_key=runtime.get("api_key"),
+@@ -3712,6 +3849,19 @@ def run_job(
+                     turn_exit_reason,
+                 )
+                 final_response = ""
++
++        # HERMES_CRON_REQUIRED_TO_EXECUTE_V1
++        # A required operation must produce execution evidence this run. If it
++        # never ran, the result is a tool-surface failure — never a valid
++        # (possibly empty-context) outcome that would masquerade as success.
++        if _required_to_execute:
++            _executed = _executed_tool_names(result.get("messages") or [])
++            _missing = sorted(_required_to_execute - _executed)
++            if _missing:
++                raise CronRequiredToolNotExecuted(
++                    "required operation(s) produced no execution evidence this run: "
++                    + ", ".join(_missing)
++                )
+         # Use a separate variable for log display; keep final_response clean
+         # for delivery logic (empty response = no delivery).
+         logged_response = final_response if final_response else "(No response generated)"
+@@ -3757,6 +3907,13 @@ def run_job(
+         return False, output, "", error_msg
+
+     finally:
++        # HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1
++        if _protect_token is not None:
++            try:
++                from tools.tool_search import reset_required_tools
++                reset_required_tools(_protect_token)
++            except Exception:
++                pass
+         # Restore TERMINAL_CWD to whatever it was before this job ran.  We
+         # only ever mutate it when the job has a workdir; see the setup block
+         # at the top of run_job for the serialization guarantee.
+@@ -4001,6 +4158,21 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
+             # If the agent responded with [SILENT], skip delivery (but
+             # output is already saved above).  Failed jobs always deliver.
+             deliver_content = final_response if success else _summarize_cron_failure_for_delivery(job, error)
++            # HERMES_CRON_RAW_TOOL_PROTOCOL_GUARD_V1
++            # Fail-closed LAST boundary: recognized unresolved internal tool
++            # protocol in the final response must never reach the channel.
++            if success and _contains_unresolved_tool_protocol(final_response):
++                logger.error(
++                    "Job '%s': final response carried unresolved internal tool "
++                    "protocol; blocking delivery",
++                    job["id"],
++                )
++                success = False
++                error = (
++                    "CronToolProtocolError: unresolved internal tool-call protocol "
++                    "in final response"
++                )
++                deliver_content = _summarize_cron_failure_for_delivery(job, error)
+             # Treat whitespace-only final responses the same as empty
+             # responses: do not deliver a blank message, and let the
+             # empty-response guard below mark the run as a soft failure.
+diff --git a/model_tools.py b/model_tools.py
+index 40a8f83..b6007d9 100644
+--- a/model_tools.py
++++ b/model_tools.py
+@@ -332,6 +332,16 @@ def get_tool_definitions(
+             cfg_fp = (cfg_stat.st_mtime_ns, cfg_stat.st_size)
+         except (FileNotFoundError, OSError, ImportError):
+             cfg_fp = None
++        # HERMES_CRON_REQUIRED_TOOLS_CACHE_KEY_V1
++        # The protected-tools set changes which tools survive progressive
++        # disclosure, so it must participate in the memoization key. Without
++        # this a cached assembly computed under a different cron job's
++        # required set could silently defer (or fail to defer) the wrong tools.
++        try:
++            from tools.tool_search import required_tool_names as _cron_required_tool_names
++            _cron_required_fp = frozenset(_cron_required_tool_names())
++        except Exception:
++            _cron_required_fp = frozenset()
+         profile_scope = check_fn_cache_scope()
+         if profile_scope != CHECK_FN_CACHE_BYPASS:
+             cache_key = (
+@@ -343,6 +353,7 @@ def get_tool_definitions(
+                 bool(skip_tool_search_assembly),
+                 _is_delegated_child_context(),
+                 profile_scope,
++                _cron_required_fp,
+             )
+         cached = _tool_defs_cache.get(cache_key) if cache_key is not None else None
+         if cached is not None:
+diff --git a/tools/tool_search.py b/tools/tool_search.py
+index 686e0f3..d32b8b5 100644
+--- a/tools/tool_search.py
++++ b/tools/tool_search.py
+@@ -58,6 +58,41 @@ TOOL_CALL_NAME = "tool_call"
+
+ BRIDGE_TOOL_NAMES = frozenset({TOOL_SEARCH_NAME, TOOL_DESCRIBE_NAME, TOOL_CALL_NAME})
+
++
++# HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1_BEGIN
++# Cron jobs may declare explicitly-required operations that must remain
++# directly model-visible and therefore survive progressive disclosure.
++# The protected set is carried on a ContextVar (not a process global) so
++# parallel cron jobs with different required sets never race, and it is
++# reset as soon as the session's tool surface has been assembled.
++from contextvars import ContextVar as _ContextVar
++
++_CRON_PROTECTED_REQUIRED_TOOLS = _ContextVar(
++    "hermes_cron_protected_required_tools",
++    default=frozenset(),
++)
++
++
++def protect_required_tools(names) -> object:
++    """Temporarily mark ``names`` as protected from tool-search deferral.
++
++    Returns an opaque reset token for :func:`reset_required_tools`.
++    """
++    return _CRON_PROTECTED_REQUIRED_TOOLS.set(
++        frozenset(str(n).strip() for n in (names or []) if str(n).strip())
++    )
++
++
++def reset_required_tools(token: object) -> None:
++    """Reset the protected-tools ContextVar to its prior value."""
++    _CRON_PROTECTED_REQUIRED_TOOLS.reset(token)
++
++
++def required_tool_names() -> frozenset:
++    """Names of explicitly-required tools that must stay directly visible."""
++    return _CRON_PROTECTED_REQUIRED_TOOLS.get()
++# HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1_END
++
+ # When estimating tokens from char count without a real tokenizer, this is
+ # the cheap rule of thumb that's stable across providers. Roughly 4 chars
+ # per token for English+JSON. Underestimating leads to false negatives
+@@ -211,6 +246,8 @@ def is_deferrable_tool_name(name: str) -> bool:
+     """
+     if name in BRIDGE_TOOL_NAMES:
+         return False
++    if name in required_tool_names():
++        return False
+     if name in _core_tool_names():
+         return False
+     # Check registry toolset for MCP prefix.

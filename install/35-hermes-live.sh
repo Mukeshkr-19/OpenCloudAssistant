@@ -8,11 +8,12 @@ TARGET_HOME="${OPEN_CLOUD_HOME:-$HOME}"
 HERMES_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$TARGET_HOME/.hermes/hermes-agent}"
 PATCH1="$ROOT/integrations/hermes/hermes-fleet-bridge.patch"
 PATCH2="$ROOT/integrations/hermes/hermes-live.patch"
+PATCH3="$ROOT/integrations/hermes/hermes-cron-tool-safety.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
-FILES="agent/agent_init.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py cron/scheduler.py gateway/run.py agent/hermes_fleet_bridge.py"
-MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1"
+FILES="agent/agent_init.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py tools/tool_search.py cron/scheduler.py gateway/run.py model_tools.py agent/hermes_fleet_bridge.py"
+MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1"
 
 require_source() {
     test -d "$HERMES_ROOT/.git" || {
@@ -27,6 +28,11 @@ require_source() {
 
     test -f "$PATCH2" || {
         echo "ERROR: Hermes live patch missing" >&2
+        exit 1
+    }
+
+    test -f "$PATCH3" || {
+        echo "ERROR: Hermes cron tool-safety patch missing" >&2
         exit 1
     }
 }
@@ -60,6 +66,21 @@ validate_tree() {
         echo "ERROR: gateway lifecycle compatibility marker missing" >&2
         return 1
     }
+    grep -qF "HERMES_CRON_REQUIRED_TOOLS_CACHE_KEY_V1" "$tree/model_tools.py" || {
+        echo "ERROR: cron tool-safety cache-key marker missing" >&2
+        return 1
+    }
+    for cron_marker in \
+        HERMES_CRON_REQUIRED_TOOLS_RESOLVE_V1 \
+        HERMES_CRON_REQUIRED_TO_EXECUTE_V1 \
+        HERMES_CRON_RAW_TOOL_PROTOCOL_GUARD_V1 \
+        HERMES_CRON_FAILURE_CLASSIFICATION_V1
+    do
+        grep -qF "$cron_marker" "$tree/cron/scheduler.py" || {
+            echo "ERROR: cron tool-safety marker missing: $cron_marker" >&2
+            return 1
+        }
+    done
 
     for rel in $FILES; do
         compile_file "$tree/$rel"
@@ -80,6 +101,10 @@ materialize() {
     echo "HERMES_INSTALL: checking live attachment patch"
     git -C "$out" apply --check "$PATCH2"
     git -C "$out" apply "$PATCH2"
+
+    echo "HERMES_INSTALL: checking cron tool-safety patch"
+    git -C "$out" apply --check "$PATCH3"
+    git -C "$out" apply "$PATCH3"
 
     if [ -f "$out/tools/daemon_pool.py" ]; then
         python3 "$ROOT/integrations/hermes/daemon_pool_compat.py" "$out/tools/daemon_pool.py"

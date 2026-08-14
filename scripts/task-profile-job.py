@@ -2,12 +2,22 @@
 """Materialize an optional private task without exposing its content."""
 
 import argparse
+import importlib.util
 import json
 import os
 import stat
 import sys
 import tempfile
 from pathlib import Path
+
+# Shared task-profile derivation (same source of truth as the validation in
+# hermes-config.py). Loaded by path because the module filename contains a hyphen.
+_spec = importlib.util.spec_from_file_location(
+    "hermes_config", Path(__file__).resolve().parent / "hermes-config.py"
+)
+hermes_config = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(hermes_config)
+required_operations = hermes_config.required_operations
 
 
 def atomic_json(path, data):
@@ -101,6 +111,11 @@ def main():
         return
 
     prompt = task_prompt(task)
+    protected, must_execute = required_operations(profile)
+    required_fields = {
+        "required_tools": protected,
+        "required_to_execute": must_execute,
+    }
     expected = {
         "name": task.get("name") or f"OpenCloud task profile: {args.name}",
         "prompt": prompt,
@@ -108,6 +123,7 @@ def main():
         "deliver": task.get("deliver", "local"),
         "enabled_toolsets": profile["enabled_toolsets"],
     }
+    expected.update(required_fields)
     matches = [candidate for candidate in load_jobs() if all(candidate.get(key) == value for key, value in expected.items())]
     if len(matches) > 1:
         raise SystemExit("ERROR: duplicate managed task-profile jobs detected")
@@ -125,6 +141,9 @@ def main():
                 deliver=expected["deliver"],
                 enabled_toolsets=expected["enabled_toolsets"],
             )
+            # create_job has no required-operation parameters; persist them
+            # via update_job so the fields ride the same storage path as edits.
+            job = update_job(job["id"], required_fields)
         atomic_json(state_path, {"version": 1, "job_id": job["id"]})
     elif not job:
         raise SystemExit("ERROR: materialized task-profile job is missing")

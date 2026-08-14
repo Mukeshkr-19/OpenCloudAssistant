@@ -9,6 +9,7 @@ MODE="${1:---check}"
 
 PATCH_FLEET="$ROOT/integrations/hermes/hermes-fleet-bridge.patch"
 PATCH_LIVE="$ROOT/integrations/hermes/hermes-live.patch"
+PATCH_CRON="$ROOT/integrations/hermes/hermes-cron-tool-safety.patch"
 
 usage() {
     echo "Usage:"
@@ -44,9 +45,11 @@ materialize() {
     local rendered="$out/.opencloud-rendered"
     local patch1="$rendered/hermes-fleet-bridge.patch"
     local patch2="$rendered/hermes-live.patch"
+    local patch3="$rendered/hermes-cron-tool-safety.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
+    require_file "$PATCH_CRON"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -62,6 +65,7 @@ materialize() {
 
     render_patch "$PATCH_FLEET" "$patch1"
     render_patch "$PATCH_LIVE" "$patch2"
+    render_patch "$PATCH_CRON" "$patch3"
 
     if grep -RqsF "__OPEN_CLOUD_HOME__" "$rendered"; then
         echo "ERROR: unresolved Open Cloud home placeholder" >&2
@@ -76,6 +80,10 @@ materialize() {
     echo "MATERIALIZE: checking live Hermes orchestration patch"
     git -C "$out" apply --check "$patch2"
     git -C "$out" apply "$patch2"
+
+    echo "MATERIALIZE: checking cron tool-safety patch"
+    git -C "$out" apply --check "$patch3"
+    git -C "$out" apply "$patch3"
 
     test -f "$out/agent/hermes_fleet_bridge.py"
 
@@ -92,7 +100,22 @@ materialize() {
         fi
     done
 
+    for cron_marker in \
+        HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1 \
+        HERMES_CRON_REQUIRED_TOOLS_CACHE_KEY_V1 \
+        HERMES_CRON_REQUIRED_TOOLS_RESOLVE_V1 \
+        HERMES_CRON_REQUIRED_TO_EXECUTE_V1 \
+        HERMES_CRON_RAW_TOOL_PROTOCOL_GUARD_V1 \
+        HERMES_CRON_FAILURE_CLASSIFICATION_V1
+    do
+        if ! grep -RqsF "$cron_marker" "$out/tools" "$out/cron" "$out/model_tools.py"; then
+            echo "ERROR: expected cron tool-safety marker missing after materialization: $cron_marker" >&2
+            exit 1
+        fi
+    done
+
     python3 -m py_compile "$out/agent/hermes_fleet_bridge.py"
+    python3 -m py_compile "$out/tools/tool_search.py" "$out/model_tools.py" "$out/cron/scheduler.py"
 
     rm -rf "$rendered"
 
