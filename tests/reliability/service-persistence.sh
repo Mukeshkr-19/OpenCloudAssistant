@@ -78,6 +78,8 @@ require_contains     "$INSTALLER"     "Environment=OPEN_CLOUD_SELF_REPAIR=1"
 
 require_contains     "$INSTALLER"     "Environment=OPEN_CLOUD_REPAIR_STATE="
 
+require_contains     "$INSTALLER"     "is-active --quiet hermes-gateway.service"
+
 require_contains     "$INSTALLER"     "loginctl show-user"
 
 require_contains     "$INSTALLER"     "enable-linger"
@@ -133,6 +135,10 @@ case "$command" in
             count="$(cat "$STATE/$unit.restarts" 2>/dev/null || printf '%s' 0)"
             printf '%s\n' "$((count + 1))" > "$STATE/$unit.restarts"
         done
+        ;;
+    is-active)
+        [ "${1:-}" = "--quiet" ] && shift
+        [ -f "${FAKE_SYSTEMD_DIR:?}/$1" ]
         ;;
     *)
         echo "unexpected fake systemctl command: $command" >&2
@@ -191,6 +197,18 @@ if find "$SYSTEMD_STATE" -name '*.service.active' | grep -q .; then
     exit 1
 fi
 echo "PASS timer rearm does not directly launch Fleet services"
+
+# A gateway installed for a Hermes-native platform (e.g. Photon/iMessage)
+# that is NOT reflected in channels.json must still receive the OpenCloud env
+# drop-in so a clean reinstall preserves the self-repair environment.
+mkdir -p "$HOME_TARGET/.config/systemd/user"
+touch "$HOME_TARGET/.config/systemd/user/hermes-gateway.service"
+run_fake_install
+DROPIN="$HOME_TARGET/.config/systemd/user/hermes-gateway.service.d/opencloud.conf"
+test -f "$DROPIN"
+grep -qF "Environment=OPEN_CLOUD_SELF_REPAIR=1" "$DROPIN"
+grep -qF "Environment=OPEN_CLOUD_REPAIR_STATE=" "$DROPIN"
+echo "PASS gateway env drop-in written when gateway exists without messaging channel"
 
 if [ "${OPEN_CLOUD_LIVE_SERVICE_TEST:-0}" != "1" ]; then
     echo "LIVE_SERVICE_RECOVERY: SKIP"

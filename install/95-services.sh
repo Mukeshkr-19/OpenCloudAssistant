@@ -175,7 +175,12 @@ case "$MODE" in
             if [ ! -f "$SYSTEMD_DIR/hermes-gateway.service" ]; then
                 hermes gateway install --start-now --start-on-login
             fi
+        fi
 
+        # Inject OpenCloud runtime env whenever the gateway service exists —
+        # including gateways installed directly for Hermes-native platforms
+        # (e.g. Photon/iMessage) that are not reflected in channels.json.
+        if gateway_required || [ -f "$SYSTEMD_DIR/hermes-gateway.service" ]; then
             mkdir -p "$SYSTEMD_DIR/hermes-gateway.service.d"
 
             printf "%s\n" \
@@ -189,8 +194,12 @@ case "$MODE" in
             chmod 644 "$SYSTEMD_DIR/hermes-gateway.service.d/opencloud.conf"
 
             systemctl --user daemon-reload
-            systemctl --user enable --now hermes-gateway.service
-            systemctl --user restart hermes-gateway.service
+            if gateway_required; then
+                systemctl --user enable --now hermes-gateway.service
+            fi
+            if systemctl --user is-active --quiet hermes-gateway.service; then
+                systemctl --user restart hermes-gateway.service
+            fi
         fi
 
         LINGER="$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)"
