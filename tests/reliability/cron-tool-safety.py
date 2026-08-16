@@ -234,6 +234,64 @@ def main() -> None:
             {"mcp_vellum_bridge_get_user_context"}
         )
 
+        # O — attempted finalization with required operations still missing
+        # gets a bounded same-turn continuation instead of immediately ending.
+        search_run = [
+            {"role": "assistant", "tool_calls": [
+                {"function": {"name": "web_search", "arguments": "{}"}},
+            ]},
+        ]
+
+        missing = scheduler._missing_cron_required_operations(
+            {"web_search", "web_extract"},
+            search_run,
+        )
+        assert missing == ("web_extract",)
+
+        complete_run = search_run + [
+            {"role": "assistant", "tool_calls": [
+                {"function": {"name": "web_extract", "arguments": "{}"}},
+            ]},
+        ]
+
+        assert scheduler._missing_cron_required_operations(
+            {"web_search", "web_extract"},
+            complete_run,
+        ) == ()
+
+        loop_source = (
+            tree / "agent/conversation_loop.py"
+        ).read_text()
+
+        scheduler_source = (
+            tree / "cron/scheduler.py"
+        ).read_text()
+
+        assert (
+            "HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1"
+            in loop_source
+        )
+        assert (
+            "cron_required_tool_continuations < 2"
+            in loop_source
+        )
+        assert (
+            "_cron_required_execution_gate"
+            in loop_source
+        )
+        assert (
+            "Required operations still missing:"
+            in loop_source
+        )
+        assert (
+            "HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1"
+            in scheduler_source
+        )
+        assert (
+            "agent._cron_required_execution_gate"
+            in scheduler_source
+        )
+
         # J — required op never executed => tool-surface failure (not empty context).
         missing = scheduler._resolve_cron_required_to_execute(job) - \
             scheduler._executed_tool_names([])
@@ -354,6 +412,7 @@ def main() -> None:
     print("PASS enabled toolset does not imply every operation must execute")
     print("PASS explicit required-operation execution is verifiable")
     print("PASS required-to-execute operations are model-facing before final response")
+    print("PASS missing required cron operations trigger bounded same-turn continuation")
     print("PASS prebuilt safe surface is provider-independent (assembled pre-fallback)")
     print("PASS provider fallback does not mutate the tool surface")
     print("PASS unresolved internal tool protocol is blocked from cron delivery")

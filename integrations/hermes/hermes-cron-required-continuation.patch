@@ -1,0 +1,140 @@
+diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
+index 8848b64..24ea4c2 100644
+--- a/agent/conversation_loop.py
++++ b/agent/conversation_loop.py
+@@ -1346,6 +1346,9 @@ def run_conversation(
+     interrupted = False
+     failed = False
+     codex_ack_continuations = 0
++    # Cron-only bounded continuation when a required operation is still
++    # missing at attempted finalization.
++    cron_required_tool_continuations = 0
+     length_continue_retries = 0
+     truncated_tool_call_retries = 0
+     truncated_response_parts: List[str] = []
+@@ -6932,5 +6935,68 @@ def run_conversation(
+                 final_msg = agent._build_assistant_message(assistant_message, finish_reason)
+
++                # HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1
++                # A cron scheduler may attach a gate that reports mandatory
++                # operations still missing from the live transcript. Refuse a
++                # premature text finalization and give the same tool loop two
++                # bounded chances to execute them. If the model still refuses,
++                # scheduler-side post-run validation remains fail-closed.
++                _cron_gate = getattr(
++                    agent,
++                    "_cron_required_execution_gate",
++                    None,
++                )
++                _cron_missing = ()
++                if callable(_cron_gate):
++                    try:
++                        _cron_missing = tuple(
++                            _cron_gate(messages) or ()
++                        )
++                    except Exception as _cron_gate_exc:
++                        logger.warning(
++                            "cron required-execution gate failed: %s",
++                            type(_cron_gate_exc).__name__,
++                        )
++                        _cron_missing = ()
++
++                if (
++                    _cron_missing
++                    and cron_required_tool_continuations < 2
++                ):
++                    cron_required_tool_continuations += 1
++
++                    logger.warning(
++                        "cron finalization blocked; required operation(s) "
++                        "still missing: %s (continuation %d/2)",
++                        ", ".join(_cron_missing),
++                        cron_required_tool_continuations,
++                    )
++
++                    # Reuse Hermes' existing ephemeral recovery flag so neither
++                    # the attempted final answer nor this synthetic nudge is
++                    # written as durable conversation content.
++                    final_msg["_dropped_toolcall_nudge"] = True
++                    messages.append(final_msg)
++
++                    messages.append({
++                        "role": "user",
++                        "content": (
++                            "[System: This scheduled run is NOT complete. "
++                            "Required operations still missing: "
++                            + ", ".join(_cron_missing)
++                            + ". Execute every missing operation now. "
++                            "Do not return a final answer or [SILENT] until "
++                            "all of them have actually executed.]"
++                        ),
++                        "_dropped_toolcall_nudge": True,
++                    })
++
++                    agent._session_messages = messages
++                    final_response = None
++                    continue
++
++                if not _cron_missing:
++                    cron_required_tool_continuations = 0
++
+                 # ── Dropped tool-call recovery (copilot/Claude) ────────
+                 # Some providers (observed: claude-opus-4.8 / claude-sonnet-4.5
+                 # on GitHub Copilot, ~2026-07) return finish_reason="tool_calls"
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+index 66b3650..1010e0c 100644
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -257,6 +257,16 @@ def _executed_tool_names(messages) -> frozenset:
+     return frozenset(executed)
+
+
++def _missing_cron_required_operations(required, messages) -> tuple:
++    """Required cron operations without execution evidence yet."""
++    return tuple(
++        sorted(
++            frozenset(required or ())
++            - _executed_tool_names(messages)
++        )
++    )
++
++
+ class CronRequiredToolNotExecuted(RuntimeError):
+     """A required operation never executed during this cron run.
+
+@@ -3732,8 +3742,22 @@ def run_job(
+         _cron_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+         # Preserve scheduler-scoped ContextVar state (for example skill-declared
+         # env passthrough registrations) when the cron run hops into the worker
+         # thread used for inactivity timeout monitoring.
+         _cron_context = contextvars.copy_context()
++
++        # HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1
++        # Conversation-loop finalization consults this cron-only callback.
++        # It is deliberately attached after construction so ordinary Hermes
++        # interactive turns are completely unaffected.
++        if _required_to_execute:
++            agent._cron_required_execution_gate = (
++                lambda messages, required=_required_to_execute:
++                    _missing_cron_required_operations(
++                        required,
++                        messages,
++                    )
++            )
++
+         _cron_future = _cron_pool.submit(_cron_context.run, agent.run_conversation, prompt)
+         _inactivity_timeout = False
+         try:
+@@ -3873,8 +3897,10 @@ def run_job(
+         # never ran, the result is a tool-surface failure — never a valid
+         # (possibly empty-context) outcome that would masquerade as success.
+         if _required_to_execute:
+-            _executed = _executed_tool_names(result.get("messages") or [])
+-            _missing = sorted(_required_to_execute - _executed)
++            _missing = _missing_cron_required_operations(
++                _required_to_execute,
++                result.get("messages") or [],
++            )
+             if _missing:
+                 raise CronRequiredToolNotExecuted(
+                     "required operation(s) produced no execution evidence this run: "

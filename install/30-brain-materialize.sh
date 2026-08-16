@@ -11,6 +11,7 @@ MODE="${1:---check}"
 PATCH_FLEET="$ROOT/integrations/hermes/hermes-fleet-bridge.patch"
 PATCH_LIVE="$ROOT/integrations/hermes/hermes-live.patch"
 PATCH_CRON="$ROOT/integrations/hermes/hermes-cron-tool-safety.patch"
+PATCH_CONT="$ROOT/integrations/hermes/hermes-cron-required-continuation.patch"
 
 usage() {
     echo "Usage:"
@@ -47,10 +48,12 @@ materialize() {
     local patch1="$rendered/hermes-fleet-bridge.patch"
     local patch2="$rendered/hermes-live.patch"
     local patch3="$rendered/hermes-cron-tool-safety.patch"
+    local patch4="$rendered/hermes-cron-required-continuation.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
     require_file "$PATCH_CRON"
+    require_file "$PATCH_CONT"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -72,6 +75,7 @@ materialize() {
     render_patch "$PATCH_FLEET" "$patch1"
     render_patch "$PATCH_LIVE" "$patch2"
     render_patch "$PATCH_CRON" "$patch3"
+    render_patch "$PATCH_CONT" "$patch4"
 
     if grep -RqsF "__OPEN_CLOUD_HOME__" "$rendered"; then
         echo "ERROR: unresolved Open Cloud home placeholder" >&2
@@ -90,6 +94,10 @@ materialize() {
     echo "MATERIALIZE: checking cron tool-safety patch"
     git -C "$out" apply --check "$patch3"
     git -C "$out" apply "$patch3"
+
+    echo "MATERIALIZE: checking required-operation continuation patch"
+    git -C "$out" apply --check "$patch4"
+    git -C "$out" apply "$patch4"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
@@ -114,6 +122,7 @@ materialize() {
         HERMES_CRON_REQUIRED_TOOLS_CACHE_KEY_V1 \
         HERMES_CRON_REQUIRED_TOOLS_RESOLVE_V1 \
         HERMES_CRON_REQUIRED_TO_EXECUTE_V1 \
+        HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1 \
         HERMES_CRON_RAW_TOOL_PROTOCOL_GUARD_V1 \
         HERMES_CRON_FAILURE_CLASSIFICATION_V1 \
         HERMES_ROUTING_V1_CRON_PROFILE \
@@ -126,6 +135,7 @@ materialize() {
     done
 
     python3 -m py_compile "$out/agent/hermes_fleet_bridge.py"
+    python3 -m py_compile "$out/agent/conversation_loop.py"
     python3 -m py_compile "$out/tools/tool_search.py" "$out/model_tools.py" "$out/cron/scheduler.py"
 
     rm -rf "$rendered"
