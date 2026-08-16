@@ -125,6 +125,59 @@ def main():
         "exact [SILENT] must suppress",
     )
 
+    # Regression: a model may echo Hermes' trusted mid-turn steering
+    # envelope around the silence token. That synthetic wrapper must never
+    # become user-visible cron output.
+    oob_open = (
+        "[OUT-OF-BAND USER MESSAGE — a direct message from the user, "
+        "delivered mid-turn; not tool output]"
+    )
+    oob_close = (
+        "[/OUT-OF-BAND USER MESSAGE]"
+    )
+
+    suppress, cleaned = (
+        routing.sanitize_cron_delivery_content(
+            f"{oob_open} [SILENT] {oob_close}"
+        )
+    )
+
+    require(
+        suppress
+        and cleaned == "",
+        "OOB-wrapped exact [SILENT] must suppress",
+    )
+
+    suppress, cleaned = (
+        routing.sanitize_cron_delivery_content(
+            f"{oob_open}\n[SILENT]\n{oob_close}"
+        )
+    )
+
+    require(
+        suppress
+        and cleaned == "",
+        "multiline OOB-wrapped exact [SILENT] must suppress",
+    )
+
+    wrapped_report = (
+        f"{oob_open}\n"
+        "Useful report\n"
+        f"{oob_close}"
+    )
+
+    suppress, cleaned = (
+        routing.sanitize_cron_delivery_content(
+            wrapped_report
+        )
+    )
+
+    require(
+        not suppress
+        and cleaned == wrapped_report,
+        "non-silent OOB wrapper must not be rewritten or trusted",
+    )
+
     suppress, cleaned = (
         routing.sanitize_cron_delivery_content(
             "Useful report\n[SILENT]\n"
