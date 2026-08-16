@@ -182,6 +182,8 @@ case "$MODE" in
                 "[Service]" \
                 "EnvironmentFile=-$CONFIG" \
                 "Environment=OPEN_CLOUD_FLEET_HOME=$FLEET" \
+                "Environment=OPEN_CLOUD_SELF_REPAIR=1" \
+                "Environment=OPEN_CLOUD_REPAIR_STATE=$TARGET_HOME/.local/share/opencloud-repair" \
                 > "$SYSTEMD_DIR/hermes-gateway.service.d/opencloud.conf"
 
             chmod 644 "$SYSTEMD_DIR/hermes-gateway.service.d/opencloud.conf"
