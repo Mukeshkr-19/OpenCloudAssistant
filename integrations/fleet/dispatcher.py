@@ -519,6 +519,310 @@ class HermesFleet:
         return []
 
 
+    # HERMES_ROUTING_V1_BEGIN
+
+    def _routing_v1(
+        self,
+    ) -> dict:
+
+        value = (
+            self.config.get(
+                "routingV1"
+            )
+            or {}
+        )
+
+        if not isinstance(
+            value,
+            dict,
+        ):
+            return {}
+
+        if value.get(
+            "enabled"
+        ) is not True:
+            return {}
+
+        return value
+
+
+    def routing_profile(
+        self,
+        role: str,
+        requested: str | None = None,
+    ) -> str | None:
+
+        routing = (
+            self._routing_v1()
+        )
+
+        if not routing:
+            return None
+
+        profiles = (
+            routing.get(
+                "profiles"
+            )
+            or {}
+        )
+
+        requested = str(
+            requested
+            or ""
+        ).strip().lower()
+
+        if (
+            requested
+            and requested in profiles
+        ):
+            return requested
+
+        role_profiles = (
+            routing.get(
+                "roleProfiles"
+            )
+            or {}
+        )
+
+        profile = str(
+            role_profiles.get(
+                role
+            )
+            or routing.get(
+                "defaultProfile"
+            )
+            or ""
+        ).strip().lower()
+
+        if profile in profiles:
+            return profile
+
+        return None
+
+
+    def _routing_preferred_rank(
+        self,
+        candidate: dict,
+        profile: str | None,
+    ) -> int | None:
+
+        if not profile:
+            return None
+
+        routing = (
+            self._routing_v1()
+        )
+
+        profile_data = (
+            (
+                routing.get(
+                    "profiles"
+                )
+                or {}
+            ).get(
+                profile
+            )
+            or {}
+        )
+
+        preferred = (
+            profile_data.get(
+                "preferredModels"
+            )
+            or []
+        )
+
+        group = str(
+            candidate.get(
+                "providerGroup"
+            )
+            or ""
+        ).strip().lower()
+
+        model = str(
+            candidate.get(
+                "model"
+            )
+            or ""
+        ).strip()
+
+        for index, item in enumerate(
+            preferred
+        ):
+
+            if not isinstance(
+                item,
+                dict,
+            ):
+                continue
+
+            expected_group = str(
+                item.get(
+                    "providerGroup"
+                )
+                or ""
+            ).strip().lower()
+
+            expected_model = str(
+                item.get(
+                    "model"
+                )
+                or ""
+            ).strip()
+
+            if (
+                group == expected_group
+                and model == expected_model
+            ):
+                return index
+
+        return None
+
+
+    def _routing_is_final_escape(
+        self,
+        candidate: dict,
+    ) -> bool:
+
+        routing = (
+            self._routing_v1()
+        )
+
+        final = (
+            routing.get(
+                "finalEscape"
+            )
+            or {}
+        )
+
+        if not isinstance(
+            final,
+            dict,
+        ):
+            return False
+
+        return (
+            str(
+                candidate.get(
+                    "providerGroup"
+                )
+                or ""
+            ).strip().lower()
+            ==
+            str(
+                final.get(
+                    "providerGroup"
+                )
+                or ""
+            ).strip().lower()
+
+            and
+
+            str(
+                candidate.get(
+                    "provider"
+                )
+                or ""
+            ).strip().lower()
+            ==
+            str(
+                final.get(
+                    "provider"
+                )
+                or ""
+            ).strip().lower()
+
+            and
+
+            str(
+                candidate.get(
+                    "model"
+                )
+                or ""
+            ).strip()
+            ==
+            str(
+                final.get(
+                    "model"
+                )
+                or ""
+            ).strip()
+        )
+
+
+    def _routing_sort_key(
+        self,
+        candidate: dict,
+        profile: str,
+    ):
+
+        preferred_rank = (
+            self._routing_preferred_rank(
+                candidate,
+                profile,
+            )
+        )
+
+        if preferred_rank is not None:
+
+            return (
+                0,
+                preferred_rank,
+                self._last_used(
+                    candidate[
+                        "candidateKey"
+                    ]
+                ),
+                candidate[
+                    "candidateKey"
+                ],
+            )
+
+        #
+        # openrouter/free is the explicit FINAL escape route.
+        #
+        if self._routing_is_final_escape(
+            candidate
+        ):
+
+            return (
+                2,
+                0,
+                self._last_used(
+                    candidate[
+                        "candidateKey"
+                    ]
+                ),
+                candidate[
+                    "candidateKey"
+                ],
+            )
+
+        #
+        # Every other verified/discovered candidate remains available.
+        # Pool priority only orders this generic fallback population.
+        #
+        return (
+            1,
+            int(
+                candidate.get(
+                    "poolPriority",
+                    999,
+                )
+            ),
+            self._last_used(
+                candidate[
+                    "candidateKey"
+                ]
+            ),
+            candidate[
+                "candidateKey"
+            ],
+        )
+
+    # HERMES_ROUTING_V1_END
+
+
     def candidates(
         self,
         role: str,
@@ -587,12 +891,14 @@ class HermesFleet:
         role: str,
         *,
         touch: bool = True,
+        profile: str | None = None,
     ) -> dict | None:
 
         if not touch:
             return self._select(
                 role,
                 touch=False,
+                profile=profile,
             )
 
         self.db.execute(
@@ -603,6 +909,7 @@ class HermesFleet:
             selected = self._select(
                 role,
                 touch=True,
+                profile=profile,
             )
             self.db.commit()
             return selected
@@ -617,11 +924,19 @@ class HermesFleet:
         role: str,
         *,
         touch: bool,
+        profile: str | None = None,
     ) -> dict | None:
 
         candidates = (
             self.candidates(
                 role
+            )
+        )
+
+        routing_profile = (
+            self.routing_profile(
+                role,
+                requested=profile,
             )
         )
 
@@ -669,6 +984,88 @@ class HermesFleet:
 
         if not by_pool:
             return None
+
+        # HERMES_ROUTING_V1_SELECT_BEGIN
+        if routing_profile:
+
+            available = [
+                candidate
+                for pool in by_pool.values()
+                for candidate in pool
+            ]
+
+            if role == "worker":
+                reuse_delay = self._policy_seconds(
+                    "workerRouteReuseDelaySeconds",
+                    5,
+                )
+
+                reusable = [
+                    candidate
+                    for candidate in available
+                    if (
+                        now()
+                        - self._last_used(
+                            candidate[
+                                "candidateKey"
+                            ]
+                        )
+                        >= reuse_delay
+                    )
+                ]
+
+                if reusable:
+                    available = reusable
+
+            available.sort(
+                key=lambda candidate:
+                    self._routing_sort_key(
+                        candidate,
+                        routing_profile,
+                    )
+            )
+
+            selected = dict(
+                available[0]
+            )
+
+            if touch:
+
+                self.db.execute(
+                    """
+                    INSERT INTO candidate_health (
+                        candidate_key,
+                        provider_group,
+                        provider,
+                        model,
+                        last_used_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+
+                    ON CONFLICT(candidate_key)
+                    DO UPDATE SET
+                        last_used_at = excluded.last_used_at
+                    """,
+
+                    (
+                        selected[
+                            "candidateKey"
+                        ],
+                        selected[
+                            "providerGroup"
+                        ],
+                        selected[
+                            "provider"
+                        ],
+                        selected[
+                            "model"
+                        ],
+                        now(),
+                    ),
+                )
+
+            return selected
+        # HERMES_ROUTING_V1_SELECT_END
 
         if role == "worker":
             reuse_delay = self._policy_seconds(
@@ -1172,8 +1569,19 @@ class HermesFleet:
         ).strip().lower()
 
 
+        # HERMES_FLEET_MODEL_SCOPED_FAILURES_V1
+        #
+        # Authentication/account-access failures normally invalidate the
+        # provider credential itself and therefore remain provider-wide.
+        #
+        # Quota and request-timeout failures are intentionally
+        # candidate-scoped. Genuine network/auth/account failures remain
+        # provider-scoped.
+        #
+        # OpenCode Zen and NVIDIA can expose models with independent quotas,
+        # queues and upstream health; one exhausted/slow model must not burn
+        # every sibling route.
         if kind in {
-            "quota",
             "auth",
             "account_access",
             "network",
@@ -1195,6 +1603,26 @@ class HermesFleet:
                 self._policy_seconds(
                     "modelUnavailableCooldownSeconds",
                     21600,
+                )
+            )
+
+
+        elif kind == "quota":
+
+            seconds = (
+                self._policy_seconds(
+                    "quotaCooldownSeconds",
+                    21600,
+                )
+            )
+
+
+        elif kind == "timeout":
+
+            seconds = (
+                self._policy_seconds(
+                    "networkCooldownSeconds",
+                    30,
                 )
             )
 

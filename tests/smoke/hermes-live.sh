@@ -27,19 +27,31 @@ cleanup() {
 
 trap cleanup EXIT
 
-mkdir -p "$TMP/hermes"
+HERMES_BASELINE_REV="$(
+    sed -n 's/^HERMES_BASELINE_REV="\([^"]*\)"/\1/p' \
+        install/35-hermes-live.sh
+)"
 
-git -C "$HERMES_SOURCE" archive HEAD | tar -x -C "$TMP/hermes"
+test -n "$HERMES_BASELINE_REV" || {
+    echo "ERROR: Hermes baseline revision missing from live installer" >&2
+    exit 1
+}
 
-git -C "$TMP/hermes" init -q
-git -C "$TMP/hermes" config maintenance.auto false
-git -C "$TMP/hermes" add .
+git -C "$HERMES_SOURCE" cat-file -e \
+    "${HERMES_BASELINE_REV}^{commit}"
+
+# Use a local Git clone rather than archive + git init. The live installer
+# intentionally requires the pinned upstream commit object to exist, so the
+# disposable smoke checkout must retain the source repository's object graph.
+git clone -q --no-checkout \
+    "$HERMES_SOURCE" \
+    "$TMP/hermes"
 
 git -C "$TMP/hermes" \
-    -c user.name=OpenCloudTest \
-    -c user.email=test@example.invalid \
-    -c maintenance.auto=false \
-    commit -qm baseline
+    config maintenance.auto false
+
+git -C "$TMP/hermes" \
+    checkout -q --detach "$HERMES_BASELINE_REV"
 
 FIRST="$(
     OPEN_CLOUD_HOME="$TMP/home" \

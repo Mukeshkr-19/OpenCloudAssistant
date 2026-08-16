@@ -112,9 +112,30 @@ def main():
 
     prompt = task_prompt(task)
     protected, must_execute = required_operations(profile)
+
+    routing_profile = str(
+        task.get("routing_profile")
+        or ""
+    ).strip().lower() or None
+
+    if (
+        routing_profile is not None
+        and routing_profile
+        not in {
+            "fast",
+            "balanced",
+            "deep",
+        }
+    ):
+        raise SystemExit(
+            "ERROR: private task routing_profile must be "
+            "fast, balanced, or deep"
+        )
+
     required_fields = {
         "required_tools": protected,
         "required_to_execute": must_execute,
+        "routing_profile": routing_profile,
     }
     expected = {
         "name": task.get("name") or f"OpenCloud task profile: {args.name}",

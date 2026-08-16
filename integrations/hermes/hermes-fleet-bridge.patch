@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000..6eb5c06
 --- /dev/null
 +++ b/agent/hermes_fleet_bridge.py
-@@ -0,0 +1,1204 @@
+@@ -0,0 +1,1341 @@
 +"""
 +Hermes <-> dynamic Fleet integration.
 +
@@ -354,6 +354,7 @@ index 0000000..6eb5c06
 +            session_digest TEXT NOT NULL,
 +            role TEXT NOT NULL,
 +            candidate_key TEXT NOT NULL,
++            routing_profile TEXT NOT NULL DEFAULT '',
 +            updated_at REAL NOT NULL DEFAULT 0,
 +
 +            PRIMARY KEY (
@@ -363,6 +364,22 @@ index 0000000..6eb5c06
 +        )
 +        """
 +    )
++
++    # HERMES_ROUTING_V1_PIN_MIGRATION
++    # CREATE TABLE IF NOT EXISTS does not add new columns to an existing
++    # installation, so migrate legacy pin databases in place.
++    _pin_columns = {
++        str(row[1])
++        for row in fleet.db.execute(
++            "PRAGMA table_info(fleet_session_pins)"
++        ).fetchall()
++    }
++
++    if "routing_profile" not in _pin_columns:
++        fleet.db.execute(
++            "ALTER TABLE fleet_session_pins "
++            "ADD COLUMN routing_profile TEXT NOT NULL DEFAULT ''"
++        )
 +
 +    fleet.db.commit()
 +
@@ -403,11 +420,48 @@ index 0000000..6eb5c06
 +    ) or None
 +
 +
++def _get_pin_profile(
++    fleet,
++    role,
++    session_key,
++):
++
++    _ensure_pin_table(
++        fleet
++    )
++
++    row = fleet.db.execute(
++        """
++        SELECT routing_profile
++        FROM fleet_session_pins
++        WHERE session_digest = ?
++          AND role = ?
++        """,
++        (
++            _session_digest(
++                session_key
++            ),
++            role,
++        ),
++    ).fetchone()
++
++    if not row:
++        return None
++
++    return str(
++        row[
++            0
++        ]
++        or ""
++    ).strip().lower() or None
++
++
 +def _set_pin(
 +    fleet,
 +    role,
 +    session_key,
 +    candidate,
++    profile=None,
 +):
 +
 +    import time
@@ -422,9 +476,10 @@ index 0000000..6eb5c06
 +            session_digest,
 +            role,
 +            candidate_key,
++            routing_profile,
 +            updated_at
 +        )
-+        VALUES (?, ?, ?, ?)
++        VALUES (?, ?, ?, ?, ?)
 +
 +        ON CONFLICT(
 +            session_digest,
@@ -432,6 +487,7 @@ index 0000000..6eb5c06
 +        )
 +        DO UPDATE SET
 +            candidate_key = excluded.candidate_key,
++            routing_profile = excluded.routing_profile,
 +            updated_at = excluded.updated_at
 +        """,
 +        (
@@ -442,6 +498,10 @@ index 0000000..6eb5c06
 +            _key(
 +                candidate
 +            ),
++            str(
++                profile
++                or ""
++            ).strip().lower(),
 +            time.time(),
 +        ),
 +    )
@@ -673,6 +733,8 @@ index 0000000..6eb5c06
 +    fleet,
 +    role,
 +    primary,
++    *,
++    profile=None,
 +):
 +
 +    result = []
@@ -683,10 +745,34 @@ index 0000000..6eb5c06
 +        )
 +    }
 +
-+    for candidate in _available(
-+        fleet,
-+        role,
-+    ):
++    available = list(
++        _available(
++            fleet,
++            role,
++        )
++    )
++
++    # HERMES_ROUTING_V1_FALLBACK_ORDER
++    # Use the same FAST/BALANCED/DEEP ranking as primary selection.
++    # Unknown/new discovered models remain generic fallbacks and
++    # openrouter/free remains the final escape.
++    routing_profile = (
++        fleet.routing_profile(
++            role,
++            requested=profile,
++        )
++    )
++
++    if routing_profile:
++        available.sort(
++            key=lambda candidate:
++                fleet._routing_sort_key(
++                    candidate,
++                    routing_profile,
++                )
++        )
++
++    for candidate in available:
 +
 +        key = _key(
 +            candidate
@@ -737,6 +823,7 @@ index 0000000..6eb5c06
 +    role,
 +    *,
 +    session_key=None,
++    profile=None,
 +):
 +
 +    if not enabled():
@@ -747,6 +834,13 @@ index 0000000..6eb5c06
 +    fleet = _fleet()
 +
 +    try:
++
++        routing_profile = (
++            fleet.routing_profile(
++                role,
++                requested=profile,
++            )
++        )
 +
 +        candidates = _all(
 +            fleet,
@@ -771,6 +865,28 @@ index 0000000..6eb5c06
 +                role,
 +                session_key,
 +            )
++
++            if pin:
++
++                pin_profile = (
++                    _get_pin_profile(
++                        fleet,
++                        role,
++                        session_key,
++                    )
++                )
++
++                if (
++                    routing_profile
++                    and pin_profile
++                    != routing_profile
++                ):
++                    _clear_pin(
++                        fleet,
++                        role,
++                        session_key,
++                    )
++                    pin = None
 +
 +            if pin:
 +
@@ -809,6 +925,7 @@ index 0000000..6eb5c06
 +                                    fleet,
 +                                    role,
 +                                    candidate,
++                                    profile=profile,
 +                                ),
 +
 +                            "pinned":
@@ -840,6 +957,7 @@ index 0000000..6eb5c06
 +            candidate = fleet.select(
 +                role,
 +                touch=True,
++                profile=profile,
 +            )
 +
 +            if not candidate:
@@ -897,6 +1015,7 @@ index 0000000..6eb5c06
 +                    role,
 +                    session_key,
 +                    candidate,
++                    profile=routing_profile,
 +                )
 +
 +            return {
@@ -911,6 +1030,7 @@ index 0000000..6eb5c06
 +                        fleet,
 +                        role,
 +                        candidate,
++                        profile=profile,
 +                    ),
 +
 +                "pinned":
@@ -954,20 +1074,27 @@ index 0000000..6eb5c06
 +        ),
 +    ]).lower()
 +
++    # HERMES_FLEET_MODEL_QUOTA_CLASSIFICATION_V1
++    # Provider gateways can return HTTP 429 for model-specific free-tier
++    # exhaustion. Detect quota/credits first so one exhausted model does not
++    # masquerade as a generic provider-wide rate limit.
 +    if (
-+        "rate_limit" in text
-+        or "ratelimit" in text
-+        or "429" in text
-+    ):
-+        return "rate_limit"
-+
-+    if (
-+        "billing" in text
++        "freeusagelimit" in text
++        or "free usage limit" in text
++        or "billing" in text
 +        or "quota" in text
 +        or "credit" in text
 +        or "payment" in text
 +    ):
 +        return "quota"
++
++    if (
++        "rate_limit" in text
++        or "ratelimit" in text
++        or "rate limit" in text
++        or "429" in text
++    ):
++        return "rate_limit"
 +
 +    if (
 +        "auth" in text
@@ -978,10 +1105,20 @@ index 0000000..6eb5c06
 +    ):
 +        return "auth"
 +
++    # HERMES_FLEET_TIMEOUT_CLASSIFICATION_V1
++    # A slow/upstream-stalled model must not cool every sibling model on the
++    # provider. Keep request timeouts candidate-scoped.
++    if (
++        "timeout" in text
++        or "timed out" in text
++    ):
++        return "timeout"
++
++    # Genuine connectivity failures indicate provider/runtime reachability and
++    # remain provider-scoped.
 +    if (
 +        "connection" in text
 +        or "network" in text
-+        or "timeout" in text
 +        or "dns" in text
 +    ):
 +        return "network"
