@@ -402,6 +402,410 @@ def test_candidate_isolation_and_success_recovery() -> None:
     )
 
 
+
+def test_quota_candidate_isolation() -> None:
+
+    with FleetCase() as case:
+
+        first = selected(case)
+
+        assert_model(
+            first,
+            "fixture/a",
+        )
+
+        case.fleet.failure(
+            first,
+            "quota",
+        )
+
+        require(
+            case.fleet._candidate_cooling(
+                first["candidateKey"]
+            ),
+            "quota failure did not cool candidate",
+        )
+
+        require(
+            not provider_cooling(
+                case,
+                "nvidia",
+            ),
+            "candidate quota incorrectly cooled provider",
+        )
+
+        second = selected(case)
+
+        assert_model(
+            second,
+            "fixture/b",
+        )
+
+    print(
+        "PASS candidate-scoped quota isolation"
+    )
+
+
+def test_timeout_candidate_isolation() -> None:
+
+    with FleetCase() as case:
+
+        first = selected(case)
+
+        assert_model(
+            first,
+            "fixture/a",
+        )
+
+        case.fleet.failure(
+            first,
+            "timeout",
+        )
+
+        require(
+            case.fleet._candidate_cooling(
+                first["candidateKey"]
+            ),
+            "timeout failure did not cool candidate",
+        )
+
+        require(
+            not provider_cooling(
+                case,
+                "nvidia",
+            ),
+            "candidate timeout incorrectly cooled provider",
+        )
+
+        second = selected(case)
+
+        assert_model(
+            second,
+            "fixture/b",
+        )
+
+    print(
+        "PASS candidate-scoped timeout isolation"
+    )
+
+
+
+def test_routing_v1_profile_selection() -> None:
+
+    with FleetCase() as case:
+
+        #
+        # Add a third synthetic model so FAST / BALANCED / DEEP can each
+        # select a distinct candidate.
+        #
+        case.fleet.config["pools"]["fault-fixture-c"] = {
+            "type": "stable-route",
+            "providerGroup": "nvidia",
+            "provider": "nvidia",
+            "route": "fixture/c",
+        }
+
+        case.fleet.config["roles"]["main"] = [
+            "fault-fixture-a",
+            "fault-fixture-b",
+            "fault-fixture-c",
+            "openrouter-free",
+        ]
+
+        case.fleet.config["routingV1"] = {
+            "enabled": True,
+            "defaultProfile": "balanced",
+
+            "roleProfiles": {
+                "main": "balanced",
+            },
+
+            "allDiscoveredFallback": True,
+
+            "profiles": {
+                "fast": {
+                    "preferredModels": [
+                        {
+                            "providerGroup": "nvidia",
+                            "model": "fixture/a",
+                        },
+                    ],
+                },
+
+                "balanced": {
+                    "preferredModels": [
+                        {
+                            "providerGroup": "nvidia",
+                            "model": "fixture/b",
+                        },
+                    ],
+                },
+
+                "deep": {
+                    "preferredModels": [
+                        {
+                            "providerGroup": "nvidia",
+                            "model": "fixture/c",
+                        },
+                    ],
+                },
+            },
+
+            "finalEscape": {
+                "providerGroup": "openrouter",
+                "provider": "openrouter",
+                "model": "openrouter/free",
+            },
+        }
+
+        fast = case.fleet.select(
+            "main",
+            touch=False,
+            profile="fast",
+        )
+
+        balanced = case.fleet.select(
+            "main",
+            touch=False,
+            profile="balanced",
+        )
+
+        deep = case.fleet.select(
+            "main",
+            touch=False,
+            profile="deep",
+        )
+
+        default = case.fleet.select(
+            "main",
+            touch=False,
+        )
+
+        require(
+            fast is not None,
+            "FAST returned no candidate",
+        )
+
+        require(
+            balanced is not None,
+            "BALANCED returned no candidate",
+        )
+
+        require(
+            deep is not None,
+            "DEEP returned no candidate",
+        )
+
+        require(
+            default is not None,
+            "default profile returned no candidate",
+        )
+
+        assert_model(
+            fast,
+            "fixture/a",
+        )
+
+        assert_model(
+            balanced,
+            "fixture/b",
+        )
+
+        assert_model(
+            deep,
+            "fixture/c",
+        )
+
+        assert_model(
+            default,
+            "fixture/b",
+        )
+
+    print(
+        "PASS Routing V1 FAST/BALANCED/DEEP selection"
+    )
+
+
+def test_routing_v1_discovered_fallback_and_final_escape() -> None:
+
+    with FleetCase() as case:
+
+        case.fleet.config["routingV1"] = {
+            "enabled": True,
+            "defaultProfile": "fast",
+
+            "roleProfiles": {
+                "main": "fast",
+            },
+
+            "allDiscoveredFallback": True,
+
+            "profiles": {
+                "fast": {
+                    #
+                    # Deliberately absent preferred model. Fleet must still use
+                    # another discovered/eligible model before OpenRouter.
+                    #
+                    "preferredModels": [
+                        {
+                            "providerGroup": "nvidia",
+                            "model": "not-present",
+                        },
+                    ],
+                },
+            },
+
+            "finalEscape": {
+                "providerGroup": "openrouter",
+                "provider": "openrouter",
+                "model": "openrouter/free",
+            },
+        }
+
+        generic = case.fleet.select(
+            "main",
+            touch=False,
+            profile="fast",
+        )
+
+        require(
+            generic is not None,
+            "discovered fallback returned no candidate",
+        )
+
+        require(
+            generic["model"] != "openrouter/free",
+            "OpenRouter escaped before discovered model capacity",
+        )
+
+        candidates = {
+            candidate["model"]: candidate
+            for candidate in case.fleet.candidates(
+                "main"
+            )
+        }
+
+        for model in (
+            "fixture/a",
+            "fixture/b",
+        ):
+
+            case.fleet.failure(
+                candidates[model],
+                "model_unavailable",
+            )
+
+        final = case.fleet.select(
+            "main",
+            touch=False,
+            profile="fast",
+        )
+
+        require(
+            final is not None,
+            "final escape returned no candidate",
+        )
+
+        assert_model(
+            final,
+            "openrouter/free",
+        )
+
+    print(
+        "PASS discovered fallback before final openrouter/free"
+    )
+
+
+def test_production_routing_v1_contract() -> None:
+
+    production = json.loads(
+        PRODUCTION_POLICY.read_text(
+            encoding="utf-8"
+        )
+    )
+
+    routing = production.get(
+        "routingV1"
+    ) or {}
+
+    require(
+        routing.get("enabled") is True,
+        "production Routing V1 disabled",
+    )
+
+    require(
+        routing.get("allDiscoveredFallback") is True,
+        "all discovered fallback disabled",
+    )
+
+    final = routing.get(
+        "finalEscape"
+    ) or {}
+
+    require(
+        final.get("provider") == "openrouter"
+        and final.get("model") == "openrouter/free",
+        "production final escape changed from openrouter/free",
+    )
+
+    profiles = routing.get(
+        "profiles"
+    ) or {}
+
+    configured = {
+        (
+            item.get("providerGroup"),
+            item.get("model"),
+        )
+        for profile in profiles.values()
+        for item in (
+            profile.get("preferredModels")
+            or []
+        )
+        if isinstance(item, dict)
+    }
+
+    expected = {
+        (
+            "nvidia",
+            "nvidia/nemotron-3-super-120b-a12b",
+        ),
+        (
+            "nvidia",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+        ),
+        (
+            "nvidia",
+            "thinkingmachines/inkling",
+        ),
+        (
+            "nvidia",
+            "deepseek-ai/deepseek-v4-flash-0731",
+        ),
+        (
+            "zen",
+            "mimo-v2.5-free",
+        ),
+        (
+            "zen",
+            "nemotron-3-ultra-free",
+        ),
+        (
+            "zen",
+            "nemotron-3.5-lightning-free",
+        ),
+    }
+
+    require(
+        expected.issubset(configured),
+        "production Routing V1 lost benchmarked model routes",
+    )
+
+    print(
+        "PASS production Routing V1 contract"
+    )
+
+
 def test_rate_limit_distinct_candidate_trip() -> None:
 
     start = (
@@ -751,6 +1155,11 @@ def main() -> None:
     )
 
     test_candidate_isolation_and_success_recovery()
+    test_quota_candidate_isolation()
+    test_timeout_candidate_isolation()
+    test_routing_v1_profile_selection()
+    test_routing_v1_discovered_fallback_and_final_escape()
+    test_production_routing_v1_contract()
     test_rate_limit_distinct_candidate_trip()
     test_server_error_distinct_candidate_trip()
     test_network_provider_failure()

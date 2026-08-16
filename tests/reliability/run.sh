@@ -10,10 +10,13 @@ test -f integrations/fleet/dispatcher.py
 test -f config/fleet/hermes-fleet-policy.json
 test -f config/hermes/orchestration.json
 test -x tests/reliability/fleet-failover.py
+test -x tests/reliability/routing-v1-workload.py
+test -x tests/reliability/hermes-routing-v1-compat.py
 test -x tests/reliability/hermes-concurrency.py
 test -f tests/reliability/worker-fallback.py
 test -f tests/reliability/task-profile.py
 test -f tests/reliability/cron-tool-safety.py
+test -x tests/reliability/cron-routing-v1.py
 test -x tests/reliability/messaging-delivery.py
 test -x tests/reliability/self-repair-rollback.sh
 test -x tests/reliability/self-repair-sandbox.sh
@@ -25,6 +28,8 @@ if [ ! -x "$HERMES_PYTHON" ]; then HERMES_PYTHON="$(command -v python3)"; fi
 "$HERMES_PYTHON" -c "import yaml"
 
 "$HERMES_PYTHON" tests/reliability/fleet-failover.py
+PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/routing-v1-workload.py
+PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/hermes-routing-v1-compat.py
 
 PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}" "$HERMES_PYTHON" tests/reliability/task-profile.py
 CRON_HERMES_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
@@ -37,6 +42,10 @@ if [ -f "$CRON_HERMES_ROOT/cron/scheduler_provider.py" ] && \
     PYTHONDONTWRITEBYTECODE=1 \
     OPEN_CLOUD_HERMES_ROOT="$CRON_HERMES_ROOT" \
         "$HERMES_PYTHON" tests/reliability/task-profile-cron.py
+
+    PYTHONDONTWRITEBYTECODE=1 \
+    OPEN_CLOUD_HERMES_ROOT="$CRON_HERMES_ROOT" \
+        "$HERMES_PYTHON" tests/reliability/cron-routing-v1.py
 
 else
 
