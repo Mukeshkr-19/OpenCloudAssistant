@@ -8,7 +8,9 @@ behaviors the patch introduces:
   1. explicitly-required + allowed operations survive progressive disclosure;
   2. cron delivery blocks recognized *unresolved* internal tool protocol; and
   3. a required operation that never executed is a tool-surface failure, never
-     a valid (possibly empty-context) result.
+     a valid (possibly empty-context) result; and
+  4. required-to-execute operations are explicitly model-facing before the
+     agent is allowed to return a final response.
 
 Kept provider-independent: the surface is assembled once, before any provider
 or fallback routing, so the same safe surface is used by NVIDIA or
@@ -245,6 +247,44 @@ def main() -> None:
         friendly = "Context was unavailable for this run."
         assert scheduler._contains_unresolved_tool_protocol(friendly) is False
 
+        # N — required-to-execute operations must be model-facing before the
+        # run starts. Post-run validation remains the hard fail-closed backstop,
+        # but the model must first be told that these calls are mandatory.
+        guided_prompt = scheduler._build_job_prompt({
+            "id": "required-execution-guidance",
+            "name": "required execution guidance",
+            "prompt": "Perform the scheduled task.",
+            "required_to_execute": [
+                "web_search",
+                "web_extract",
+            ],
+        })
+
+        required_hint = (
+            "[MANDATORY CRON OPERATIONS: Before returning a final response, "
+            "you MUST actually execute each of these operations at least once "
+            "during this run: web_extract, web_search. Do not return a final "
+            "answer or [SILENT] until all listed operations have executed.]"
+        )
+
+        assert required_hint in guided_prompt, (
+            "required_to_execute must be model-facing before final response"
+        )
+        assert guided_prompt.index(required_hint) < guided_prompt.index(
+            "Perform the scheduled task."
+        )
+
+        plain_prompt = scheduler._build_job_prompt({
+            "id": "no-required-execution",
+            "name": "no required execution",
+            "prompt": "Perform the scheduled task.",
+        })
+
+        assert "[MANDATORY CRON OPERATIONS:" not in plain_prompt, (
+            "jobs without required_to_execute must not receive mandatory "
+            "execution guidance"
+        )
+
         # H — real unresolved tool protocol is blocked.
         for blocked in (
             "<|tool_call|>",
@@ -313,6 +353,7 @@ def main() -> None:
     print("PASS denied operation cannot be marked required")
     print("PASS enabled toolset does not imply every operation must execute")
     print("PASS explicit required-operation execution is verifiable")
+    print("PASS required-to-execute operations are model-facing before final response")
     print("PASS prebuilt safe surface is provider-independent (assembled pre-fallback)")
     print("PASS provider fallback does not mutate the tool surface")
     print("PASS unresolved internal tool protocol is blocked from cron delivery")
