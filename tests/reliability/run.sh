@@ -21,6 +21,7 @@ test -f tests/reliability/provider-metadata-guard.py
 test -f tests/reliability/opencloud-self-repair.py
 test -f tests/reliability/cron-duplicate-guard.py
 test -f tests/reliability/cron-workflow-identity.py
+test -f tests/reliability/cron-repeat-coercion.py
 test -x tests/reliability/cron-routing-v1.py
 test -x tests/reliability/messaging-delivery.py
 test -x tests/reliability/self-repair-rollback.sh
@@ -83,6 +84,8 @@ if [ -f "$HERMES_ROOT/tools/delegate_tool.py" ]; then
     PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT"         "$HERMES_PYTHON"         tests/reliability/cron-duplicate-guard.py
 
     PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT"         "$HERMES_PYTHON"         tests/reliability/cron-workflow-identity.py
+
+    PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT"         "$HERMES_PYTHON"         tests/reliability/cron-repeat-coercion.py
 
     PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT"         "$HERMES_PYTHON"         tests/reliability/messaging-delivery.py
 
