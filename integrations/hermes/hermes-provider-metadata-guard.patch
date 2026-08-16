@@ -1,0 +1,121 @@
+diff --git a/agent/provider_metadata_guard.py b/agent/provider_metadata_guard.py
+new file mode 100644
+index 000000000..b27aac0a9
+--- /dev/null
++++ b/agent/provider_metadata_guard.py
+@@ -0,0 +1,38 @@
++"""Guard against OpenCloud-internal metadata leaking into provider SDK requests.
++
++Routing V1 and Fleet stash internal control metadata (currently the workload
++``routing_profile``) inside ``request_overrides`` so that ``AIAgent``
++construction can consume it before any provider request is built. Those keys
++are control-plane metadata, not provider kwargs; if one of them ever reaches
++``chat.completions.create()`` / ``responses.create()`` the provider SDK raises
++``TypeError`` (``got an unexpected keyword argument``).
++
++This module exposes the single strip function that both the gateway and the
++provider transports call at the final boundary, so no path — streaming,
++non-streaming, fallback, retry, or any provider — can forward internal
++metadata to a provider SDK.
++"""
++
++from typing import Any, Dict
++
++# HERMES_OPENCLOUD_METADATA_GUARD_V1
++_INTERNAL_METADATA_PREFIX = "_opencloud_"
++
++
++def strip_internal_metadata(overrides: Any) -> Dict[str, Any]:
++    """Return ``overrides`` without any OpenCloud-internal control metadata.
++
++    Any key whose string form starts with ``_opencloud_`` is dropped. All other
++    keys (``extra_body``, ``service_tier``, ``speed``, provider-specific
++    extensions, ...) are preserved unchanged. Non-dict inputs are returned
++    as-is so callers that pass ``None``/empty values keep their existing
++    behaviour.
++    """
++    if not isinstance(overrides, dict):
++        return overrides
++
++    return {
++        key: value
++        for key, value in overrides.items()
++        if not str(key).startswith(_INTERNAL_METADATA_PREFIX)
++    }
+diff --git a/agent/transports/chat_completions.py b/agent/transports/chat_completions.py
+index 257203812..1d00dad24 100644
+--- a/agent/transports/chat_completions.py
++++ b/agent/transports/chat_completions.py
+@@ -574,7 +574,13 @@ class ChatCompletionsTransport(ProviderTransport):
+             api_kwargs["extra_body"] = extra_body
+
+         # Request overrides last (service_tier etc.)
+-        overrides = params.get("request_overrides")
++        # HERMES_OPENCLOUD_METADATA_GUARD_V1
++        # Strip OpenCloud-internal control metadata so it can never reach
++        # chat.completions.create(). request_overrides is the last merge into
++        # api_kwargs; drop _opencloud_* keys here as the final boundary.
++        from agent.provider_metadata_guard import strip_internal_metadata
++
++        overrides = strip_internal_metadata(params.get("request_overrides"))
+         if overrides:
+             api_kwargs.update(overrides)
+
+@@ -696,7 +702,13 @@ class ChatCompletionsTransport(ProviderTransport):
+             extra_body.update(additions)
+
+         # Request overrides (user config)
+-        overrides = params.get("request_overrides")
++        # HERMES_OPENCLOUD_METADATA_GUARD_V1
++        # Strip OpenCloud-internal control metadata before it can reach a
++        # provider SDK. request_overrides is the last merge into api_kwargs;
++        # drop _opencloud_* keys here as the final boundary.
++        from agent.provider_metadata_guard import strip_internal_metadata
++
++        overrides = strip_internal_metadata(params.get("request_overrides"))
+         if overrides:
+             for k, v in overrides.items():
+                 if k == "extra_body" and isinstance(v, dict):
+diff --git a/agent/transports/codex.py b/agent/transports/codex.py
+index c4c901c25..59aa13d15 100644
+--- a/agent/transports/codex.py
++++ b/agent/transports/codex.py
+@@ -391,7 +391,13 @@ class ResponsesApiTransport(ProviderTransport):
+
+         request_overrides = params.get("request_overrides")
+         if request_overrides:
+-            kwargs.update(request_overrides)
++            # HERMES_OPENCLOUD_METADATA_GUARD_V1
++            # Strip OpenCloud-internal control metadata before it can reach
++            # responses.create(). request_overrides is the last merge into
++            # kwargs; drop _opencloud_* keys here as the final boundary.
++            from agent.provider_metadata_guard import strip_internal_metadata
++
++            kwargs.update(strip_internal_metadata(request_overrides))
+
+         if "prompt_cache_key" in kwargs:
+             bounded_cache_key = _bounded_prompt_cache_key(kwargs["prompt_cache_key"])
+diff --git a/gateway/run.py b/gateway/run.py
+index 24d501b5b..0f3a5dfde 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -4785,7 +4785,18 @@ class TurnRunner:
+         agent.event_callback = ctx._event_callback_sync
+         agent.reasoning_config = reasoning_config
+         agent.service_tier = self._runner._service_tier
+-        agent.request_overrides = turn_route.get("request_overrides") or {}
++        # HERMES_OPENCLOUD_METADATA_GUARD_V1
++        # The turn route stashes Routing V1 control metadata (e.g. the
++        # workload routing profile) inside request_overrides. AIAgent
++        # construction already consumed and removed that key, but this
++        # per-turn reassignment would re-inject it and leak it into
++        # provider SDK kwargs (TypeError on chat.completions.create).
++        # Strip internal metadata before it is stored on the agent.
++        from agent.provider_metadata_guard import strip_internal_metadata
++
++        agent.request_overrides = strip_internal_metadata(
++            turn_route.get("request_overrides") or {}
++        )
+         # Must-deliver notes for THIS turn ride the current user message
+         # (api_content sidecar), never the system prompt: staged by
+         # _handle_message_with_agent (auto-reset note, first-contact

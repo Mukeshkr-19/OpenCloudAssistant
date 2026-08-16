@@ -13,6 +13,7 @@ PATCH_LIVE="$ROOT/integrations/hermes/hermes-live.patch"
 PATCH_CRON="$ROOT/integrations/hermes/hermes-cron-tool-safety.patch"
 PATCH_CONT="$ROOT/integrations/hermes/hermes-cron-required-continuation.patch"
 PATCH_OUTPUT="$ROOT/integrations/hermes/hermes-cron-output-contract.patch"
+PATCH_GUARD="$ROOT/integrations/hermes/hermes-provider-metadata-guard.patch"
 
 usage() {
     echo "Usage:"
@@ -51,12 +52,14 @@ materialize() {
     local patch3="$rendered/hermes-cron-tool-safety.patch"
     local patch4="$rendered/hermes-cron-required-continuation.patch"
     local patch5="$rendered/hermes-cron-output-contract.patch"
+    local patch6="$rendered/hermes-provider-metadata-guard.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
     require_file "$PATCH_CRON"
     require_file "$PATCH_CONT"
     require_file "$PATCH_OUTPUT"
+    require_file "$PATCH_GUARD"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -80,6 +83,7 @@ materialize() {
     render_patch "$PATCH_CRON" "$patch3"
     render_patch "$PATCH_CONT" "$patch4"
     render_patch "$PATCH_OUTPUT" "$patch5"
+    render_patch "$PATCH_GUARD" "$patch6"
 
     if grep -RqsF "__OPEN_CLOUD_HOME__" "$rendered"; then
         echo "ERROR: unresolved Open Cloud home placeholder" >&2
@@ -106,6 +110,10 @@ materialize() {
     echo "MATERIALIZE: checking output-contract patch"
     git -C "$out" apply --check "$patch5"
     git -C "$out" apply "$patch5"
+
+    echo "MATERIALIZE: checking provider-metadata guard patch"
+    git -C "$out" apply --check "$patch6"
+    git -C "$out" apply "$patch6"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
@@ -143,9 +151,15 @@ materialize() {
         fi
     done
 
+    if ! grep -RqsF "HERMES_OPENCLOUD_METADATA_GUARD_V1" "$out/agent" "$out/gateway"; then
+        echo "ERROR: provider-metadata guard marker missing after materialization" >&2
+        exit 1
+    fi
+
     python3 -m py_compile "$out/agent/hermes_fleet_bridge.py"
     python3 -m py_compile "$out/agent/conversation_loop.py"
     python3 -m py_compile "$out/tools/tool_search.py" "$out/model_tools.py" "$out/cron/scheduler.py" "$out/cron/output_contract.py"
+    python3 -m py_compile "$out/agent/provider_metadata_guard.py" "$out/agent/transports/chat_completions.py" "$out/agent/transports/codex.py" "$out/gateway/run.py"
 
     rm -rf "$rendered"
 
