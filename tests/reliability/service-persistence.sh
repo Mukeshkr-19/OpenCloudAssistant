@@ -74,6 +74,10 @@ require_contains     "$INSTALLER"     "hermes-fleet-verifier.timer"
 
 require_contains     "$INSTALLER"     "systemctl --user enable --now hermes-gateway.service"
 
+require_contains     "$INSTALLER"     "Environment=OPEN_CLOUD_SELF_REPAIR=1"
+
+require_contains     "$INSTALLER"     "Environment=OPEN_CLOUD_REPAIR_STATE="
+
 require_contains     "$INSTALLER"     "loginctl show-user"
 
 require_contains     "$INSTALLER"     "enable-linger"
@@ -83,6 +87,7 @@ echo "PASS Fleet verifier boot target contract"
 echo "PASS Fleet timer cadence contract"
 echo "PASS installer enable and rearm contract"
 echo "PASS gateway persistence contract"
+echo "PASS gateway self-repair environment contract"
 echo "PASS linger management contract"
 
 echo
