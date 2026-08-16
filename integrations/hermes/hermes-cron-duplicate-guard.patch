@@ -1,0 +1,86 @@
+diff --git a/tools/cronjob_tools.py b/tools/cronjob_tools.py
+index 5f1a56d25..280ba11de 100644
+--- a/tools/cronjob_tools.py
++++ b/tools/cronjob_tools.py
+@@ -707,6 +707,49 @@ def _execute_job_now(job: Dict[str, Any]) -> Dict[str, Any]:
+         return {"claimed": True, "success": False, "error": str(e)}
+
+
++def _existing_recurring_job_at_schedule(schedule: str) -> Optional[Dict[str, Any]]:
++    """Return an active recurring job already scheduled at the same time.
++
++    # HERMES_CRON_DUPLICATE_GUARD_V1
++    Natural-language cron requests frequently collide with an existing job
++    (e.g. "every day at 9:30 AM ..." vs an existing 9:30 AM career report).
++    Creating a second recurring job at the same time silently duplicates the
++    user's intent and — worse — loses the existing job's extra configuration
++    (required_to_execute, output_schema, routing_profile). This helper lets
++    the create path reject the duplicate deterministically and point the model
++    at ``action='update'`` instead.
++
++    Only recurring schedules (cron / interval) are compared; one-shot jobs are
++    unique instants by construction. Returns the first active job whose
++    normalized recurring schedule equals the requested one, else None.
++    """
++    try:
++        parsed = parse_schedule(schedule)
++    except ValueError:
++        return None
++
++    key = None
++    if parsed.get("kind") == "cron":
++        key = ("cron", str(parsed.get("expr") or "").strip())
++    elif parsed.get("kind") == "interval":
++        key = ("interval", parsed.get("minutes"))
++    if key is None:
++        return None
++
++    for job in list_jobs(include_disabled=True):
++        if not job.get("enabled", True):
++            continue
++        sched = job.get("schedule") or {}
++        other = None
++        if sched.get("kind") == "cron":
++            other = ("cron", str(sched.get("expr") or "").strip())
++        elif sched.get("kind") == "interval":
++            other = ("interval", sched.get("minutes"))
++        if other == key:
++            return job
++    return None
++
++
+ def cronjob(
+     action: str,
+     job_id: Optional[str] = None,
+@@ -784,6 +827,22 @@ def cronjob(
+                             success=False,
+                         )
+
++            # Reject accidental duplicates: a recurring schedule that already
++            # has an active job must be updated, not re-created.
++            _duplicate = _existing_recurring_job_at_schedule(schedule)
++            if _duplicate is not None:
++                return tool_error(
++                    "A recurring job is already scheduled at "
++                    f"'{_duplicate.get('schedule_display') or schedule}': "
++                    f"'{_duplicate.get('name')}' (job_id={_duplicate.get('id')}). "
++                    "Update the existing job with cronjob(action='update', "
++                    f"job_id='{_duplicate.get('id')}', ...) instead of creating "
++                    "a duplicate. If a genuinely different job at the same time "
++                    "is required, use cronjob(action='list') to confirm and pick "
++                    "a different schedule.",
++                    success=False,
++                )
++
+             job = create_job(
+                 prompt=prompt or "",
+                 schedule=schedule,
+@@ -1034,6 +1093,8 @@ Use action='update', 'pause', 'resume', 'remove', or 'run' to manage an existing
+
+ To stop a job the user no longer wants: first action='list' to find the job_id, then action='remove' with that job_id. Never guess job IDs — always list first.
+
++Before action='create', always action='list' and check whether an existing job already covers the requested schedule and purpose. Creating at a recurring schedule that already has an active job is rejected — update that job instead of duplicating it.
++
+ Jobs run in a fresh session with no current-chat context, so prompts must be self-contained.
+ If skills are provided on create, the future cron run loads those skills in order, then follows the prompt as the task instruction.
+ On update, passing skills=[] clears attached skills.

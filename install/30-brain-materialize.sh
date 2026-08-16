@@ -16,6 +16,7 @@ PATCH_OUTPUT="$ROOT/integrations/hermes/hermes-cron-output-contract.patch"
 PATCH_GUARD="$ROOT/integrations/hermes/hermes-provider-metadata-guard.patch"
 PATCH_SCORING="$ROOT/integrations/hermes/hermes-career-deterministic-scoring.patch"
 PATCH_REPAIR="$ROOT/integrations/hermes/hermes-opencloud-self-repair.patch"
+PATCH_DUP="$ROOT/integrations/hermes/hermes-cron-duplicate-guard.patch"
 
 usage() {
     echo "Usage:"
@@ -57,6 +58,7 @@ materialize() {
     local patch6="$rendered/hermes-provider-metadata-guard.patch"
     local patch7="$rendered/hermes-career-deterministic-scoring.patch"
     local patch8="$rendered/hermes-opencloud-self-repair.patch"
+    local patch9="$rendered/hermes-cron-duplicate-guard.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -66,6 +68,7 @@ materialize() {
     require_file "$PATCH_GUARD"
     require_file "$PATCH_SCORING"
     require_file "$PATCH_REPAIR"
+    require_file "$PATCH_DUP"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -92,6 +95,7 @@ materialize() {
     render_patch "$PATCH_GUARD" "$patch6"
     render_patch "$PATCH_SCORING" "$patch7"
     render_patch "$PATCH_REPAIR" "$patch8"
+    render_patch "$PATCH_DUP" "$patch9"
 
     if grep -RqsF "__OPEN_CLOUD_HOME__" "$rendered"; then
         echo "ERROR: unresolved Open Cloud home placeholder" >&2
@@ -130,6 +134,10 @@ materialize() {
     echo "MATERIALIZE: checking self-repair auto-trigger patch"
     git -C "$out" apply --check "$patch8"
     git -C "$out" apply "$patch8"
+
+    echo "MATERIALIZE: checking cron duplicate-guard patch"
+    git -C "$out" apply --check "$patch9"
+    git -C "$out" apply "$patch9"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
@@ -182,11 +190,17 @@ materialize() {
         exit 1
     fi
 
+    if ! grep -RqsF "HERMES_CRON_DUPLICATE_GUARD_V1" "$out/tools"; then
+        echo "ERROR: cron duplicate-guard marker missing after materialization" >&2
+        exit 1
+    fi
+
     python3 -m py_compile "$out/agent/hermes_fleet_bridge.py"
     python3 -m py_compile "$out/agent/conversation_loop.py"
     python3 -m py_compile "$out/tools/tool_search.py" "$out/model_tools.py" "$out/cron/scheduler.py" "$out/cron/output_contract.py"
     python3 -m py_compile "$out/agent/provider_metadata_guard.py" "$out/agent/transports/chat_completions.py" "$out/agent/transports/codex.py" "$out/gateway/run.py"
     python3 -m py_compile "$out/agent/opencloud_self_repair.py"
+    python3 -m py_compile "$out/tools/cronjob_tools.py"
 
     rm -rf "$rendered"
 
