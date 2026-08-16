@@ -15,6 +15,7 @@ PATCH_CONT="$ROOT/integrations/hermes/hermes-cron-required-continuation.patch"
 PATCH_OUTPUT="$ROOT/integrations/hermes/hermes-cron-output-contract.patch"
 PATCH_GUARD="$ROOT/integrations/hermes/hermes-provider-metadata-guard.patch"
 PATCH_SCORING="$ROOT/integrations/hermes/hermes-career-deterministic-scoring.patch"
+PATCH_REPAIR="$ROOT/integrations/hermes/hermes-opencloud-self-repair.patch"
 
 usage() {
     echo "Usage:"
@@ -55,6 +56,7 @@ materialize() {
     local patch5="$rendered/hermes-cron-output-contract.patch"
     local patch6="$rendered/hermes-provider-metadata-guard.patch"
     local patch7="$rendered/hermes-career-deterministic-scoring.patch"
+    local patch8="$rendered/hermes-opencloud-self-repair.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -63,6 +65,7 @@ materialize() {
     require_file "$PATCH_OUTPUT"
     require_file "$PATCH_GUARD"
     require_file "$PATCH_SCORING"
+    require_file "$PATCH_REPAIR"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -88,6 +91,7 @@ materialize() {
     render_patch "$PATCH_OUTPUT" "$patch5"
     render_patch "$PATCH_GUARD" "$patch6"
     render_patch "$PATCH_SCORING" "$patch7"
+    render_patch "$PATCH_REPAIR" "$patch8"
 
     if grep -RqsF "__OPEN_CLOUD_HOME__" "$rendered"; then
         echo "ERROR: unresolved Open Cloud home placeholder" >&2
@@ -122,6 +126,10 @@ materialize() {
     echo "MATERIALIZE: checking career deterministic-scoring patch"
     git -C "$out" apply --check "$patch7"
     git -C "$out" apply "$patch7"
+
+    echo "MATERIALIZE: checking self-repair auto-trigger patch"
+    git -C "$out" apply --check "$patch8"
+    git -C "$out" apply "$patch8"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
@@ -169,10 +177,16 @@ materialize() {
         exit 1
     fi
 
+    if ! grep -RqsF "HERMES_OPENCLOUD_SELF_REPAIR_V1" "$out/agent" "$out/gateway"; then
+        echo "ERROR: self-repair auto-trigger marker missing after materialization" >&2
+        exit 1
+    fi
+
     python3 -m py_compile "$out/agent/hermes_fleet_bridge.py"
     python3 -m py_compile "$out/agent/conversation_loop.py"
     python3 -m py_compile "$out/tools/tool_search.py" "$out/model_tools.py" "$out/cron/scheduler.py" "$out/cron/output_contract.py"
     python3 -m py_compile "$out/agent/provider_metadata_guard.py" "$out/agent/transports/chat_completions.py" "$out/agent/transports/codex.py" "$out/gateway/run.py"
+    python3 -m py_compile "$out/agent/opencloud_self_repair.py"
 
     rm -rf "$rendered"
 
