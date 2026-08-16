@@ -1,0 +1,948 @@
+diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
+index 1881fc9..1b35e59 100644
+--- a/agent/conversation_loop.py
++++ b/agent/conversation_loop.py
+@@ -1349,6 +1349,9 @@ def run_conversation(
+     # Cron-only bounded continuation when a required operation is still
+     # missing at attempted finalization.
+     cron_required_tool_continuations = 0
++    # Cron-only bounded repair when a deterministic output contract rejects
++    # an attempted final answer (HERMES_CRON_OUTPUT_CONTRACT_V1).
++    cron_output_repair_attempts = 0
+     length_continue_retries = 0
+     truncated_tool_call_retries = 0
+     truncated_response_parts: List[str] = []
+@@ -6997,6 +7000,65 @@ def run_conversation(
+                 if not _cron_missing:
+                     cron_required_tool_continuations = 0
+
++                # HERMES_CRON_OUTPUT_CONTRACT_V1
++                # A cron scheduler may attach a deterministic output-contract
++                # validator. It runs only after required operations are all
++                # satisfied, and it never consumes the required-operation
++                # continuation budget. A failing contract gets exactly ONE
++                # same-turn repair naming the precise failures; after that the
++                # scheduler deterministically renders the visible zero-match
++                # report. Malformed model prose is never delivered.
++                _contract_gate = getattr(agent, "_cron_output_contract", None)
++                if callable(_contract_gate):
++                    try:
++                        _contract_result = _contract_gate(
++                            final_response,
++                            messages,
++                        )
++                    except Exception as _contract_gate_exc:
++                        logger.warning(
++                            "cron output-contract gate failed: %s",
++                            type(_contract_gate_exc).__name__,
++                        )
++                        _contract_result = None
++                    _contract_valid = bool(
++                        _contract_result is not None
++                        and getattr(_contract_result, "valid", False)
++                    )
++                    if not _contract_valid and cron_output_repair_attempts < 1:
++                        cron_output_repair_attempts += 1
++                        _contract_errors = (
++                            getattr(_contract_result, "errors", [])
++                            if _contract_result is not None
++                            else ["output contract validation failed"]
++                        ) or ["output contract validation failed"]
++                        logger.warning(
++                            "cron output contract invalid; repair attempt %d/1: %s",
++                            cron_output_repair_attempts,
++                            "; ".join(str(e) for e in _contract_errors),
++                        )
++
++                        # Reuse Hermes' ephemeral recovery flag so neither the
++                        # rejected answer nor this synthetic repair nudge is
++                        # written as durable conversation content.
++                        final_msg["_dropped_toolcall_nudge"] = True
++                        messages.append(final_msg)
++                        messages.append({
++                            "role": "user",
++                            "content": (
++                                "[System: Your final output does not satisfy the "
++                                "required output contract. Fix ONLY these issues "
++                                "and return the corrected JSON object:\n"
++                                + "\n".join(f"- {e}" for e in _contract_errors)
++                                + "\nDo not repeat the report prose; return the "
++                                "corrected JSON.]"
++                            ),
++                            "_dropped_toolcall_nudge": True,
++                        })
++                        agent._session_messages = messages
++                        final_response = None
++                        continue
++
+                 # ── Dropped tool-call recovery (copilot/Claude) ────────
+                 # Some providers (observed: claude-opus-4.8 / claude-sonnet-4.5
+                 # on GitHub Copilot, ~2026-07) return finish_reason="tool_calls"
+diff --git a/cron/output_contract.py b/cron/output_contract.py
+new file mode 100644
+index 0000000..384f4d7
+--- /dev/null
++++ b/cron/output_contract.py
+@@ -0,0 +1,716 @@
++"""Deterministic, opt-in output contracts for cron jobs.
++
++A cron job opts in by setting ``output_schema`` to a contract name.  The
++scheduler then attaches a validator to the agent and, after the run, renders
++the final message from the *sanitized* structured result instead of trusting
++the model's free-form prose.
++
++Two guarantees, both enforced without any model judgment:
++
++1. **Structure** — the JSON must contain exactly the fields the contract
++   declares, with the right types, ranges, and enums.
++
++2. **Evidence provenance** — every ``apply_url`` must correspond to a URL that
++   was *successfully* passed to ``web_extract`` during THIS run (derived from
++   the actual tool-result messages, never from the model's prose), and salary /
++   eligibility claims must be traceable to the extracted page / Vellum output.
++
++Deterministic *downgrades* (Verified open -> unverified, unsupported salary ->
++"Not stated — verify", unsupported user fit -> "Not confirmed") are applied to
++the returned ``structure`` so the renderer only ever consumes sanitized data.
++Anything that cannot be downgraded is a hard error and makes the contract
++invalid (after one bounded repair the scheduler renders the visible zero-match
++report).
++
++This module is pure (stdlib only) and side-effect free so it can be exercised
++deterministically in the reliability suite.
++"""
++
++from __future__ import annotations
++
++import json
++import re
++from urllib.parse import urlsplit, urlunsplit
++
++# HERMES_CRON_OUTPUT_CONTRACT_V1
++
++
++# ─────────────────────────────────────────────────────────────────────────
++# Contract registry
++# ─────────────────────────────────────────────────────────────────────────
++
++_STATUS_VERIFIED_OPEN = "Verified open"
++_STATUS_UNVERIFIED = "Current status not explicitly stated — verify before applying"
++
++_ALLOWED_STATUSES = frozenset({_STATUS_VERIFIED_OPEN, _STATUS_UNVERIFIED})
++_ALLOWED_TYPES = frozenset(
++    {"Internship", "Co-op", "New Grad", "Entry Level", "Other"}
++)
++
++_SENTINEL_SALARY = "Not stated — verify"
++_SENTINEL_USER_FIT = "User eligibility against this requirement: Not confirmed"
++
++# Conservative allowlist of employer/ATS hosts.  A job page on one of these
++# hosts may be labelled "Verified open" (still gated on the extracted page not
++# carrying closed/expired/filled language).  Anything else — including
++# third-party aggregators — is downgraded to the "verify" status.
++_ATS_HOST_SUFFIXES = (
++    "greenhouse.io",
++    "lever.co",
++    "smartrecruiters.com",
++    "icims.com",
++    "myworkdayjobs.com",
++    "workday.com",
++    "ashbyhq.com",
++    "personio.com",
++    "workable.com",
++    "breezy.hr",
++)
++
++_CAREER_JOB_MATCH_V1 = {
++    "extract_tool": "web_extract",
++    "search_tool": "web_search",
++    "user_context_tool": "mcp__vellum_bridge__get_user_context",
++}
++
++CONTRACTS = {
++    "career_job_match_v1": _CAREER_JOB_MATCH_V1,
++}
++
++
++class ContractResult:
++    """Result of validating a final response against an output contract.
++
++    ``structure`` is the *sanitized* structure (downgrades already applied)
++    whenever the JSON parsed and had a dict shape, even when ``valid`` is
++    False.  It is ``None`` only when the text was not a parseable JSON object.
++    """
++
++    __slots__ = ("valid", "errors", "structure")
++
++    def __init__(self, valid, errors, structure):
++        self.valid = bool(valid)
++        self.errors = list(errors or [])
++        self.structure = structure
++
++    def __repr__(self):  # pragma: no cover - debugging aid
++        return (
++            f"ContractResult(valid={self.valid!r}, "
++            f"errors={self.errors!r}, structure={self.structure!r})"
++        )
++
++
++# ─────────────────────────────────────────────────────────────────────────
++# URL canonicalization
++# ─────────────────────────────────────────────────────────────────────────
++
++
++def canonicalize_url(url):
++    """Deterministically normalize a URL for evidence comparison.
++
++    - lowercase scheme + host
++    - drop the fragment
++    - normalize default ports (http:80 / https:443)
++    - normalize the trailing slash (strip a single trailing slash, keep root)
++
++    Query parameters are preserved verbatim: they may carry meaningful job IDs
++    or routing parameters, so they are never silently discarded.
++    """
++    if not isinstance(url, str):
++        return ""
++    url = url.strip()
++    if not url:
++        return ""
++    parts = urlsplit(url)
++    scheme = (parts.scheme or "").lower()
++    netloc = (parts.netloc or "").lower()
++    if scheme == "http" and netloc.endswith(":80"):
++        netloc = netloc[: -len(":80")]
++    elif scheme == "https" and netloc.endswith(":443"):
++        netloc = netloc[: -len(":443")]
++    path = parts.path or ""
++    if path.endswith("/") and path != "/":
++        path = path.rstrip("/")
++    return urlunsplit((scheme, netloc, path, parts.query, ""))
++
++
++# ─────────────────────────────────────────────────────────────────────────
++# Evidence ledger
++# ─────────────────────────────────────────────────────────────────────────
++
++_UNTRUSTED_START = "<untrusted_tool_result"
++_UNTRUSTED_END = "</untrusted_tool_result>"
++
++
++def _strip_untrusted_wrapper(content):
++    """Remove Hermes' ``<untrusted_tool_result>`` delimiters from tool output."""
++    if not isinstance(content, str):
++        return "" if content is None else content
++    s = content.strip()
++    if s.startswith(_UNTRUSTED_START):
++        close = s.rfind(_UNTRUSTED_END)
++        if close != -1:
++            open_end = s.find(">")
++            if open_end != -1:
++                s = s[open_end + 1 : close]
++    return s.strip()
++
++
++def _loads(content):
++    """JSON-decode a tool result string, tolerating the untrusted wrapper.
++
++    Hermes wraps untrusted tool output in ``<untrusted_tool_result>`` tags
++    *preceded by a prose preamble* inside the block.  After stripping the tags,
++    the actual JSON is located at the first ``{`` and decoded via
++    ``JSONDecoder().raw_decode()`` (fail closed on malformed JSON).
++    """
++    if isinstance(content, str):
++        content = _strip_untrusted_wrapper(content)
++        start = content.find("{")
++        if start == -1:
++            return None
++        try:
++            return json.JSONDecoder().raw_decode(content, start)[0]
++        except json.JSONDecodeError:
++            return None
++    return content if isinstance(content, (dict, list)) else None
++
++
++def build_evidence_ledger(messages, contract=None):
++    """Derive run-local evidence from the actual tool executions in ``messages``.
++
++    Returns::
++
++        {
++            "extracted": {canonical_url: extracted_text},   # successful web_extract
++            "extract_calls": {canonical_url, ...},          # URLs passed to web_extract
++            "search_results": {canonical_url, ...},         # URLs surfaced by web_search
++            "vellum_text": str,                             # confirmed Vellum facts
++        }
++
++    Only tool-result messages (``role == "tool"``) count as execution evidence;
++    the model's prose is never consulted.  The ledger is rebuilt from the
++    messages passed in, so evidence from a previous cron run can never satisfy
++    this run.
++    """
++    contract = contract or {}
++    extract_tool = contract.get("extract_tool", "web_extract")
++    search_tool = contract.get("search_tool", "web_search")
++    user_context_tool = contract.get("user_context_tool")
++
++    extracted = {}
++    extract_calls = set()
++    search_results = set()
++    vellum_parts = []
++
++    for msg in messages or []:
++        if not isinstance(msg, dict):
++            continue
++        role = msg.get("role")
++        if role == "assistant":
++            for tc in msg.get("tool_calls") or []:
++                fn = None
++                if isinstance(tc, dict):
++                    fn = tc.get("function") or {}
++                else:
++                    fn = getattr(tc, "function", None) or {}
++                if not isinstance(fn, dict):
++                    continue
++                name = str(fn.get("name") or "").strip()
++                if name != extract_tool:
++                    continue
++                raw_args = fn.get("arguments")
++                try:
++                    args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
++                except (ValueError, TypeError):
++                    args = {}
++                if isinstance(args, dict):
++                    for u in args.get("urls") or []:
++                        if isinstance(u, str) and u.strip():
++                            extract_calls.add(canonicalize_url(u))
++        elif role == "tool":
++            name = str(msg.get("name") or msg.get("tool_name") or "").strip()
++            if name == extract_tool:
++                data = _loads(msg.get("content"))
++                if isinstance(data, dict):
++                    for r in data.get("results") or []:
++                        if not isinstance(r, dict):
++                            continue
++                        url = r.get("url")
++                        err = r.get("error")
++                        text_content = r.get("content") or ""
++                        if url and not err and str(text_content).strip():
++                            extracted[canonicalize_url(str(url))] = str(text_content)
++            elif name == search_tool:
++                data = _loads(msg.get("content"))
++                if isinstance(data, dict):
++                    web = None
++                    if isinstance(data.get("data"), dict):
++                        web = data["data"].get("web") or []
++                    for r in web or []:
++                        if isinstance(r, dict) and r.get("url"):
++                            search_results.add(canonicalize_url(str(r["url"])))
++            elif user_context_tool and name == user_context_tool:
++                vellum_parts.append(_strip_untrusted_wrapper(msg.get("content")))
++
++    return {
++        "extracted": extracted,
++        "extract_calls": extract_calls,
++        "search_results": search_results,
++        "vellum_text": "\n".join(p for p in vellum_parts if p),
++    }
++
++
++# ─────────────────────────────────────────────────────────────────────────
++# Provenance helpers
++# ─────────────────────────────────────────────────────────────────────────
++
++_CLOSED_INDICATOR_RE = re.compile(
++    r"\b(?:closed|expired|filled|no longer accepting applications"
++    r"|position has been filled|posting is no longer)\b",
++    re.IGNORECASE,
++)
++_SALARY_FABRICATION_RE = re.compile(
++    r"estimated|estimate|approx|derived|aggregator|glassdoor|~|\u2248",
++    re.IGNORECASE,
++)
++_ASSUMED_RE = re.compile(r"\bassumed\b", re.IGNORECASE)
++_SILENT_RE = re.compile(r"\[silent\]", re.IGNORECASE)
++_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
++
++
++def _normalize_text(text):
++    return re.sub(r"\s+", " ", str(text or "")).strip().lower()
++
++
++def _is_official_ats(url):
++    canonical = canonicalize_url(url)
++    host = (urlsplit(canonical).netloc or "").lower()
++    if not host:
++        return False
++    for suffix in _ATS_HOST_SUFFIXES:
++        if host == suffix or host.endswith("." + suffix):
++            return True
++    return False
++
++
++def _has_closed_indicator(content):
++    return bool(_CLOSED_INDICATOR_RE.search(content or ""))
++
++
++def _sanitize_salary(salary):
++    """Return a salary value with deterministic provenance.
++
++    Never rejects: an unsupported salary is downgraded to the "Not stated —
++    verify" sentinel rather than discarding the candidate.
++    """
++    if not isinstance(salary, str):
++        return _SENTINEL_SALARY
++    salary = salary.strip()
++    if not salary:
++        return _SENTINEL_SALARY
++    if _normalize_text(salary) == _normalize_text(_SENTINEL_SALARY):
++        return _SENTINEL_SALARY
++    if _SALARY_FABRICATION_RE.search(salary):
++        return _SENTINEL_SALARY
++    return salary
++
++
++def _salary_supported(salary, extracted_text):
++    """True when a concrete salary's digits appear in the extracted page text."""
++    if not isinstance(salary, str):
++        return False
++    if _normalize_text(salary) == _normalize_text(_SENTINEL_SALARY):
++        return True
++    if _SALARY_FABRICATION_RE.search(salary):
++        return False
++    salary_digits = "".join(ch for ch in salary if ch.isdigit())
++    if not salary_digits:
++        return False
++    content_digits = "".join(ch for ch in (extracted_text or "") if ch.isdigit())
++    return salary_digits in content_digits
++
++
++def _sanitize_user_fit(user_fit, vellum_text):
++    """Return a user-fit value grounded in the current run's Vellum evidence."""
++    if not isinstance(user_fit, str):
++        return _SENTINEL_USER_FIT
++    user_fit = user_fit.strip()
++    if not user_fit:
++        return _SENTINEL_USER_FIT
++    if _normalize_text(user_fit) == _normalize_text(_SENTINEL_USER_FIT):
++        return _SENTINEL_USER_FIT
++    if _ASSUMED_RE.search(user_fit):
++        return _SENTINEL_USER_FIT
++    if _normalize_text(user_fit) not in _normalize_text(vellum_text):
++        return _SENTINEL_USER_FIT
++    return user_fit
++
++
++# ─────────────────────────────────────────────────────────────────────────
++# Validation
++# ─────────────────────────────────────────────────────────────────────────
++
++
++def _parse_json(text):
++    """Parse a JSON object from the model response, failing closed.
++
++    Strips at most one markdown JSON fence, then locates the first ``{`` and
++    delegates to ``json.JSONDecoder().raw_decode()``.  Malformed JSON is an
++    error, never a best-effort partial parse.
++    """
++    if not isinstance(text, str):
++        return None, "output: not valid JSON"
++    s = text.strip()
++    if not s:
++        return None, "output: empty"
++    fence = re.match(r"^```(?:json)?\s*\n", s)
++    if fence:
++        s = s[fence.end():]
++        if s.rstrip().endswith("```"):
++            s = s.rstrip()[: -3].rstrip()
++    start = s.find("{")
++    if start == -1:
++        return None, "output: no JSON object found"
++    decoder = json.JSONDecoder()
++    try:
++        obj, _end = decoder.raw_decode(s, start)
++    except json.JSONDecodeError as exc:
++        return None, f"output: malformed JSON: {exc}"
++    if not isinstance(obj, dict):
++        return None, "output: top-level JSON must be an object"
++    return obj, None
++
++
++def _sanitize_best_match(raw_bm, out, errors):
++    if raw_bm is None:
++        errors.append("best_match: required when verified_matches > 0")
++        out["best_match"] = None
++        return
++    if not isinstance(raw_bm, dict):
++        errors.append("best_match: must be an object")
++        out["best_match"] = None
++        return
++    idx = raw_bm.get("candidate_index")
++    if isinstance(idx, bool) or not isinstance(idx, int) or not (
++        0 <= idx < len(out["candidates"])
++    ):
++        errors.append(
++            f"best_match.candidate_index: must reference an existing candidate, got {idx!r}"
++        )
++        idx = None
++    score = raw_bm.get("score")
++    if isinstance(score, bool) or not isinstance(score, int):
++        errors.append(f"best_match.score: must be an integer, got {score!r}")
++        score = None
++    why = raw_bm.get("why", "")
++    if not isinstance(why, str) or not why.strip():
++        errors.append("best_match.why: missing")
++        why = ""
++    if idx is not None and score is not None and 0 <= idx < len(out["candidates"]):
++        cand_score = out["candidates"][idx].get("score")
++        if isinstance(cand_score, int) and score != cand_score:
++            errors.append(
++                f"best_match.score: {score} does not match candidates[{idx}].score {cand_score}"
++            )
++    out["best_match"] = {"candidate_index": idx, "score": score, "why": why}
++
++
++def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
++    c = {}
++
++    score = cand.get("score")
++    if isinstance(score, bool) or not isinstance(score, int) or not (0 <= score <= 100):
++        errors.append(f"candidates[{i}].score: missing or not an integer 0..100")
++        score = None
++    c["score"] = score
++
++    title = cand.get("title")
++    if not isinstance(title, str) or not title.strip():
++        errors.append(f"candidates[{i}].title: missing")
++        title = ""
++    c["title"] = title
++
++    company = cand.get("company")
++    if not isinstance(company, str) or not company.strip():
++        errors.append(f"candidates[{i}].company: missing")
++        company = ""
++    c["company"] = company
++
++    location = cand.get("location", "")
++    if not isinstance(location, str):
++        errors.append(f"candidates[{i}].location: must be a string")
++        location = ""
++    c["location"] = location
++
++    ctype = cand.get("type")
++    if ctype not in _ALLOWED_TYPES:
++        errors.append(f"candidates[{i}].type: unsupported value {ctype!r}")
++        ctype = "Other"
++    c["type"] = ctype
++
++    posted = cand.get("posted", "Not stated")
++    if not isinstance(posted, str):
++        errors.append(f"candidates[{i}].posted: must be a string")
++        posted = "Not stated"
++    c["posted"] = posted.strip() or "Not stated"
++
++    salary = cand.get("salary", "")
++    if not isinstance(salary, str):
++        errors.append(f"candidates[{i}].salary: must be a string")
++        salary = ""
++    salary = _sanitize_salary(salary)
++
++    status = cand.get("status")
++    if status not in _ALLOWED_STATUSES:
++        errors.append(f"candidates[{i}].status: unsupported value {status!r}")
++        status = _STATUS_UNVERIFIED
++    c["status"] = status
++
++    apply_url = cand.get("apply_url", "")
++    if not isinstance(apply_url, str) or not apply_url.strip():
++        errors.append(f"candidates[{i}].apply_url: missing")
++        apply_url = ""
++    if "..." in apply_url:
++        errors.append(f"candidates[{i}].apply_url: truncated URL")
++    c["apply_url"] = apply_url
++
++    canonical = canonicalize_url(apply_url)
++    if canonical and canonical not in extracted:
++        errors.append(f"candidates[{i}].apply_url: URL was not web_extract'ed this run")
++        extracted_text = ""
++    else:
++        extracted_text = extracted.get(canonical, "")
++
++    # Verified-open must be conservative: employer/ATS host only, and the
++    # extracted page must not carry closed/expired/filled language.
++    if c["status"] == _STATUS_VERIFIED_OPEN:
++        if not _is_official_ats(apply_url):
++            c["status"] = _STATUS_UNVERIFIED  # deterministic downgrade
++        elif _has_closed_indicator(extracted_text):
++            errors.append(
++                f"candidates[{i}].status: extracted page indicates closed/expired/filled"
++            )
++
++    # Salary provenance: downgrade when the figure isn't in the page.
++    if _normalize_text(salary) != _normalize_text(_SENTINEL_SALARY) and not _salary_supported(
++        salary, extracted_text
++    ):
++        salary = _SENTINEL_SALARY
++    c["salary"] = salary
++
++    jd = cand.get("jd")
++    if not isinstance(jd, list) or len(
++        [b for b in jd if isinstance(b, str) and b.strip()]
++    ) < 3:
++        errors.append(f"candidates[{i}].jd: requires 3 evidence-backed bullets")
++    c["jd"] = [str(b) for b in (jd if isinstance(jd, list) else [])]
++
++    why_match = cand.get("why_match")
++    if not isinstance(why_match, list) or len(
++        [b for b in why_match if isinstance(b, str) and b.strip()]
++    ) < 2:
++        errors.append(f"candidates[{i}].why_match: requires at least 2 bullets")
++    c["why_match"] = [str(b) for b in (why_match if isinstance(why_match, list) else [])]
++
++    gaps = cand.get("gaps")
++    if not isinstance(gaps, list) or len(
++        [b for b in gaps if isinstance(b, str) and b.strip()]
++    ) < 1:
++        errors.append(f"candidates[{i}].gaps: requires at least 1 item")
++    c["gaps"] = [str(b) for b in (gaps if isinstance(gaps, list) else [])]
++
++    elig = cand.get("eligibility")
++    if not isinstance(elig, dict):
++        errors.append(f"candidates[{i}].eligibility: missing object")
++        elig = {}
++    requirement = elig.get("requirement", "")
++    user_fit = elig.get("user_fit", "")
++    sponsorship = elig.get("sponsorship", "")
++    for key, value in (("requirement", requirement), ("user_fit", user_fit), ("sponsorship", sponsorship)):
++        if not isinstance(value, str):
++            errors.append(f"candidates[{i}].eligibility.{key}: must be a string")
++    requirement = requirement if isinstance(requirement, str) else ""
++    user_fit = user_fit if isinstance(user_fit, str) else ""
++    sponsorship = sponsorship if isinstance(sponsorship, str) else ""
++    user_fit = _sanitize_user_fit(user_fit, vellum_text)
++    c["eligibility"] = {
++        "requirement": requirement,
++        "user_fit": user_fit,
++        "sponsorship": sponsorship,
++    }
++
++    # Hard content bans on the *sanitized* candidate (user_fit already
++    # downgraded): any residual "assumed" or a silent marker is a hard error.
++    raw = json.dumps(c, ensure_ascii=False)
++    if _ASSUMED_RE.search(raw):
++        errors.append(f"candidates[{i}]: contains 'assumed' personal fact")
++    if _SILENT_RE.search(raw):
++        errors.append(f"candidates[{i}]: contains [SILENT]")
++
++    return c
++
++
++def _sanitize(contract, structure, ledger, errors, expected_date=None):
++    out = {}
++
++    date = structure.get("date")
++    if expected_date is not None:
++        # The report date must match the trusted run-local execution date, and
++        # the sanitized structure carries that trusted date so the renderer
++        # never echoes a model-supplied date.
++        if not isinstance(date, str) or date.strip() != expected_date:
++            errors.append(f"date: expected {expected_date}, got {date!r}")
++        out["date"] = expected_date
++    else:
++        if not isinstance(date, str) or not _DATE_RE.match(date.strip()):
++            errors.append("date: must be YYYY-MM-DD")
++            date = date.strip() if isinstance(date, str) else ""
++        out["date"] = date if isinstance(date, str) else ""
++
++    vm = structure.get("verified_matches")
++    vm_is_int = isinstance(vm, int) and not isinstance(vm, bool)
++    if not vm_is_int:
++        errors.append(f"verified_matches: must be an integer, got {vm!r}")
++        vm = None
++    else:
++        if not (0 <= vm <= 5):
++            errors.append(f"verified_matches: must be an integer 0..5, got {vm}")
++    out["verified_matches"] = vm
++
++    raw_candidates = structure.get("candidates")
++    if not isinstance(raw_candidates, list):
++        errors.append("candidates: must be a list")
++        raw_candidates = []
++    if len(raw_candidates) > 5:
++        errors.append(f"candidates: at most 5 allowed, got {len(raw_candidates)}")
++    if vm_is_int and vm != len(raw_candidates):
++        errors.append(f"verified_matches: expected {len(raw_candidates)}, got {vm}")
++
++    extracted = ledger["extracted"]
++    vellum_text = ledger["vellum_text"]
++
++    sanitized_candidates = []
++    for i, cand in enumerate(raw_candidates):
++        if not isinstance(cand, dict):
++            errors.append(f"candidates[{i}]: must be an object")
++            continue
++        sanitized_candidates.append(
++            _sanitize_candidate(cand, i, extracted, vellum_text, errors)
++        )
++    out["candidates"] = sanitized_candidates
++
++    if vm == 0:
++        if sanitized_candidates:
++            errors.append("verified_matches: 0 requires candidates to be empty")
++        if structure.get("best_match") is not None:
++            errors.append("best_match: must be null when verified_matches is 0")
++        out["best_match"] = None
++    elif vm is not None and vm > 0:
++        _sanitize_best_match(structure.get("best_match"), out, errors)
++    else:
++        out["best_match"] = None
++
++    return out
++
++
++def validate_contract(name, text, messages, expected_date=None):
++    """Validate ``text`` against contract ``name`` using run-local evidence.
++
++    ``expected_date`` is the trusted run-local execution date (YYYY-MM-DD).
++    When provided, ``structure["date"]`` must equal it and the sanitized
++    structure carries the trusted date (never the model's).
++
++    Returns a :class:`ContractResult` whose ``structure`` is the sanitized
++    structure (downgrades applied) or ``None`` when the text did not parse.
++    """
++    contract = CONTRACTS.get(name)
++    if contract is None:
++        return ContractResult(False, [f"output_schema: unknown contract {name!r}"], None)
++
++    structure, parse_error = _parse_json(text)
++    if parse_error:
++        return ContractResult(False, [parse_error], None)
++    if structure is None:
++        return ContractResult(False, ["output: not valid JSON"], None)
++
++    ledger = build_evidence_ledger(messages, contract)
++    errors = []
++    sanitized = _sanitize(contract, structure, ledger, errors, expected_date=expected_date)
++    return ContractResult(not errors, errors, sanitized)
++
++
++# ─────────────────────────────────────────────────────────────────────────
++# Deterministic rendering
++# ─────────────────────────────────────────────────────────────────────────
++
++
++def render_zero_match(name, date=None):
++    """Deterministic visible zero-match report (no model prose involved)."""
++    date = date if isinstance(date, str) else ""
++    return (
++        f"CAREER JOB MATCH REPORT — {date}\n\n"
++        "VERIFIED MATCHES: 0\n\n"
++        "No current job openings were successfully verified against the required "
++        "source/currentness criteria in this run.\n\n"
++        "BEST MATCH TODAY:\n"
++        "None\n"
++    )
++
++
++def render_contract(name, structure):
++    """Render the human-readable report from a *sanitized* structure only."""
++    if not isinstance(structure, dict):
++        return ""
++    date = structure.get("date") or ""
++    vm = structure.get("verified_matches")
++    candidates = structure.get("candidates") or []
++    best_match = structure.get("best_match")
++
++    if vm == 0 or not candidates:
++        return render_zero_match(name, date)
++
++    lines = [f"CAREER JOB MATCH REPORT — {date}", "", f"VERIFIED MATCHES: {vm}", ""]
++    for idx, c in enumerate(candidates, 1):
++        lines.append(f"{idx}. {c.get('score')}/100 — {c.get('title')}")
++        lines.append(f"Company: {c.get('company')}")
++        lines.append(f"Location: {c.get('location')}")
++        lines.append(f"Type: {c.get('type')}")
++        lines.append(f"Posted: {c.get('posted')}")
++        lines.append(f"Salary: {c.get('salary')}")
++        lines.append(f"Status: {c.get('status')}")
++        lines.append(f"Apply: {c.get('apply_url')}")
++        lines.append("")
++        lines.append("JD:")
++        for b in c.get("jd", []):
++            lines.append(f"- {b}")
++        lines.append("")
++        lines.append("WHY YOU MATCH:")
++        for b in c.get("why_match", []):
++            lines.append(f"- {b}")
++        lines.append("")
++        lines.append("GAPS:")
++        for b in c.get("gaps", []):
++            lines.append(f"- {b}")
++        lines.append("")
++        elig = c.get("eligibility") or {}
++        lines.append("ELIGIBILITY:")
++        lines.append(f"- Requirement: {elig.get('requirement', '')}")
++        lines.append(f"- User fit: {elig.get('user_fit', '')}")
++        lines.append(f"- Sponsorship / work authorization: {elig.get('sponsorship', '')}")
++        lines.append("")
++
++    if isinstance(best_match, dict):
++        bm_idx = best_match.get("candidate_index")
++        bm = (
++            candidates[bm_idx]
++            if isinstance(bm_idx, int) and 0 <= bm_idx < len(candidates)
++            else {}
++        )
++        lines.append("BEST MATCH TODAY:")
++        lines.append(f"{bm.get('company', '')} — {bm.get('title', '')} — {bm.get('score')}/100")
++        lines.append("")
++        lines.append("WHY:")
++        lines.append(best_match.get("why", ""))
++
++    return "\n".join(lines).strip() + "\n"
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+index b1ce0a1..62c3c07 100644
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -278,6 +278,78 @@ class CronRequiredToolNotExecuted(RuntimeError):
+ # HERMES_CRON_REQUIRED_TOOLS_RESOLVE_V1_END
+
+
++# HERMES_CRON_OUTPUT_CONTRACT_V1
++
++def _cron_zero_match_report(date):
++    """Deterministic visible zero-match report (no model prose involved).
++
++    Lives in the scheduler — not in the contract module — so the fail-closed
++    path can still render it when the contract module itself is unavailable.
++    Its text must match ``cron.output_contract.render_zero_match``.
++    """
++    date = date if isinstance(date, str) else ""
++    return (
++        f"CAREER JOB MATCH REPORT — {date}\n\n"
++        "VERIFIED MATCHES: 0\n\n"
++        "No current job openings were successfully verified against the required "
++        "source/currentness criteria in this run.\n\n"
++        "BEST MATCH TODAY:\n"
++        "None\n"
++    )
++
++
++def _finalize_cron_output_contract(output_schema, final_response, messages, expected_date):
++    """Fail-closed deterministic finalization for an ``output_schema`` job.
++
++    Returns the deterministic rendered report on success, or the visible
++    zero-match report when the contract is invalid OR any contract machinery
++    raises. The raw model ``final_response`` is never returned.
++    """
++    date = expected_date if isinstance(expected_date, str) else ""
++    try:
++        from cron.output_contract import render_contract, validate_contract
++
++        result = validate_contract(
++            output_schema,
++            final_response,
++            messages,
++            expected_date=expected_date,
++        )
++        valid = bool(
++            result is not None
++            and getattr(result, "valid", False)
++            and getattr(result, "structure", None) is not None
++        )
++        if not valid:
++            errors = (
++                getattr(result, "errors", [])
++                if result is not None
++                else ["contract validator returned no result"]
++            ) or ["unknown contract failure"]
++            logger.error(
++                "cron output contract '%s' invalid: %s",
++                output_schema,
++                "; ".join(str(e) for e in errors),
++            )
++            return _cron_zero_match_report(date)
++
++        rendered = render_contract(output_schema, result.structure)
++        if not (isinstance(rendered, str) and rendered.strip()):
++            raise RuntimeError("contract renderer returned empty output")
++        logger.info(
++            "cron output contract '%s' valid; rendered deterministically",
++            output_schema,
++        )
++        return rendered
++    except Exception as exc:
++        logger.error(
++            "cron output contract '%s' failed closed: %s",
++            output_schema,
++            exc,
++        )
++        return _cron_zero_match_report(date)
++
++
+ class CronPromptInjectionBlocked(Exception):
+     """Raised by _build_job_prompt when the fully-assembled prompt trips the
+     injection scanner. Caught in run_job so the operator sees a clean
+@@ -3641,6 +3713,13 @@ def run_job(
+         # HERMES_CRON_REQUIRED_TOOLS_RESOLVE_V1
+         _required_tools = _resolve_cron_required_tools(job)
+         _required_to_execute = _resolve_cron_required_to_execute(job)
++        # HERMES_CRON_OUTPUT_CONTRACT_V1
++        # Opt-in deterministic output contract. Jobs without this field are
++        # completely unaffected (ordinary free-form cron delivery). The
++        # trusted run-local date is captured once so the gate, the final
++        # validation, and the zero-match fallback all agree.
++        _output_schema = str(job.get("output_schema") or "").strip() or None
++        _expected_date = _hermes_now().strftime("%Y-%m-%d")
+         if _required_tools:
+             try:
+                 from tools.tool_search import protect_required_tools
+@@ -3758,6 +3837,25 @@ def run_job(
+                     )
+             )
+
++        # HERMES_CRON_OUTPUT_CONTRACT_V1
++        # Opt-in deterministic output contract. The conversation loop consults
++        # this callback at finalization (after the required-operation gate) so a
++        # malformed final answer gets one bounded same-turn repair before the
++        # scheduler renders the sanitized structure or the zero-match fallback.
++        if _output_schema:
++            try:
++                from cron.output_contract import validate_contract
++
++                agent._cron_output_contract = (
++                    lambda text, messages, schema=_output_schema, date=_expected_date:
++                        validate_contract(schema, text, messages, expected_date=date)
++                )
++            except Exception as _contract_exc:
++                logger.debug(
++                    "Job '%s': output contract unavailable: %s",
++                    job_id, type(_contract_exc).__name__,
++                )
++
+         _cron_future = _cron_pool.submit(_cron_context.run, agent.run_conversation, prompt)
+         _inactivity_timeout = False
+         try:
+@@ -3906,6 +4004,22 @@ def run_job(
+                     "required operation(s) produced no execution evidence this run: "
+                     + ", ".join(_missing)
+                 )
++
++        # HERMES_CRON_OUTPUT_CONTRACT_V1
++        # Deterministic, fail-closed finalization: validate the model's final
++        # response against the job's output contract using the run's messages
++        # as the evidence ledger. On success, render from the sanitized
++        # structure; on any failure — invalid contract, validator/renderer
++        # exception, unknown schema, import error — render the visible
++        # zero-match report. Raw model prose is never delivered for an
++        # output_schema job.
++        if _output_schema:
++            final_response = _finalize_cron_output_contract(
++                _output_schema,
++                final_response,
++                result.get("messages") or [],
++                _expected_date,
++            )
+         # Use a separate variable for log display; keep final_response clean
+         # for delivery logic (empty response = no delivery).
+         logged_response = final_response if final_response else "(No response generated)"

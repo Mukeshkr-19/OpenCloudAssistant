@@ -11,11 +11,12 @@ PATCH1="$ROOT/integrations/hermes/hermes-fleet-bridge.patch"
 PATCH2="$ROOT/integrations/hermes/hermes-live.patch"
 PATCH3="$ROOT/integrations/hermes/hermes-cron-tool-safety.patch"
 PATCH4="$ROOT/integrations/hermes/hermes-cron-required-continuation.patch"
+PATCH5="$ROOT/integrations/hermes/hermes-cron-output-contract.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
-FILES="agent/agent_init.py agent/conversation_loop.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py tools/tool_search.py cron/scheduler.py gateway/run.py model_tools.py agent/hermes_fleet_bridge.py agent/opencloud_routing_v1.py hermes_cli/cli_agent_setup_mixin.py"
-MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1 HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1"
+FILES="agent/agent_init.py agent/conversation_loop.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py tools/tool_search.py cron/scheduler.py cron/output_contract.py gateway/run.py model_tools.py agent/hermes_fleet_bridge.py agent/opencloud_routing_v1.py hermes_cli/cli_agent_setup_mixin.py"
+MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1 HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1 HERMES_CRON_OUTPUT_CONTRACT_V1"
 
 require_source() {
     test -d "$HERMES_ROOT/.git" || {
@@ -45,6 +46,11 @@ require_source() {
 
     test -f "$PATCH4" || {
         echo "ERROR: Hermes required-operation continuation patch missing" >&2
+        exit 1
+    }
+
+    test -f "$PATCH5" || {
+        echo "ERROR: Hermes output-contract patch missing" >&2
         exit 1
     }
 }
@@ -86,6 +92,7 @@ validate_tree() {
         HERMES_CRON_REQUIRED_TOOLS_RESOLVE_V1 \
         HERMES_CRON_REQUIRED_TO_EXECUTE_V1 \
         HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1 \
+        HERMES_CRON_OUTPUT_CONTRACT_V1 \
         HERMES_CRON_RAW_TOOL_PROTOCOL_GUARD_V1 \
         HERMES_CRON_FAILURE_CLASSIFICATION_V1 \
         HERMES_ROUTING_V1_CRON_PROFILE \
@@ -124,6 +131,10 @@ materialize() {
     echo "HERMES_INSTALL: checking required-operation continuation patch"
     git -C "$out" apply --check "$PATCH4"
     git -C "$out" apply "$PATCH4"
+
+    echo "HERMES_INSTALL: checking output-contract patch"
+    git -C "$out" apply --check "$PATCH5"
+    git -C "$out" apply "$PATCH5"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
