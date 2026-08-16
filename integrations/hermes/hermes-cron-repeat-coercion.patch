@@ -1,0 +1,77 @@
+diff --git a/tools/cronjob_tools.py b/tools/cronjob_tools.py
+index f7612dca9..16a73201c 100644
+--- a/tools/cronjob_tools.py
++++ b/tools/cronjob_tools.py
+@@ -412,6 +412,42 @@ def _normalize_optional_job_value(value: Optional[Any], *, strip_trailing_slash:
+     return text or None
+
+
++def _coerce_repeat(value: Optional[Any]) -> Optional[int]:
++    """Coerce a model-supplied ``repeat`` to a non-negative int (None = forever).
++
++    # HERMES_CRON_REPEAT_COERCION_V1
++    The cronjob schema types ``repeat`` as integer, but a model frequently
++    passes a natural-language string ("forever", "daily", "once"). Comparing
++    that string with ``<= 0`` raises ``TypeError`` and surfaces as an opaque
++    tool error ("'<=' not supported between instances of 'str' and 'int'").
++    Normalize at the API boundary so both create and update are robust: a
++    numeric string coerces to int, non-positive values mean forever, and any
++    unrecognized wording also falls back to forever — never silently truncates
++    a recurring schedule.
++    """
++    if value is None:
++        return None
++    if isinstance(value, bool):
++        return None
++    if isinstance(value, int):
++        return None if value <= 0 else value
++    text = str(value).strip()
++    if not text:
++        return None
++    lowered = text.lower()
++    if lowered in {
++        "forever", "unlimited", "infinite", "none", "null", "always",
++        "daily", "weekly", "monthly", "hourly", "recurring", "repeat",
++        "once", "one-shot", "oneshot",
++    }:
++        return None
++    try:
++        n = int(lowered)
++    except ValueError:
++        return None  # unknown wording -> forever (conservative, non-fatal)
++    return None if n <= 0 else n
++
++
+ def _normalize_deliver_param(value: Any) -> Optional[str]:
+     """Normalize a user-supplied ``deliver`` value to the canonical string form.
+
+@@ -949,7 +985,7 @@ def cronjob(
+                 prompt=prompt or "",
+                 schedule=schedule,
+                 name=name,
+-                repeat=repeat,
++                repeat=_coerce_repeat(repeat),
+                 deliver=_normalize_deliver_param(deliver),
+                 origin=_origin_from_env(),
+                 skills=canonical_skills,
+@@ -1160,8 +1196,10 @@ def cronjob(
+                         )
+                 updates["no_agent"] = target_no_agent
+             if repeat is not None:
+-                # Normalize: treat 0 or negative as None (infinite)
+-                normalized_repeat = None if repeat <= 0 else repeat
++                # Normalize: treat 0 or negative as None (infinite); coerce a
++                # natural-language string ("forever") so the comparison never
++                # raises a TypeError on a non-int value.
++                normalized_repeat = _coerce_repeat(repeat)
+                 repeat_state = dict(job.get("repeat") or {})
+                 repeat_state["times"] = normalized_repeat
+                 updates["repeat"] = repeat_state
+@@ -1200,6 +1238,7 @@ Before action='create', always action='list' and check whether an existing job a
+ Jobs run in a fresh session with no current-chat context, so prompts must be self-contained.
+ If skills are provided on create, the future cron run loads those skills in order, then follows the prompt as the task instruction.
+ On update, passing skills=[] clears attached skills.
++When updating an existing job, only change fields the user actually asked to change — do not replace a detailed structured prompt (e.g. a career job-match report's evidence/scoring/output rules) with a short natural-language paraphrase unless the user explicitly requested different behavior.
+
+ NOTE: The agent's final response is auto-delivered to the target. Put the primary
+ user-facing content in the final response. Cron jobs run autonomously with no user
