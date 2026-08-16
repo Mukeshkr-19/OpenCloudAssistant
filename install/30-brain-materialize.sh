@@ -17,6 +17,7 @@ PATCH_GUARD="$ROOT/integrations/hermes/hermes-provider-metadata-guard.patch"
 PATCH_SCORING="$ROOT/integrations/hermes/hermes-career-deterministic-scoring.patch"
 PATCH_REPAIR="$ROOT/integrations/hermes/hermes-opencloud-self-repair.patch"
 PATCH_DUP="$ROOT/integrations/hermes/hermes-cron-duplicate-guard.patch"
+PATCH_WORKFLOW="$ROOT/integrations/hermes/hermes-cron-workflow-identity.patch"
 
 usage() {
     echo "Usage:"
@@ -59,6 +60,7 @@ materialize() {
     local patch7="$rendered/hermes-career-deterministic-scoring.patch"
     local patch8="$rendered/hermes-opencloud-self-repair.patch"
     local patch9="$rendered/hermes-cron-duplicate-guard.patch"
+    local patch10="$rendered/hermes-cron-workflow-identity.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -69,6 +71,7 @@ materialize() {
     require_file "$PATCH_SCORING"
     require_file "$PATCH_REPAIR"
     require_file "$PATCH_DUP"
+    require_file "$PATCH_WORKFLOW"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -96,6 +99,7 @@ materialize() {
     render_patch "$PATCH_SCORING" "$patch7"
     render_patch "$PATCH_REPAIR" "$patch8"
     render_patch "$PATCH_DUP" "$patch9"
+    render_patch "$PATCH_WORKFLOW" "$patch10"
 
     if grep -RqsF "__OPEN_CLOUD_HOME__" "$rendered"; then
         echo "ERROR: unresolved Open Cloud home placeholder" >&2
@@ -138,6 +142,10 @@ materialize() {
     echo "MATERIALIZE: checking cron duplicate-guard patch"
     git -C "$out" apply --check "$patch9"
     git -C "$out" apply "$patch9"
+
+    echo "MATERIALIZE: checking cron workflow-identity patch"
+    git -C "$out" apply --check "$patch10"
+    git -C "$out" apply "$patch10"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
@@ -192,6 +200,11 @@ materialize() {
 
     if ! grep -RqsF "HERMES_CRON_DUPLICATE_GUARD_V1" "$out/tools"; then
         echo "ERROR: cron duplicate-guard marker missing after materialization" >&2
+        exit 1
+    fi
+
+    if ! grep -RqsF "HERMES_CRON_WORKFLOW_IDENTITY_V1" "$out/tools"; then
+        echo "ERROR: cron workflow-identity marker missing after materialization" >&2
         exit 1
     fi
 

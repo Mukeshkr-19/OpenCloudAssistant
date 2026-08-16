@@ -47,14 +47,19 @@ def materialize(out: Path) -> bool:
     return True
 
 
-def _job(jid, name, schedule, enabled=True):
-    return {
+def _job(jid, name, schedule, enabled=True, output_schema=None, prompt=None):
+    job = {
         "id": jid,
         "name": name,
         "schedule": schedule,
         "schedule_display": schedule.get("display", schedule.get("expr", "")),
         "enabled": enabled,
     }
+    if output_schema:
+        job["output_schema"] = output_schema
+    if prompt:
+        job["prompt"] = prompt
+    return job
 
 
 def main() -> None:
@@ -131,10 +136,18 @@ def main() -> None:
             cjt.list_jobs = orig_list
 
         # ── 3. create is rejected deterministically for a duplicate ───────
+        #     (P10: workflow-identity — a career-scouting request resolves to
+        #      the existing career_job_match_v1 job, whatever the schedule.)
         created = []
         orig_create = cjt.create_job
         cjt.list_jobs = lambda include_disabled=False: [
-            _job("y", "scout", interval),
+            _job(
+                "y",
+                "scout",
+                interval,
+                output_schema="career_job_match_v1",
+                prompt="find current DevOps and cloud internships",
+            ),
         ]
         cjt.create_job = lambda **kw: created.append(kw) or {"id": "should-not-happen"}
         try:
@@ -145,7 +158,7 @@ def main() -> None:
             )
             parsed = json.loads(result)
             assert parsed.get("success") is False, parsed
-            assert "already scheduled" in parsed.get("error", ""), parsed
+            assert "matches an existing cron job" in parsed.get("error", ""), parsed
             assert "action='update'" in parsed.get("error", ""), parsed
             assert "y" in parsed.get("error", ""), parsed
             assert created == [], "create_job must not be called for a duplicate"
@@ -158,7 +171,7 @@ def main() -> None:
         assert "HERMES_CRON_DUPLICATE_GUARD_V1" in source
         assert "_existing_recurring_job_at_schedule" in source
         assert "always action='list'" in source
-        assert "update that job instead of duplicating" in source
+        assert "update that job instead of creating a duplicate" in source
 
     print("PASS recurring interval collision is detected")
     print("PASS create is rejected deterministically with update guidance")

@@ -16,11 +16,12 @@ PATCH6="$ROOT/integrations/hermes/hermes-provider-metadata-guard.patch"
 PATCH7="$ROOT/integrations/hermes/hermes-career-deterministic-scoring.patch"
 PATCH8="$ROOT/integrations/hermes/hermes-opencloud-self-repair.patch"
 PATCH9="$ROOT/integrations/hermes/hermes-cron-duplicate-guard.patch"
+PATCH10="$ROOT/integrations/hermes/hermes-cron-workflow-identity.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
 FILES="agent/agent_init.py agent/conversation_loop.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py tools/tool_search.py cron/scheduler.py cron/output_contract.py gateway/run.py model_tools.py agent/hermes_fleet_bridge.py agent/opencloud_routing_v1.py hermes_cli/cli_agent_setup_mixin.py agent/provider_metadata_guard.py agent/transports/chat_completions.py agent/transports/codex.py agent/opencloud_self_repair.py tools/cronjob_tools.py"
-MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1 HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1 HERMES_CRON_OUTPUT_CONTRACT_V1 HERMES_OPENCLOUD_METADATA_GUARD_V1 HERMES_OPENCLOUD_SELF_REPAIR_V1 HERMES_CRON_DUPLICATE_GUARD_V1"
+MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1 HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1 HERMES_CRON_OUTPUT_CONTRACT_V1 HERMES_OPENCLOUD_METADATA_GUARD_V1 HERMES_OPENCLOUD_SELF_REPAIR_V1 HERMES_CRON_DUPLICATE_GUARD_V1 HERMES_CRON_WORKFLOW_IDENTITY_V1"
 
 require_source() {
     test -d "$HERMES_ROOT/.git" || {
@@ -75,6 +76,11 @@ require_source() {
 
     test -f "$PATCH9" || {
         echo "ERROR: Hermes cron duplicate-guard patch missing" >&2
+        exit 1
+    }
+
+    test -f "$PATCH10" || {
+        echo "ERROR: Hermes cron workflow-identity patch missing" >&2
         exit 1
     }
 }
@@ -179,6 +185,10 @@ materialize() {
     echo "HERMES_INSTALL: checking cron duplicate-guard patch"
     git -C "$out" apply --check "$PATCH9"
     git -C "$out" apply "$PATCH9"
+
+    echo "HERMES_INSTALL: checking cron workflow-identity patch"
+    git -C "$out" apply --check "$PATCH10"
+    git -C "$out" apply "$PATCH10"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"

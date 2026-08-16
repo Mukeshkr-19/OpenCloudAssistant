@@ -1,0 +1,153 @@
+diff --git a/tools/cronjob_tools.py b/tools/cronjob_tools.py
+index 280ba11de..f7612dca9 100644
+--- a/tools/cronjob_tools.py
++++ b/tools/cronjob_tools.py
+@@ -750,6 +750,106 @@ def _existing_recurring_job_at_schedule(schedule: str) -> Optional[Dict[str, Any
+     return None
+
+
++_CAREER_SCOUT_KEYWORDS = (
++    "career",
++    "job match",
++    "internship",
++    "internships",
++    "co-op",
++    "co op",
++    "new grad",
++    "new-grad",
++    "new graduate",
++    "entry level",
++    "entry-level",
++    "early career",
++)
++
++
++_PURPOSE_STOPWORDS = frozenset({
++    "the", "and", "for", "with", "this", "that", "from", "into", "every",
++    "each", "day", "daily", "week", "weekly", "month", "monthly", "morning",
++    "evening", "today", "tonight", "best", "current", "find", "send", "report",
++    "reports", "here", "use", "using", "my", "profile", "jobs", "job", "me",
++    "at", "am", "pm", "a", "an", "of", "to", "in", "on", "by", "or", "as",
++    "is", "are", "be", "it", "its", "i", "you", "your", "they", "them",
++    "about", "over", "under", "after", "before", "please", "make", "give",
++    "get", "then", "also", "can", "could", "would", "should", "will", "do",
++    "does", "did", "not", "no", "yes", "via", "per", "out", "up", "down",
++    "all", "any", "some", "more", "most", "new", "recent", "latest",
++    "update", "updated", "list", "show", "tell", "want", "need", "have",
++    "has", "had", "like", "just", "now", "again", "each", "other", "these",
++    "those", "there", "their", "them", "when", "where", "which", "who",
++    "what", "how", "why", "once", "time", "times", "schedule", "scheduled",
++})
++
++
++def _career_scout_intent(name: Optional[str], prompt: Optional[str]) -> bool:
++    """Deterministically detect a career job-match (job-scouting) request.
++
++    # HERMES_CRON_WORKFLOW_IDENTITY_V1
++    A natural-language request such as "every day find me the best DevOps/SRE
++    internships" describes the SAME workflow as the canonical
++    ``career_job_match_v1`` job. The model invents a fresh name for it
++    ("daily-internship-scout"), so name/schedule matching alone cannot pin it
++    down. This conservative keyword detector lets the create path resolve such
++    requests to the existing career job instead of duplicating it. It only
++    triggers on strong career-scouting phrasing — it never rejects ordinary
++    scheduled tasks that merely mention a job or a cloud technology.
++    """
++    text = f"{name or ''} {prompt or ''}".lower()
++    return any(kw in text for kw in _CAREER_SCOUT_KEYWORDS)
++
++
++def _meaningful_tokens(text: str) -> set:
++    words = re.findall(r"[a-z][a-z0-9-]{2,}", (text or "").lower())
++    return {w for w in words if w not in _PURPOSE_STOPWORDS}
++
++
++def _purpose_overlaps(
++    name: Optional[str], prompt: Optional[str], existing_job: Dict[str, Any]
++) -> bool:
++    """True when a new request and an existing job share meaningful purpose
++    keywords — i.e. the same task, not merely the same clock time."""
++    new_tokens = _meaningful_tokens(f"{name or ''} {prompt or ''}")
++    old_tokens = _meaningful_tokens(
++        f"{existing_job.get('name') or ''} {existing_job.get('prompt') or ''}"
++    )
++    if not new_tokens or not old_tokens:
++        return False
++    return len(new_tokens & old_tokens) >= 2
++
++
++def _find_equivalent_job(
++    schedule: Optional[str], name: Optional[str], prompt: Optional[str]
++) -> Optional[Dict[str, Any]]:
++    """Return the existing active job this create request is equivalent to.
++
++    # HERMES_CRON_WORKFLOW_IDENTITY_V1
++    Resolution order (first match wins):
++      1. Career-workflow identity — a career-scouting request resolves to the
++         existing ``career_job_match_v1`` job, whatever schedule/name the model
++         invented for it.
++      2. Same recurring schedule AND overlapping purpose — a repeated request
++         for the SAME task at the same time; a genuinely different task at the
++         same time is still allowed to create.
++    Returns the job dict to update, or None when creation should proceed.
++    """
++    active = [j for j in list_jobs(include_disabled=True) if j.get("enabled", True)]
++
++    if _career_scout_intent(name, prompt):
++        for job in active:
++            if (job.get("output_schema") or "") == "career_job_match_v1":
++                return job
++
++    if schedule:
++        same = _existing_recurring_job_at_schedule(schedule)
++        if same is not None and _purpose_overlaps(name, prompt, same):
++            return same
++
++    return None
++
++
+ def cronjob(
+     action: str,
+     job_id: Optional[str] = None,
+@@ -827,19 +927,21 @@ def cronjob(
+                             success=False,
+                         )
+
+-            # Reject accidental duplicates: a recurring schedule that already
+-            # has an active job must be updated, not re-created.
+-            _duplicate = _existing_recurring_job_at_schedule(schedule)
+-            if _duplicate is not None:
++            # Reject accidental duplicates deterministically. A create must
++            # resolve to an existing job when it describes the SAME workflow —
++            # a career job-match/scouting request maps to the existing
++            # ``career_job_match_v1`` job regardless of the name or schedule
++            # the model invented, and a repeated request at the same recurring
++            # schedule maps to that job when its purpose overlaps.
++            _equivalent = _find_equivalent_job(schedule, name, prompt)
++            if _equivalent is not None:
+                 return tool_error(
+-                    "A recurring job is already scheduled at "
+-                    f"'{_duplicate.get('schedule_display') or schedule}': "
+-                    f"'{_duplicate.get('name')}' (job_id={_duplicate.get('id')}). "
++                    "This request matches an existing cron job: "
++                    f"'{_equivalent.get('name')}' (job_id={_equivalent.get('id')}). "
+                     "Update the existing job with cronjob(action='update', "
+-                    f"job_id='{_duplicate.get('id')}', ...) instead of creating "
+-                    "a duplicate. If a genuinely different job at the same time "
+-                    "is required, use cronjob(action='list') to confirm and pick "
+-                    "a different schedule.",
++                    f"job_id='{_equivalent.get('id')}', ...) instead of creating "
++                    "a duplicate. Only create when the request describes a "
++                    "genuinely different workflow.",
+                     success=False,
+                 )
+
+@@ -1093,7 +1195,7 @@ Use action='update', 'pause', 'resume', 'remove', or 'run' to manage an existing
+
+ To stop a job the user no longer wants: first action='list' to find the job_id, then action='remove' with that job_id. Never guess job IDs — always list first.
+
+-Before action='create', always action='list' and check whether an existing job already covers the requested schedule and purpose. Creating at a recurring schedule that already has an active job is rejected — update that job instead of duplicating it.
++Before action='create', always action='list' and check whether an existing job already covers the requested purpose. A career job-match / job-scouting request (find internships, co-ops, new-grad roles, or DevOps/SRE/cloud/platform/infrastructure roles) resolves to the existing career_job_match_v1 job — update that job instead of creating a duplicate, even if the requested schedule or role wording changed. For 'run', 'pause', 'resume', 'update', and 'remove', resolve the job by its ID or exact name from action='list' (never guess the ID).
+
+ Jobs run in a fresh session with no current-chat context, so prompts must be self-contained.
+ If skills are provided on create, the future cron run loads those skills in order, then follows the prompt as the task instruction.
