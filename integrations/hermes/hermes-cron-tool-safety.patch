@@ -1,5 +1,5 @@
 diff --git a/cron/scheduler.py b/cron/scheduler.py
-index 5699360..c8559dd 100644
+index 5699360..66b3650 100644
 --- a/cron/scheduler.py
 +++ b/cron/scheduler.py
 @@ -103,6 +103,19 @@ def _summarize_cron_failure_for_delivery(job: dict, error: str | None) -> str:
@@ -139,7 +139,34 @@ index 5699360..c8559dd 100644
  class CronPromptInjectionBlocked(Exception):
      """Raised by _build_job_prompt when the fully-assembled prompt trips the
      injection scanner. Caught in run_job so the operator sees a clean
-@@ -3018,6 +3141,7 @@ def run_job(
+@@ -2552,7 +2675,25 @@ def _build_job_prompt(job: dict, prerun_script: Optional[tuple] = None) -> str:
+         "Never combine [SILENT] with content — either report your "
+         "findings normally, or say [SILENT] and nothing more.]\n\n"
+     )
+-    prompt = cron_hint + prompt
++
++    # Model-facing half of required_to_execute. The existing post-run
++    # execution-evidence check remains the fail-closed backstop; this guidance
++    # gives the agent the requirement before it is allowed to finish.
++    required_to_execute = sorted(
++        _resolve_cron_required_to_execute(job)
++    )
++    required_execution_hint = ""
++    if required_to_execute:
++        required_execution_hint = (
++            "[MANDATORY CRON OPERATIONS: Before returning a final response, "
++            "you MUST actually execute each of these operations at least once "
++            "during this run: "
++            + ", ".join(required_to_execute)
++            + ". Do not return a final answer or [SILENT] until all listed "
++            "operations have executed.]\n\n"
++        )
++
++    prompt = cron_hint + required_execution_hint + prompt
+     if skills is None:
+         legacy = job.get("skill")
+         skills = [legacy] if legacy else []
+@@ -3018,6 +3159,7 @@ def run_job(
      logger.info("Prompt: %s", prompt[:100])
 
      agent = None
@@ -147,7 +174,7 @@ index 5699360..c8559dd 100644
 
      # Use ContextVars for per-job session/delivery state so parallel jobs
      # don't clobber each other's targets (os.environ is process-global).
-@@ -3486,6 +3610,19 @@ def run_job(
+@@ -3486,6 +3628,19 @@ def run_job(
                  job_id, _mcp_exc,
              )
 
@@ -167,7 +194,7 @@ index 5699360..c8559dd 100644
          agent = AIAgent(
              model=model,
              api_key=runtime.get("api_key"),
-@@ -3712,6 +3849,19 @@ def run_job(
+@@ -3712,6 +3867,19 @@ def run_job(
                      turn_exit_reason,
                  )
                  final_response = ""
@@ -187,7 +214,7 @@ index 5699360..c8559dd 100644
          # Use a separate variable for log display; keep final_response clean
          # for delivery logic (empty response = no delivery).
          logged_response = final_response if final_response else "(No response generated)"
-@@ -3757,6 +3907,13 @@ def run_job(
+@@ -3757,6 +3925,13 @@ def run_job(
          return False, output, "", error_msg
 
      finally:
@@ -201,7 +228,7 @@ index 5699360..c8559dd 100644
          # Restore TERMINAL_CWD to whatever it was before this job ran.  We
          # only ever mutate it when the job has a workdir; see the setup block
          # at the top of run_job for the serialization guarantee.
-@@ -4001,6 +4158,21 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
+@@ -4001,6 +4176,21 @@ def run_one_job(job: dict, *, adapters=None, loop=None, verbose: bool = False) -
              # If the agent responded with [SILENT], skip delivery (but
              # output is already saved above).  Failed jobs always deliver.
              deliver_content = final_response if success else _summarize_cron_failure_for_delivery(job, error)
