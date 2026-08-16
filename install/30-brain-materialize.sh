@@ -14,6 +14,7 @@ PATCH_CRON="$ROOT/integrations/hermes/hermes-cron-tool-safety.patch"
 PATCH_CONT="$ROOT/integrations/hermes/hermes-cron-required-continuation.patch"
 PATCH_OUTPUT="$ROOT/integrations/hermes/hermes-cron-output-contract.patch"
 PATCH_GUARD="$ROOT/integrations/hermes/hermes-provider-metadata-guard.patch"
+PATCH_SCORING="$ROOT/integrations/hermes/hermes-career-deterministic-scoring.patch"
 
 usage() {
     echo "Usage:"
@@ -53,6 +54,7 @@ materialize() {
     local patch4="$rendered/hermes-cron-required-continuation.patch"
     local patch5="$rendered/hermes-cron-output-contract.patch"
     local patch6="$rendered/hermes-provider-metadata-guard.patch"
+    local patch7="$rendered/hermes-career-deterministic-scoring.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -60,6 +62,7 @@ materialize() {
     require_file "$PATCH_CONT"
     require_file "$PATCH_OUTPUT"
     require_file "$PATCH_GUARD"
+    require_file "$PATCH_SCORING"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -84,6 +87,7 @@ materialize() {
     render_patch "$PATCH_CONT" "$patch4"
     render_patch "$PATCH_OUTPUT" "$patch5"
     render_patch "$PATCH_GUARD" "$patch6"
+    render_patch "$PATCH_SCORING" "$patch7"
 
     if grep -RqsF "__OPEN_CLOUD_HOME__" "$rendered"; then
         echo "ERROR: unresolved Open Cloud home placeholder" >&2
@@ -114,6 +118,10 @@ materialize() {
     echo "MATERIALIZE: checking provider-metadata guard patch"
     git -C "$out" apply --check "$patch6"
     git -C "$out" apply "$patch6"
+
+    echo "MATERIALIZE: checking career deterministic-scoring patch"
+    git -C "$out" apply --check "$patch7"
+    git -C "$out" apply "$patch7"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
@@ -153,6 +161,11 @@ materialize() {
 
     if ! grep -RqsF "HERMES_OPENCLOUD_METADATA_GUARD_V1" "$out/agent" "$out/gateway"; then
         echo "ERROR: provider-metadata guard marker missing after materialization" >&2
+        exit 1
+    fi
+
+    if ! grep -RqsF "HERMES_CRON_DETERMINISTIC_SCORING_V1" "$out/cron"; then
+        echo "ERROR: career deterministic-scoring marker missing after materialization" >&2
         exit 1
     fi
 

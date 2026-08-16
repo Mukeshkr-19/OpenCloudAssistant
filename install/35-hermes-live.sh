@@ -13,6 +13,7 @@ PATCH3="$ROOT/integrations/hermes/hermes-cron-tool-safety.patch"
 PATCH4="$ROOT/integrations/hermes/hermes-cron-required-continuation.patch"
 PATCH5="$ROOT/integrations/hermes/hermes-cron-output-contract.patch"
 PATCH6="$ROOT/integrations/hermes/hermes-provider-metadata-guard.patch"
+PATCH7="$ROOT/integrations/hermes/hermes-career-deterministic-scoring.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
@@ -59,6 +60,11 @@ require_source() {
         echo "ERROR: Hermes provider-metadata guard patch missing" >&2
         exit 1
     }
+
+    test -f "$PATCH7" || {
+        echo "ERROR: Hermes career deterministic-scoring patch missing" >&2
+        exit 1
+    }
 }
 
 compile_file() {
@@ -92,6 +98,10 @@ validate_tree() {
     }
     grep -qF "HERMES_CRON_REQUIRED_TOOLS_CACHE_KEY_V1" "$tree/model_tools.py" || {
         echo "ERROR: cron tool-safety cache-key marker missing" >&2
+        return 1
+    }
+    grep -qF "HERMES_CRON_DETERMINISTIC_SCORING_V1" "$tree/cron/output_contract.py" || {
+        echo "ERROR: career deterministic-scoring marker missing in output_contract.py" >&2
         return 1
     }
     for cron_marker in \
@@ -145,6 +155,10 @@ materialize() {
     echo "HERMES_INSTALL: checking provider-metadata guard patch"
     git -C "$out" apply --check "$PATCH6"
     git -C "$out" apply "$PATCH6"
+
+    echo "HERMES_INSTALL: checking career deterministic-scoring patch"
+    git -C "$out" apply --check "$PATCH7"
+    git -C "$out" apply "$PATCH7"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
