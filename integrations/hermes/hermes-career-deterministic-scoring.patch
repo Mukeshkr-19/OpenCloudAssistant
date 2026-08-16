@@ -1,0 +1,350 @@
+diff --git a/cron/output_contract.py b/cron/output_contract.py
+index 384f4d7d0..5676e17d7 100644
+--- a/cron/output_contract.py
++++ b/cron/output_contract.py
+@@ -278,6 +278,202 @@ _ASSUMED_RE = re.compile(r"\bassumed\b", re.IGNORECASE)
+ _SILENT_RE = re.compile(r"\[silent\]", re.IGNORECASE)
+ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
++# ─────────────────────────────────────────────────────────────────────────
++# Deterministic scoring + factual provenance
++# ─────────────────────────────────────────────────────────────────────────
++
++_STOPWORDS = frozenset({
++    "a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "for",
++    "with", "is", "are", "be", "as", "by", "this", "that", "it", "you",
++    "your", "we", "our", "role", "job", "engineer", "intern", "senior",
++    "junior", "position", "candidate", "applicant",
++})
++
++_ROLE_FAMILY_KEYWORDS = (
++    "devops", "site reliability", "sre", "cloud engineer", "cloud engineering",
++    "platform engineer", "platform engineering", "infrastructure",
++    "production engineer", "systems engineer", "build engineer",
++    "release engineer", "ci/cd", "ci cd", "cicd", "observability",
++    "reliability engineer", "developer productivity",
++    "infrastructure engineer", "infrastructure automation",
++)
++
++_SKILL_VOCABULARY = (
++    "aws", "amazon web services", "azure", "gcp", "google cloud",
++    "kubernetes", "k8s", "terraform", "docker", "container", "python",
++    "golang", "linux", "bash", "shell", "jenkins", "github actions",
++    "gitlab", "ci/cd", "ci cd", "ansible", "prometheus", "grafana",
++    "datadog", "monitoring", "observability", "networking", "tcp/ip",
++    "dns", "load balancer", "nginx", "database", "postgres", "mysql",
++    "redis", "security", "iac",
++)
++
++_LEVEL_KEYWORDS = (
++    "intern", "internship", "co-op", "coop", "new grad", "new graduate",
++    "entry level", "entry-level", "junior", "student", "graduate",
++)
++
++_PAGE_ERROR_INDICATORS = (
++    "404", "page not found", "not found", "error 404",
++    "website not supported", "failed to scrape", "access denied", "forbidden",
++)
++
++_RAW_REMOTE = frozenset({"remote", "remote — verify", "remote - verify"})
++
++
++def _significant_tokens(text):
++    """Lowercased alphanumeric tokens with stopwords removed."""
++    if not isinstance(text, str):
++        return []
++    return [
++        t for t in re.findall(r"[a-z0-9]+", text.lower())
++        if t not in _STOPWORDS and len(t) > 1
++    ]
++
++
++def _token_in_text(token, text):
++    """Word-boundary match for single tokens; substring for phrases."""
++    token = str(token or "").strip().lower()
++    if not token:
++        return False
++    text = _normalize_text(text)
++    if any(ch in token for ch in (" ", "/", "-", ".")):
++        return token in text
++    return re.search(rf"\b{re.escape(token)}\b", text) is not None
++
++
++def _mentions(tokens, text, threshold=0.6):
++    """True when at least ``threshold`` of ``tokens`` appear in ``text``."""
++    tokens = [t for t in tokens if t]
++    if not tokens:
++        return False
++    hits = sum(1 for t in tokens if _token_in_text(t, text))
++    return hits / len(tokens) >= threshold
++
++
++def _has_page_error(content):
++    norm = _normalize_text(content)
++    return any(ind in norm for ind in _PAGE_ERROR_INDICATORS)
++
++
++def _role_family_match(text):
++    norm = _normalize_text(text)
++    return any(kw in norm for kw in _ROLE_FAMILY_KEYWORDS)
++
++
++def _contains_assumed_outside_user_fit(cand):
++    """True when the model wrote "assumed" anywhere except ``user_fit``.
++
++    ``user_fit`` "assumed" is soft-downgraded by ``_sanitize_user_fit``; in any
++    other field it is a hard error even if a later provenance downgrade would
++    otherwise remove the text.
++    """
++    if not isinstance(cand, dict):
++        return False
++    probe = dict(cand)
++    elig = probe.get("eligibility")
++    if isinstance(elig, dict):
++        probe["eligibility"] = {k: v for k, v in elig.items() if k != "user_fit"}
++    return _ASSUMED_RE.search(json.dumps(probe, ensure_ascii=False)) is not None
++
++
++def _deterministic_score(c, page_text, vellum_text):
++    """Compute the final candidate score from verified evidence only.
++
++    # HERMES_CRON_DETERMINISTIC_SCORING_V1
++    The model's ``score`` is never trusted; the code owns the number.  Six
++    components, summing to 100:
++
++        role alignment         30
++        skills                 25
++        experience level       15
++        project relevance      10
++        location               10
++        eligibility / auth     10
++
++    Every component is derived from the sanitized candidate fields, the
++    extracted exact job page, and this run's confirmed Vellum facts.
++    """
++    title = c.get("title", "")
++    ctype = c.get("type", "")
++    location = c.get("location", "")
++    elig = c.get("eligibility") or {}
++    user_fit = elig.get("user_fit", "")
++    requirement = elig.get("requirement", "")
++    sponsorship = elig.get("sponsorship", "")
++
++    page = _normalize_text(page_text)
++    vellum = _normalize_text(vellum_text)
++
++    # 1. Role alignment (30): title and page both reference a target family.
++    title_role = _role_family_match(title)
++    page_role = _role_family_match(page_text)
++    if title_role and page_role:
++        role = 30
++    elif title_role or page_role:
++        role = 15
++    else:
++        role = 0
++
++    # 2. Skills (25): confirmed Vellum skills present on the job page.
++    vellum_skills = [s for s in _SKILL_VOCABULARY if _token_in_text(s, vellum_text)]
++    matched = sum(1 for s in vellum_skills if _token_in_text(s, page_text))
++    skills = min(25, matched * 5)
++
++    # 3. Experience level (15): junior posting type corroborated by level language.
++    junior_types = {"Internship", "Co-op", "New Grad", "Entry Level"}
++    level_in_page = any(_token_in_text(w, page_text) for w in _LEVEL_KEYWORDS)
++    level_in_vellum = any(_token_in_text(w, vellum_text) for w in _LEVEL_KEYWORDS)
++    if ctype in junior_types and level_in_page:
++        exp = 15
++    elif ctype in junior_types or (level_in_page and level_in_vellum):
++        exp = 10
++    elif level_in_page:
++        exp = 5
++    else:
++        exp = 0
++
++    # 4. Project relevance (10): confirmed Vellum fact tokens (beyond the
++    #    skill vocabulary) appearing on the job page.
++    vellum_tokens = [
++        t for t in _significant_tokens(vellum_text) if t not in _SKILL_VOCABULARY
++    ]
++    project = 10 if any(_token_in_text(t, page_text) for t in vellum_tokens) else 0
++
++    # 5. Location (10): supported remote or a location corroborated by Vellum.
++    loc_norm = _normalize_text(location)
++    loc_tokens = _significant_tokens(location)
++    if loc_norm in _RAW_REMOTE:
++        loc_score = 10 if _token_in_text("remote", vellum_text) else 5
++    elif loc_tokens and any(_token_in_text(t, vellum_text) for t in loc_tokens):
++        loc_score = 10
++    elif "not stated" in loc_norm:
++        loc_score = 0
++    else:
++        loc_score = 5
++
++    # 6. Eligibility / work authorization (10): a confirmed user fit is worth
++    #    5; a page-traceable requirement +3; page-stated sponsorship +2.  A
++    #    "Not confirmed" user fit is a hard 0 (never a perfect component).
++    user_fit_confirmed = bool(
++        user_fit
++        and _normalize_text(user_fit) != _normalize_text(_SENTINEL_USER_FIT)
++    )
++    if not user_fit_confirmed:
++        elig_score = 0
++    else:
++        elig_score = 5
++        if requirement and _normalize_text(requirement) not in (
++            "", "not stated", "not stated — verify",
++        ) and _mentions(_significant_tokens(requirement), page_text, threshold=0.5):
++            elig_score += 3
++        if sponsorship and _normalize_text(sponsorship) not in (
++            "", "not stated", "not stated — verify",
++        ) and _mentions(_significant_tokens(sponsorship), page_text, threshold=0.5):
++            elig_score += 2
++
++    return max(0, min(100, role + skills + exp + project + loc_score + elig_score))
++
+
+ def _normalize_text(text):
+     return re.sub(r"\s+", " ", str(text or "")).strip().lower()
+@@ -407,18 +603,29 @@ def _sanitize_best_match(raw_bm, out, errors):
+     if not isinstance(why, str) or not why.strip():
+         errors.append("best_match.why: missing")
+         why = ""
+-    if idx is not None and score is not None and 0 <= idx < len(out["candidates"]):
++    # The best-match score is owned by the deterministic scorer: it must equal
++    # the referenced candidate's computed score (the model's value is ignored).
++    if idx is not None and 0 <= idx < len(out["candidates"]):
+         cand_score = out["candidates"][idx].get("score")
+-        if isinstance(cand_score, int) and score != cand_score:
+-            errors.append(
+-                f"best_match.score: {score} does not match candidates[{idx}].score {cand_score}"
+-            )
++        if isinstance(cand_score, int):
++            score = cand_score
+     out["best_match"] = {"candidate_index": idx, "score": score, "why": why}
+
+
+ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+     c = {}
+
++    # Hard content bans on the RAW model output (before any downgrade):
++    # "assumed" personal facts and [SILENT] are never acceptable.  "assumed"
++    # in user_fit is soft-downgraded by _sanitize_user_fit instead.
++    if _contains_assumed_outside_user_fit(cand):
++        errors.append(f"candidates[{i}]: contains 'assumed' personal fact")
++    if _SILENT_RE.search(json.dumps(cand, ensure_ascii=False)):
++        errors.append(f"candidates[{i}]: contains [SILENT]")
++
++    # The model's score is a structural hint only (still must be a valid
++    # integer — a "SCORE" placeholder is malformed). The final score is
++    # recomputed deterministically from evidence below and overwrites it.
+     score = cand.get("score")
+     if isinstance(score, bool) or not isinstance(score, int) or not (0 <= score <= 100):
+         errors.append(f"candidates[{i}].score: missing or not an integer 0..100")
+@@ -482,15 +689,45 @@ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+     else:
+         extracted_text = extracted.get(canonical, "")
+
+-    # Verified-open must be conservative: employer/ATS host only, and the
+-    # extracted page must not carry closed/expired/filled language.
+-    if c["status"] == _STATUS_VERIFIED_OPEN:
+-        if not _is_official_ats(apply_url):
+-            c["status"] = _STATUS_UNVERIFIED  # deterministic downgrade
+-        elif _has_closed_indicator(extracted_text):
+-            errors.append(
+-                f"candidates[{i}].status: extracted page indicates closed/expired/filled"
+-            )
++    # A 404/error/closed page is never a valid job page — reject regardless
++    # of what the model claimed.
++    if _has_page_error(extracted_text):
++        errors.append(f"candidates[{i}].apply_url: extracted page is not a valid job page")
++    if _has_closed_indicator(extracted_text):
++        errors.append(
++            f"candidates[{i}].status: extracted page indicates closed/expired/filled"
++        )
++
++    # Verified-open must be conservative: employer/ATS host only.
++    if c["status"] == _STATUS_VERIFIED_OPEN and not _is_official_ats(apply_url):
++        c["status"] = _STATUS_UNVERIFIED  # deterministic downgrade
++
++    # Job identity / title provenance: the extracted page must describe this
++    # exact role (significant title tokens must appear). A page describing a
++    # different role, or a fabricated title, is unsupported.
++    title_tokens = _significant_tokens(title)
++    if title_tokens and extracted_text and not _mentions(title_tokens, extracted_text):
++        errors.append(f"candidates[{i}].title: not supported by extracted page")
++
++    # Company provenance: company tokens must appear in the page or the host.
++    company_tokens = _significant_tokens(company)
++    if company_tokens:
++        host = (urlsplit(apply_url).netloc or "").lower()
++        if not (
++            _mentions(company_tokens, extracted_text)
++            or _mentions(company_tokens, host)
++        ):
++            errors.append(f"candidates[{i}].company: not supported by extracted page")
++
++    # Location provenance: an unsupported location claim is downgraded, never
++    # fabricated.  Only a page- or Vellum-supported location survives.
++    if location and _normalize_text(location) not in (
++        "", "not stated", "not stated — verify",
++    ) and _normalize_text(location) not in _RAW_REMOTE:
++        loc_tokens = _significant_tokens(location)
++        if loc_tokens and not _mentions(loc_tokens, extracted_text, threshold=0.5):
++            location = "Not stated — verify"
++    c["location"] = location
+
+     # Salary provenance: downgrade when the figure isn't in the page.
+     if _normalize_text(salary) != _normalize_text(_SENTINEL_SALARY) and not _salary_supported(
+@@ -499,12 +736,21 @@ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+         salary = _SENTINEL_SALARY
+     c["salary"] = salary
+
+-    jd = cand.get("jd")
+-    if not isinstance(jd, list) or len(
+-        [b for b in jd if isinstance(b, str) and b.strip()]
++    # JD provenance: drop bullets the extracted page cannot support; fewer
++    # than 3 surviving bullets is a hard error (never fabricate evidence).
++    jd_raw = cand.get("jd")
++    jd_list = [str(b) for b in (jd_raw if isinstance(jd_raw, list) else [])]
++    if not isinstance(jd_raw, list) or len(
++        [b for b in jd_list if isinstance(b, str) and b.strip()]
+     ) < 3:
+         errors.append(f"candidates[{i}].jd: requires 3 evidence-backed bullets")
+-    c["jd"] = [str(b) for b in (jd if isinstance(jd, list) else [])]
++    supported_jd = [
++        b for b in jd_list
++        if b.strip() and _mentions(_significant_tokens(b), extracted_text)
++    ]
++    if len(supported_jd) < 3:
++        errors.append(f"candidates[{i}].jd: requires 3 evidence-backed bullets")
++    c["jd"] = supported_jd
+
+     why_match = cand.get("why_match")
+     if not isinstance(why_match, list) or len(
+@@ -534,18 +780,19 @@
+     user_fit = user_fit if isinstance(user_fit, str) else ""
+     sponsorship = sponsorship if isinstance(sponsorship, str) else ""
+     user_fit = _sanitize_user_fit(user_fit, vellum_text)
++    # Requirement provenance: an unsupported requirement is downgraded.
++    if requirement and _normalize_text(requirement) not in (
++        "", "not stated", "not stated — verify",
++    ) and not _mentions(_significant_tokens(requirement), extracted_text, threshold=0.5):
++        requirement = "Not stated — verify"
+     c["eligibility"] = {
+         "requirement": requirement,
+         "user_fit": user_fit,
+         "sponsorship": sponsorship,
+     }
+
+-    # Hard content bans on the *sanitized* candidate (user_fit already
+-    # downgraded): any residual "assumed" or a silent marker is a hard error.
+-    raw = json.dumps(c, ensure_ascii=False)
+-    if _ASSUMED_RE.search(raw):
+-        errors.append(f"candidates[{i}]: contains 'assumed' personal fact")
+-    if _SILENT_RE.search(raw):
+-        errors.append(f"candidates[{i}]: contains [SILENT]")
++    # Deterministic score: the code owns the final number; the model's score
++    # hint is overwritten with the evidence-derived value.
++    c["score"] = _deterministic_score(c, extracted_text, vellum_text)
+
+     return c

@@ -265,13 +265,15 @@ def main() -> None:
         r = _validate(oc, _report([bad]), messages)
         assert not r.valid and any("company" in e for e in r.errors), r.errors
 
-        # best_match score mismatch.
+        # best_match score is deterministically overridden to the candidate's
+        # computed score (the model's score is never trusted).
         r = _validate(
             oc,
             _report([_candidate()], best_match={"candidate_index": 0, "score": 50, "why": "x"}),
             messages,
         )
-        assert not r.valid and any("best_match" in e for e in r.errors), r.errors
+        assert r.valid, r.errors
+        assert r.structure["best_match"]["score"] == r.structure["candidates"][0]["score"]
 
         # best_match missing when verified_matches > 0 => reject.
         r = _validate(oc, _report([_candidate()], best_match=None), messages)
@@ -299,7 +301,11 @@ def main() -> None:
             "results": [{
                 "url": AGGREGATOR_URL,
                 "title": "DevOps Engineer",
-                "content": "Aggregated listing. Salary estimate $36k - $45k.",
+                "content": (
+                    "DevOps Engineer Intern at Sigmoid. Aggregated listing. "
+                    "Requirements: AWS, Kubernetes, CI/CD. "
+                    "Salary estimate $36k - $45k."
+                ),
                 "error": None,
             }]
         })
@@ -411,12 +417,15 @@ def main() -> None:
             _report([_candidate()], best_match={"candidate_index": 0, "score": 82, "why": "x"}),
             messages,
         )
+        det_score = good2.structure["candidates"][0]["score"]
+        assert isinstance(det_score, int) and 0 <= det_score <= 100
+        assert det_score != 82  # the model's score is never trusted
         expected = (
             "CAREER JOB MATCH REPORT — 2026-08-16\n\n"
             "VERIFIED MATCHES: 1\n\n"
-            "1. 82/100 — DevOps Engineer Intern\n"
+            f"1. {det_score}/100 — DevOps Engineer Intern\n"
             "Company: Sigmoid\n"
-            "Location: Bengaluru, India\n"
+            "Location: Not stated — verify\n"
             "Type: Internship\n"
             "Posted: 2026-08-15\n"
             "Salary: Not stated — verify\n"
@@ -426,14 +435,128 @@ def main() -> None:
             "WHY YOU MATCH:\n- AWS certified\n- Kubernetes experience\n\n"
             "GAPS:\n- No major gap identified\n\n"
             "ELIGIBILITY:\n"
-            "- Requirement: CS degree in progress\n"
+            "- Requirement: Not stated — verify\n"
             "- User fit: confirmed: AWS certified, Kubernetes experience\n"
             "- Sponsorship / work authorization: Not stated — verify\n\n"
             "BEST MATCH TODAY:\n"
-            "Sigmoid — DevOps Engineer Intern — 82/100\n\n"
+            f"Sigmoid — DevOps Engineer Intern — {det_score}/100\n\n"
             "WHY:\nx\n"
         )
         assert oc.render_contract(CONTRACT, good2.structure) == expected
+
+        # ── 7b. Deterministic scoring + factual provenance ────────────────
+        # Mismatched title: the extracted page describes a different role.
+        r = _validate(oc, _report([_candidate(title="Frontend Engineer")]), messages)
+        assert not r.valid
+        assert any("title: not supported" in e for e in r.errors), r.errors
+
+        # Wrong location: the claimed location is not on the page => downgrade.
+        r = _validate(
+            oc,
+            _report([_candidate(location="New York, NY")], best_match=_bm()),
+            messages,
+        )
+        assert r.valid, r.errors
+        assert r.structure["candidates"][0]["location"] == "Not stated — verify"
+
+        # 404 page => reject (not a valid job page).
+        err_messages = _extract_messages()
+        err_json = json.dumps({
+            "results": [{
+                "url": ATS_URL + "/",
+                "title": "Not found",
+                "content": "404 page not found",
+                "error": None,
+            }]
+        })
+        err_messages[1] = {
+            "role": "tool", "name": "web_extract", "tool_name": "web_extract",
+            "tool_call_id": "1",
+            "content": (
+                '<untrusted_tool_result source="web_extract">\n'
+                "The following content was retrieved from an external source.\n\n"
+                f"{err_json}\n</untrusted_tool_result>"
+            ),
+        }
+        r = _validate(oc, _report([_candidate()]), err_messages)
+        assert not r.valid
+        assert any("not a valid job page" in e for e in r.errors), r.errors
+
+        # Unsupported JD bullet => dropped; fewer than 3 survive => reject.
+        r = _validate(
+            oc,
+            _report(
+                [_candidate(jd=["AWS", "Kubernetes", "invented bullet"])], best_match=_bm()
+            ),
+            messages,
+        )
+        assert not r.valid
+        assert any("jd: requires 3" in e for e in r.errors), r.errors
+        assert "invented bullet" not in json.dumps(r.structure["candidates"][0])
+
+        # Unsupported eligibility requirement => downgraded, never fabricated.
+        r = _validate(
+            oc,
+            _report(
+                [_candidate(eligibility={
+                    "requirement": "PhD in quantum computing",
+                    "user_fit": "confirmed: AWS certified, Kubernetes experience",
+                    "sponsorship": "Not stated — verify",
+                })],
+                best_match=_bm(),
+            ),
+            messages,
+        )
+        assert r.valid, r.errors
+        assert r.structure["candidates"][0]["eligibility"]["requirement"] == "Not stated — verify"
+
+        # Model says 100, but the evidence-derived score is lower: code owns it.
+        r = _validate(
+            oc,
+            _report(
+                [_candidate(score=100)],
+                best_match={"candidate_index": 0, "score": 100, "why": "x"},
+            ),
+            messages,
+        )
+        assert r.valid, r.errors
+        det = r.structure["candidates"][0]["score"]
+        assert det != 100, det
+        assert r.structure["best_match"]["score"] == det
+
+        # "Not confirmed" user fit can never receive a perfect eligibility
+        # component (and therefore never a perfect total).
+        conf = oc._deterministic_score(
+            {"title": "DevOps Engineer Intern", "type": "Internship",
+             "location": "Not stated — verify",
+             "eligibility": {"user_fit": "confirmed: AWS certified, Kubernetes experience",
+                              "requirement": "Not stated — verify",
+                              "sponsorship": "Not stated — verify"}},
+            "Sigmoid DevOps Engineer Intern. Requirements: AWS, Kubernetes, CI/CD.",
+            "confirmed: AWS certified, Kubernetes experience",
+        )
+        unconf = oc._deterministic_score(
+            {"title": "DevOps Engineer Intern", "type": "Internship",
+             "location": "Not stated — verify",
+             "eligibility": {"user_fit": "User eligibility against this requirement: Not confirmed",
+                              "requirement": "Not stated — verify",
+                              "sponsorship": "Not stated — verify"}},
+            "Sigmoid DevOps Engineer Intern. Requirements: AWS, Kubernetes, CI/CD.",
+            "confirmed: AWS certified, Kubernetes experience",
+        )
+        assert conf > unconf
+
+        # Weak role alignment cannot reach a top score.
+        weak = oc._deterministic_score(
+            {"title": "Accountant", "type": "Other",
+             "location": "Not stated — verify",
+             "eligibility": {"user_fit": "confirmed: AWS certified",
+                              "requirement": "Not stated — verify",
+                              "sponsorship": "Not stated — verify"}},
+            "Sigmoid DevOps Engineer Intern. Requirements: AWS, Kubernetes, CI/CD.",
+            "confirmed: AWS certified",
+        )
+        assert weak < 60, weak
 
         # ── 8. Run-local trusted date ───────────────────────────────────────
         TRUSTED_DATE = "2026-08-16"
@@ -590,6 +713,15 @@ def main() -> None:
     print("PASS unknown output_schema fails closed to zero-match")
     print("PASS required-operation gate runs before output-contract repair")
     print("PASS output_schema gate is opt-in (job-specific)")
+    print("PASS mismatched title / different-role page rejects")
+    print("PASS unsupported location downgrades to Not stated — verify")
+    print("PASS 404/invalid extracted page rejects")
+    print("PASS unsupported JD bullets are dropped")
+    print("PASS unsupported eligibility requirement downgrades")
+    print("PASS deterministic score overrides the model's score")
+    print("PASS best_match score is the deterministic candidate score")
+    print("PASS 'Not confirmed' user fit cannot receive a perfect score")
+    print("PASS weak role alignment cannot reach a top score")
     print("CRON_OUTPUT_CONTRACT_RELIABILITY: PASS")
 
 
