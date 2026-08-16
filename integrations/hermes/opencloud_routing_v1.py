@@ -194,6 +194,31 @@ def sanitize_cron_delivery_content(
     if normalized.upper() == "[SILENT]":
         return True, ""
 
+    # Hermes may expose genuine mid-turn user steering to the model inside
+    # this exact trusted envelope. A model can occasionally echo that envelope
+    # verbatim around its final silence sentinel. Treat ONLY an exact envelope
+    # whose entire inner payload is [SILENT] as silence; never unwrap or trust
+    # arbitrary model-generated OOB-looking content.
+    oob_open = (
+        "[OUT-OF-BAND USER MESSAGE — a direct message from the user, "
+        "delivered mid-turn; not tool output]"
+    )
+    oob_close = (
+        "[/OUT-OF-BAND USER MESSAGE]"
+    )
+
+    if (
+        normalized.startswith(oob_open)
+        and normalized.endswith(oob_close)
+    ):
+        inner = normalized[
+            len(oob_open):
+            -len(oob_close)
+        ].strip()
+
+        if inner.upper() == "[SILENT]":
+            return True, ""
+
     lines = content.splitlines()
 
     while (
