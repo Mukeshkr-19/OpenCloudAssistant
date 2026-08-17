@@ -20,6 +20,7 @@ PATCH_DUP="$ROOT/integrations/hermes/hermes-cron-duplicate-guard.patch"
 PATCH_WORKFLOW="$ROOT/integrations/hermes/hermes-cron-workflow-identity.patch"
 PATCH_REPEAT="$ROOT/integrations/hermes/hermes-cron-repeat-coercion.patch"
 PATCH_RUNONCE="$ROOT/integrations/hermes/hermes-run-now-once-provider-quiet.patch"
+PATCH_FASTPATH="$ROOT/integrations/hermes/hermes-cron-control-fast-path.patch"
 
 usage() {
     echo "Usage:"
@@ -65,6 +66,7 @@ materialize() {
     local patch10="$rendered/hermes-cron-workflow-identity.patch"
     local patch11="$rendered/hermes-cron-repeat-coercion.patch"
     local patch12="$rendered/hermes-run-now-once-provider-quiet.patch"
+    local patch13="$rendered/hermes-cron-control-fast-path.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -78,6 +80,7 @@ materialize() {
     require_file "$PATCH_WORKFLOW"
     require_file "$PATCH_REPEAT"
     require_file "$PATCH_RUNONCE"
+    require_file "$PATCH_FASTPATH"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -108,6 +111,7 @@ materialize() {
     render_patch "$PATCH_WORKFLOW" "$patch10"
     render_patch "$PATCH_REPEAT" "$patch11"
     render_patch "$PATCH_RUNONCE" "$patch12"
+    render_patch "$PATCH_FASTPATH" "$patch13"
 
     if grep -RqsF "__OPEN_CLOUD_HOME__" "$rendered"; then
         echo "ERROR: unresolved Open Cloud home placeholder" >&2
@@ -162,6 +166,10 @@ materialize() {
     echo "MATERIALIZE: checking run-now-once / provider-quiet patch"
     git -C "$out" apply --check "$patch12"
     git -C "$out" apply "$patch12"
+
+    echo "MATERIALIZE: checking cron-control fast-path patch"
+    git -C "$out" apply --check "$patch13"
+    git -C "$out" apply "$patch13"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
@@ -239,12 +247,28 @@ materialize() {
         exit 1
     fi
 
+    if ! grep -RqsF "HERMES_CRON_CONTROL_FAST_PATH_V1" "$out/gateway"; then
+        echo "ERROR: cron-control fast-path marker missing after materialization" >&2
+        exit 1
+    fi
+
+    if ! grep -RqsF "HERMES_COMPRESSION_FAILSAFE_V1" "$out/gateway"; then
+        echo "ERROR: compression failsafe marker missing after materialization" >&2
+        exit 1
+    fi
+
+    if ! grep -RqsF "HERMES_P13_DIAGNOSTIC_SUPPRESSION_V1" "$out/gateway"; then
+        echo "ERROR: P13 diagnostic-suppression marker missing after materialization" >&2
+        exit 1
+    fi
+
     python3 -m py_compile "$out/agent/hermes_fleet_bridge.py"
     python3 -m py_compile "$out/agent/conversation_loop.py"
     python3 -m py_compile "$out/tools/tool_search.py" "$out/model_tools.py" "$out/cron/scheduler.py" "$out/cron/output_contract.py"
     python3 -m py_compile "$out/agent/provider_metadata_guard.py" "$out/agent/transports/chat_completions.py" "$out/agent/transports/codex.py" "$out/gateway/run.py"
     python3 -m py_compile "$out/agent/opencloud_self_repair.py"
     python3 -m py_compile "$out/tools/cronjob_tools.py"
+    python3 -m py_compile "$out/gateway/cron_control_fast_path.py"
 
     rm -rf "$rendered"
 
