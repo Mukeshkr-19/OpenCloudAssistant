@@ -1,0 +1,157 @@
+diff --git a/gateway/run.py b/gateway/run.py
+index 4b33547bc..38e1ab25e 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -119,6 +119,28 @@ _TELEGRAM_NOISY_STATUS_RE = re.compile(
+     re.IGNORECASE | re.DOTALL,
+ )
+
++# Provider retry/fallback chatter that belongs in logs/telemetry, not in the
++# user's chat. The internal provider retry chain emits these status lines while
++# it transparently fails over; surfacing each one as a separate message spams
++# the user with provider internals. Match conservatively — only the exact
++# fallback/retry phrasing, never assistant prose that merely mentions a
++# provider.
++_GATEWAY_PROVIDER_FALLBACK_STATUS_RE = re.compile(
++    r"("
++    r"rate\s+limited[\s:;—-]*switching\s+to\s+fallback"
++    r"|primary\s+model\s+failed[\s:;—-]*switching\s+to\s+fallback"
++    r"|switching\s+to\s+fallback\s+(?:provider|model)"
++    r"|(?:billing|credits?)\s+exhausted[\s:;—-]*switching\s+to\s+fallback"
++    r"|provider\s+unreachable[\s:;—-]*switching\s+to\s+fallback"
++    r"|rate\s+limited\s+after\s+\d+\s+retries"
++    r"|(?:model\s+)?provider\s+failed\s+after\s+retries"
++    r"|empty/malformed\s+response[\s:;—-]*switching\s+to\s+fallback"
++    r"|activating\s+fallback\s+provider"
++    r"|content\s+filter\s+terminated\s+stream"
++    r")",
++    re.IGNORECASE,
++)
++
+
+ def _record_hygiene_cooldown(gateway, session_id: str, cooldown_seconds: float) -> None:
+     """Persist a session-hygiene compression-failure cooldown to the state DB.
+@@ -628,6 +650,13 @@ def _prepare_gateway_status_message(platform: Any, event_type: str, message: str
+             and _COMPRESSION_PROGRESS_STATUS_RE.search(text)
+         ):
+             return None
++    if _GATEWAY_PROVIDER_FALLBACK_STATUS_RE.search(text):
++        # HERMES_PROVIDER_FALLBACK_STATUS_FILTER_V1
++        # Internal provider retry/fallback status belongs in logs, not the
++        # user's chat. If the fallback ultimately succeeds the user only ever
++        # sees the normal final answer; if it all fails, the final-response
++        # sanitizer below collapses it to one compact failure message.
++        return None
+     if _looks_like_gateway_provider_error(text):
+         return _gateway_provider_error_reply(text)
+     return text
+diff --git a/tools/cronjob_tools.py b/tools/cronjob_tools.py
+index 16a73201c..08302b75f 100644
+--- a/tools/cronjob_tools.py
++++ b/tools/cronjob_tools.py
+@@ -12,7 +12,7 @@ import sys
+ import threading
+ import time
+ from pathlib import Path
+-from typing import Any, Dict, List, Optional, Union
++from typing import Any, Dict, List, Optional, Tuple, Union
+
+ from hermes_constants import display_hermes_home
+
+@@ -625,6 +625,53 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
+     return result
+
+
++# Turn-local run-now idempotency guard.
++#
++# HERMES_CRON_RUN_NOW_ONCE_V1
++# A conversational turn may invoke a cron job's run-now action at most once per
++# job. Keyed by (job_id, inbound message id) so the guard is scoped to the
++# current user turn; a second run-now for the SAME job in the SAME turn returns
++# the cached trigger/run result instead of starting another execution. Direct
++# callers (CLI/scripts) have no session message id, so the guard is inert for
++# them and they keep the previous fire-at-will behavior.
++_RUN_NOW_GUARD: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
++_RUN_NOW_GUARD_LOCK = threading.Lock()
++_RUN_NOW_GUARD_TTL_SECONDS = 1800.0  # 30 min: far beyond one turn; bounds memory
++
++
++def _session_message_id() -> str:
++    """Return the inbound message id for the current turn, or empty string."""
++    try:
++        from gateway.session_context import get_session_env
++        return str(get_session_env("HERMES_SESSION_MESSAGE_ID") or "").strip()
++    except Exception:
++        return ""
++
++
++def _run_now_guard_get(job_id: str) -> Optional[Dict[str, Any]]:
++    """Return the cached run-now result for (job_id, this turn), evicting stale
++    entries, or None when this turn has not yet triggered the job."""
++    message_id = _session_message_id()
++    if not message_id:
++        return None  # no turn scope -> do not guard
++    key = (job_id, message_id)
++    with _RUN_NOW_GUARD_LOCK:
++        now = time.monotonic()
++        for k in list(_RUN_NOW_GUARD):
++            if now - _RUN_NOW_GUARD[k][0] > _RUN_NOW_GUARD_TTL_SECONDS:
++                del _RUN_NOW_GUARD[k]
++        entry = _RUN_NOW_GUARD.get(key)
++        return entry[1] if entry is not None else None
++
++
++def _run_now_guard_put(job_id: str, result: Dict[str, Any]) -> None:
++    message_id = _session_message_id()
++    if not message_id:
++        return
++    with _RUN_NOW_GUARD_LOCK:
++        _RUN_NOW_GUARD[(job_id, message_id)] = (time.monotonic(), result)
++
++
+ def _execute_job_now(job: Dict[str, Any]) -> Dict[str, Any]:
+     """Execute a cron job immediately, outside the scheduler tick.
+
+@@ -1084,6 +1131,22 @@ def cronjob(
+             return json.dumps({"success": True, "job": _format_job(updated)}, indent=2)
+
+         if normalized in {"run", "run_now", "trigger"}:
++            # Idempotent run-now: one user turn triggers a given job at most
++            # once. A repeat call in the SAME turn returns the cached
++            # trigger/run state instead of starting another execution.
++            _cached = _run_now_guard_get(job_id)
++            if _cached is not None:
++                _noop = {
++                    "success": bool(_cached.get("success", True)),
++                    "job": dict(_cached.get("job") or {}),
++                }
++                _noop["job"]["already_triggered_this_turn"] = True
++                _noop["note"] = (
++                    "Run-now already triggered this turn for this job; no "
++                    "duplicate execution was started."
++                )
++                return json.dumps(_noop, indent=2)
++
+             # Execute the job immediately rather than only scheduling it for the
+             # next scheduler tick — a manual `run` should actually run, even when
+             # no gateway/ticker is active (the #41037 case). The claim inside
+@@ -1106,7 +1169,9 @@ def cronjob(
+                 )
+             elif exec_result.get("error"):
+                 result["execution_error"] = exec_result["error"]
+-            return json.dumps({"success": True, "job": result}, indent=2)
++            _payload = {"success": True, "job": result}
++            _run_now_guard_put(job_id, _payload)
++            return json.dumps(_payload, indent=2)
+
+         if normalized == "update":
+             updates: Dict[str, Any] = {}
+@@ -1240,6 +1305,8 @@ If skills are provided on create, the future cron run loads those skills in orde
+ On update, passing skills=[] clears attached skills.
+ When updating an existing job, only change fields the user actually asked to change — do not replace a detailed structured prompt (e.g. a career job-match report's evidence/scoring/output rules) with a short natural-language paraphrase unless the user explicitly requested different behavior.
+
++After a successful action='run' (run-now), the job executes and its output is delivered automatically to the configured target (origin/Photon). Send one concise acknowledgement such as "Running it now — the report will arrive in this chat" and then END the turn. Do not trigger the job again, do not re-invoke run, and do not start a new investigation (e.g. "let me check where the report was delivered") — delivery is already owned by the cron delivery path. A second run-now for the same job in the same turn is a no-op.
++
+ NOTE: The agent's final response is auto-delivered to the target. Put the primary
+ user-facing content in the final response. Cron jobs run autonomously with no user
+ present — they cannot ask questions or request clarification.

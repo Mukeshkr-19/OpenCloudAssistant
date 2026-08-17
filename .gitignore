@@ -51,6 +51,9 @@ node_modules/
 # Local installer state
 .opencloud/
 
+# Local task ledger (not for public sync)
+.claw-workflow/
+
 # Terraform local/runtime state
 **/.terraform/*
 *.tfstate
