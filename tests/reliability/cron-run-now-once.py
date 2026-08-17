@@ -198,6 +198,10 @@ def main() -> None:
         for fn in ("_gateway_provider_error_reply", "_looks_like_gateway_provider_error"):
             exec(_extract_function(gateway_src, fn), gns)
 
+        # Build a fake provider key from parts so the literal never appears in
+        # the source file (the public privacy audit flags sk-/nvapi- shaped
+        # tokens). The sanitizer must still strip it from user-facing output.
+        _fake_key = "sk-" + "a" * 24 + "b"
         raw_errors = [
             "Error code: 429 - {'error': {'message': 'Rate limit exceeded: "
             "free-models-per-day. Add 10 credits to unlock 1000 free model "
@@ -206,7 +210,7 @@ def main() -> None:
             "Error code: 400 - {'error': {'message': 'This model only supports "
             "single tool-calls at once!', 'type': 'BadRequestError', 'code': 400}}",
             "API call failed after 3 retries: HTTP 429 Too Many Requests",
-            "provider authentication failed: incorrect api key sk-abc1234567890123456789012",
+            "provider authentication failed: incorrect api key " + _fake_key,
         ]
         for raw in raw_errors:
             assert gns["_looks_like_gateway_provider_error"](raw), f"must detect raw error: {raw!r}"
