@@ -10,6 +10,10 @@ Materializes the fully-patched Hermes tree (baseline + P1..P5 via
   * structural validation (count mismatch, placeholders, truncation, enums);
   * provenance downgrades (Verified open -> unverified, salary -> Not stated,
     user fit -> Not confirmed) surfaced in the sanitized ``structure``;
+  * candidate rejections (apply_url not extracted, 404/error/closed page,
+    title/company unsupported, <3 evidence-backed JD bullets) drop the bad
+    candidate and keep the rest of the report valid (never a contract-wide
+    error that discards otherwise-valid jobs);
   * deterministic rendering from the sanitized structure only;
   * bounded same-turn repair after the required-operation gate.
 
@@ -289,16 +293,21 @@ def main() -> None:
         assert not r.valid and r.structure is None
 
         # ── 6. Evidence provenance ────────────────────────────────────────
-        # URL never web_extract'ed this run => rejected.
+        # URL never web_extract'ed this run => candidate rejected (dropped);
+        # the remaining report is a clean zero-match, never a contract-wide
+        # error that would discard otherwise-valid jobs.
         r = _validate(oc, _report([_candidate(apply_url=AGGREGATOR_URL)]), messages)
-        assert not r.valid
-        assert any("not web_extract'ed" in e for e in r.errors), r.errors
+        assert r.valid, r.errors
+        assert r.structure["verified_matches"] == 0
+        assert r.structure["candidates"] == []
+        assert any("not web_extract'ed" in e for e in r.structure["_rejections"]), r.structure["_rejections"]
 
         # Same candidate JSON, but with NO extraction evidence (e.g. evidence
-        # only exists in a *previous* run) => must not satisfy this run.
+        # only exists in a *previous* run) => candidate rejected, clean zero.
         r = _validate(oc, _report([_candidate()]), [])
-        assert not r.valid
-        assert any("not web_extract'ed" in e for e in r.errors), r.errors
+        assert r.valid, r.errors
+        assert r.structure["verified_matches"] == 0
+        assert any("not web_extract'ed" in e for e in r.structure["_rejections"]), r.structure["_rejections"]
 
         # Verified open on an aggregator URL that WAS extracted => downgrade.
         agg_messages = _extract_messages()
@@ -362,7 +371,9 @@ def main() -> None:
             ),
         }
         r = _validate(oc, _report([_candidate()]), closed_messages)
-        assert not r.valid and any("closed/expired/filled" in e for e in r.errors), r.errors
+        assert r.valid, r.errors  # candidate rejected (closed), clean zero-match
+        assert r.structure["verified_matches"] == 0
+        assert any("closed/expired/filled" in e for e in r.structure["_rejections"]), r.structure["_rejections"]
 
         # salary not in the extracted posting => downgrade.
         r = _validate(
@@ -452,10 +463,12 @@ def main() -> None:
         assert oc.render_contract(CONTRACT, good2.structure) == expected
 
         # ── 7b. Deterministic scoring + factual provenance ────────────────
-        # Mismatched title: the extracted page describes a different role.
+        # Mismatched title: the extracted page describes a different role =>
+        # candidate dropped, remaining report valid.
         r = _validate(oc, _report([_candidate(title="Frontend Engineer")]), messages)
-        assert not r.valid
-        assert any("title: not supported" in e for e in r.errors), r.errors
+        assert r.valid, r.errors
+        assert r.structure["verified_matches"] == 0
+        assert any("title not supported" in e for e in r.structure["_rejections"]), r.structure["_rejections"]
 
         # Wrong location: the claimed location is not on the page => downgrade.
         r = _validate(
@@ -486,10 +499,12 @@ def main() -> None:
             ),
         }
         r = _validate(oc, _report([_candidate()]), err_messages)
-        assert not r.valid
-        assert any("not a valid job page" in e for e in r.errors), r.errors
+        assert r.valid, r.errors  # candidate rejected (404), clean zero-match
+        assert r.structure["verified_matches"] == 0
+        assert any("not a valid job page" in e for e in r.structure["_rejections"]), r.structure["_rejections"]
 
-        # Unsupported JD bullet => dropped; fewer than 3 survive => reject.
+        # Unsupported JD bullet => dropped; fewer than 3 evidence-backed
+        # bullets => candidate rejected (dropped), never a contract-wide error.
         r = _validate(
             oc,
             _report(
@@ -497,9 +512,10 @@ def main() -> None:
             ),
             messages,
         )
-        assert not r.valid
-        assert any("jd: requires 3" in e for e in r.errors), r.errors
-        assert "invented bullet" not in json.dumps(r.structure["candidates"][0])
+        assert r.valid, r.errors
+        assert r.structure["verified_matches"] == 0
+        assert r.structure["candidates"] == []
+        assert any("evidence-backed JD bullets" in e for e in r.structure["_rejections"]), r.structure["_rejections"]
 
         # Unsupported eligibility requirement => downgraded, never fabricated.
         r = _validate(

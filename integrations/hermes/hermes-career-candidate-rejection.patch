@@ -1,0 +1,91 @@
+diff --git a/cron/output_contract.py b/cron/output_contract.py
+index 5225c21..36497aa 100644
+--- a/cron/output_contract.py
++++ b/cron/output_contract.py
+@@ -1132,10 +1132,12 @@ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+ 
+     canonical = canonicalize_url(apply_url)
+     if canonical and canonical not in extracted:
+-        errors.append(f"candidates[{i}].apply_url: URL was not web_extract'ed this run")
+-        extracted_text = ""
+-    else:
+-        extracted_text = extracted.get(canonical, "")
++        # HERMES_CRON_CANDIDATE_REJECTION_V1: provenance is mandatory —
++        # a candidate whose apply_url was never extracted this run is
++        # rejected (dropped), never a contract-wide error that would
++        # discard otherwise-valid jobs.
++        return None, f"candidates[{i}]: apply_url was not web_extract'ed this run"
++    extracted_text = extracted.get(canonical, "")
+ 
+     # GEOGRAPHY HARD GATE (HERMES_CRON_GEOGRAPHY_POLICY_V1)
+     # A candidate outside the allowed markets is INVALID before scoring —
+@@ -1146,14 +1148,13 @@ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+         return None, f"candidates[{i}]: {geo_reason or 'location outside allowed geography'}"
+     c["_geo_tier"] = geo_tier
+ 
+-    # A 404/error/closed page is never a valid job page — reject regardless
+-    # of what the model claimed.
++    # A 404/error/closed page is never a valid job page — reject the
++    # candidate regardless of what the model claimed (a candidate
++    # rejection, not a contract-wide error).
+     if _has_page_error(extracted_text):
+-        errors.append(f"candidates[{i}].apply_url: extracted page is not a valid job page")
++        return None, f"candidates[{i}]: extracted page is not a valid job page"
+     if _has_closed_indicator(extracted_text):
+-        errors.append(
+-            f"candidates[{i}].status: extracted page indicates closed/expired/filled"
+-        )
++        return None, f"candidates[{i}]: extracted page indicates closed/expired/filled"
+ 
+     # Verified-open must be conservative: employer/ATS host only.
+     if c["status"] == _STATUS_VERIFIED_OPEN and not _is_official_ats(apply_url):
+@@ -1164,7 +1165,7 @@ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+     # different role, or a fabricated title, is unsupported.
+     title_tokens = _significant_tokens(title)
+     if title_tokens and extracted_text and not _mentions(title_tokens, extracted_text):
+-        errors.append(f"candidates[{i}].title: not supported by extracted page")
++        return None, f"candidates[{i}]: title not supported by extracted page"
+ 
+     # Company provenance: company tokens must appear in the page or the host.
+     company_tokens = _significant_tokens(company)
+@@ -1174,7 +1175,7 @@ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+             _mentions(company_tokens, extracted_text)
+             or _mentions(company_tokens, host)
+         ):
+-            errors.append(f"candidates[{i}].company: not supported by extracted page")
++            return None, f"candidates[{i}]: company not supported by extracted page"
+ 
+     # Location provenance: an unsupported location claim is downgraded, never
+     # fabricated.  Only a page- or Vellum-supported location survives.
+@@ -1193,8 +1194,11 @@ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+         salary = _SENTINEL_SALARY
+     c["salary"] = salary
+ 
+-    # JD provenance: drop bullets the extracted page cannot support; fewer
+-    # than 3 surviving bullets is a hard error (never fabricate evidence).
++    # JD provenance: drop bullets the extracted page cannot support.  Fewer
++    # than 3 evidence-backed bullets is a candidate rejection (dropped) —
++    # never fabricated, and never a contract-wide error that would discard
++    # otherwise-valid candidates.  (A non-list / sub-3 JD is still a
++    # structural error.)
+     jd_raw = cand.get("jd")
+     jd_list = [str(b) for b in (jd_raw if isinstance(jd_raw, list) else [])]
+     if not isinstance(jd_raw, list) or len(
+@@ -1206,7 +1210,7 @@ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+         if b.strip() and _mentions(_significant_tokens(b), extracted_text)
+     ]
+     if len(supported_jd) < 3:
+-        errors.append(f"candidates[{i}].jd: requires 3 evidence-backed bullets")
++        return None, f"candidates[{i}]: fewer than 3 evidence-backed JD bullets"
+     c["jd"] = supported_jd
+ 
+     why_match = cand.get("why_match")
+@@ -1319,7 +1323,7 @@ def _sanitize(contract, structure, ledger, errors, expected_date=None, wave_stat
+     # Search coverage: distinguishes a true zero-match from a degraded search.
+     out["_search_coverage"] = _compute_search_coverage(ledger)
+     out["_search_waves"] = _search_waves_summary(ledger, wave_state)
+-    out["_geo_rejections"] = rejections
++    out["_rejections"] = rejections  # geography + job-identity candidate rejections
+ 
+     # BEST MATCH TODAY is selected by code from the final deterministic
+     # ranking; the model's best_match preference is never trusted.

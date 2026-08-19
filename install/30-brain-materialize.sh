@@ -23,6 +23,7 @@ PATCH_RUNONCE="$ROOT/integrations/hermes/hermes-run-now-once-provider-quiet.patc
 PATCH_FASTPATH="$ROOT/integrations/hermes/hermes-cron-control-fast-path.patch"
 PATCH_GEO="$ROOT/integrations/hermes/hermes-career-geography-search.patch"
 PATCH_WAVES="$ROOT/integrations/hermes/hermes-career-search-waves.patch"
+PATCH_REJECT="$ROOT/integrations/hermes/hermes-career-candidate-rejection.patch"
 
 usage() {
     echo "Usage:"
@@ -71,6 +72,7 @@ materialize() {
     local patch13="$rendered/hermes-cron-control-fast-path.patch"
     local patch14="$rendered/hermes-career-geography-search.patch"
     local patch15="$rendered/hermes-career-search-waves.patch"
+    local patch16="$rendered/hermes-career-candidate-rejection.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -87,6 +89,7 @@ materialize() {
     require_file "$PATCH_FASTPATH"
     require_file "$PATCH_GEO"
     require_file "$PATCH_WAVES"
+    require_file "$PATCH_REJECT"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -120,6 +123,7 @@ materialize() {
     render_patch "$PATCH_FASTPATH" "$patch13"
     render_patch "$PATCH_GEO" "$patch14"
     render_patch "$PATCH_WAVES" "$patch15"
+    render_patch "$PATCH_REJECT" "$patch16"
 
     if grep -RqsF "__OPEN_CLOUD_HOME__" "$rendered"; then
         echo "ERROR: unresolved Open Cloud home placeholder" >&2
@@ -186,6 +190,10 @@ materialize() {
     echo "MATERIALIZE: checking career search-waves orchestration patch"
     git -C "$out" apply --check "$patch15"
     git -C "$out" apply "$patch15"
+
+    echo "MATERIALIZE: checking career candidate-rejection patch"
+    git -C "$out" apply --check "$patch16"
+    git -C "$out" apply "$patch16"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
@@ -285,6 +293,11 @@ materialize() {
 
     if ! grep -RqsF "HERMES_CRON_SEARCH_WAVES_V1" "$out/cron" "$out/agent"; then
         echo "ERROR: career search-waves marker missing after materialization" >&2
+        exit 1
+    fi
+
+    if ! grep -RqsF "HERMES_CRON_CANDIDATE_REJECTION_V1" "$out/cron"; then
+        echo "ERROR: career candidate-rejection marker missing after materialization" >&2
         exit 1
     fi
 
