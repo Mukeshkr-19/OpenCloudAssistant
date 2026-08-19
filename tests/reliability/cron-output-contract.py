@@ -428,6 +428,7 @@ def main() -> None:
         expected = (
             "CAREER JOB MATCH REPORT — 2026-08-16\n\n"
             "SEARCH PRIORITY: United States → High-paying Europe / Singapore / Malaysia\n\n"
+            "SEARCH COVERAGE: Complete\n\n"
             "VERIFIED MATCHES: 1\n\n"
             f"1. {det_score}/100 — DevOps Engineer Intern\n"
             "Company: Sigmoid\n"
