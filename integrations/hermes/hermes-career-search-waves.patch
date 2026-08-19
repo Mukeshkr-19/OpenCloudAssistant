@@ -1,0 +1,332 @@
+diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
+index 1b35e59..52e1df3 100644
+--- a/agent/conversation_loop.py
++++ b/agent/conversation_loop.py
+@@ -7059,6 +7059,77 @@ def run_conversation(
+                         final_response = None
+                         continue
+ 
++                # HERMES_CRON_SEARCH_WAVES_V1
++                # Career-only code-owned wave orchestration.  Runs only
++                # after the output contract is satisfied; blocks
++                # finalization while fewer than TARGET valid candidates
++                # survive and Wave 2 / Wave 3 have not yet been driven.
++                # Bounded by the run-local wave state (max 2
++                # continuations); it can never loop.
++                _wave_gate = getattr(agent, "_career_wave_gate", None)
++                _wave_state = getattr(agent, "_career_wave_state", None)
++                if callable(_wave_gate):
++                    try:
++                        _required_wave = _wave_gate(final_response, messages)
++                    except Exception as _wave_gate_exc:
++                        logger.warning(
++                            "cron career wave gate failed: %s",
++                            type(_wave_gate_exc).__name__,
++                        )
++                        _required_wave = None
++                    if _required_wave in ("wave2", "wave3"):
++                        if isinstance(_wave_state, dict):
++                            _wave_state[_required_wave + "_issued"] = True
++                        if _required_wave == "wave2":
++                            _wave_note = (
++                                "[System: This scheduled career search is NOT "
++                                "complete. Wave 1 (U.S. core roles) produced "
++                                "fewer than 5 valid candidates, so WAVE 2 — "
++                                "U.S. adjacent-role expansion — is now required. "
++                                "Run additional U.S. searches for adjacent "
++                                "infrastructure/cloud roles (Systems Engineer "
++                                "Intern, Cloud Infrastructure Intern, Software "
++                                "Engineer - Infrastructure, Software Engineer - "
++                                "Platform, Developer Infrastructure, DevOps / "
++                                "Developer Experience, Build Engineer Intern, "
++                                "Release Engineer Intern, Reliability Engineer "
++                                "Intern, Observability Engineer Intern, Cloud "
++                                "Support / Cloud Operations, Infrastructure "
++                                "Automation, Technical Operations Intern), "
++                                "web_extract specific job pages, and include every "
++                                "surviving valid candidate. Do NOT return a final "
++                                "answer until Wave 2 has executed.]"
++                            )
++                        else:
++                            _wave_note = (
++                                "[System: This scheduled career search is NOT "
++                                "complete. U.S. searches produced fewer than 5 "
++                                "valid candidates, so WAVE 3 — international "
++                                "Tier-2 expansion (Europe / EU, Singapore, "
++                                "Malaysia) — is now required. Search the same "
++                                "infrastructure/cloud role families in those "
++                                "markets, prefer official employer/ATS pages and "
++                                "explicitly stated compensation, web_extract "
++                                "specific job pages, and include every surviving "
++                                "valid candidate. India and all other unapproved "
++                                "markets remain rejected. Do NOT return a final "
++                                "answer until Wave 3 has executed.]"
++                            )
++                        logger.warning(
++                            "cron finalization blocked; %s required (career search waves)",
++                            _required_wave,
++                        )
++                        final_msg["_dropped_toolcall_nudge"] = True
++                        messages.append(final_msg)
++                        messages.append({
++                            "role": "user",
++                            "content": _wave_note,
++                            "_dropped_toolcall_nudge": True,
++                        })
++                        agent._session_messages = messages
++                        final_response = None
++                        continue
++
+                 # ── Dropped tool-call recovery (copilot/Claude) ────────
+                 # Some providers (observed: claude-opus-4.8 / claude-sonnet-4.5
+                 # on GitHub Copilot, ~2026-07) return finish_reason="tool_calls"
+diff --git a/cron/output_contract.py b/cron/output_contract.py
+index d809ac0..5225c21 100644
+--- a/cron/output_contract.py
++++ b/cron/output_contract.py
+@@ -683,6 +683,47 @@ def _compute_search_coverage(ledger):
+     }
+ 
+ 
++# ─────────────────────────────────────────────────────────────────────────
++# Career search-wave orchestration (HERMES_CRON_SEARCH_WAVES_V1)
++# ─────────────────────────────────────────────────────────────────────────
++_CAREER_SEARCH_TARGET = 5
++_CAREER_WAVE2 = "wave2"
++_CAREER_WAVE3 = "wave3"
++
++
++def _count_valid_candidates(structure):
++    """Deterministic surviving-candidate count (post geography/evidence gate)."""
++    if not isinstance(structure, dict):
++        return 0
++    candidates = structure.get("candidates") or []
++    return sum(1 for c in candidates if isinstance(c, dict))
++
++
++def _required_next_wave(structure, wave_state):
++    """Return the next required wave id, or ``None`` when finalization may
++    proceed.  The model can never stop early: while fewer than TARGET valid
++    candidates survive, Wave 2 then Wave 3 are driven in order (bounded)."""
++    if _count_valid_candidates(structure) >= _CAREER_SEARCH_TARGET:
++        return None
++    ws = wave_state if isinstance(wave_state, dict) else {}
++    if not ws.get("wave2_issued"):
++        return _CAREER_WAVE2
++    if not ws.get("wave3_issued"):
++        return _CAREER_WAVE3
++    return None
++
++
++def _search_waves_summary(ledger, wave_state):
++    """Deterministic wave-execution summary for the report header."""
++    searches = ledger.get("search_queries") or []
++    ws = wave_state if isinstance(wave_state, dict) else {}
++    return {
++        "us_core": bool(any(_query_targets_us(q) for q in searches)),
++        "us_expansion": bool(ws.get("wave2_issued")),
++        "international": bool(ws.get("wave3_issued")),
++    }
++
++
+ def _detect_currency(s):
+     if "us$" in s or "usd" in s:
+         return "USD"
+@@ -1220,7 +1261,7 @@ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+     return c, None
+ 
+ 
+-def _sanitize(contract, structure, ledger, errors, expected_date=None):
++def _sanitize(contract, structure, ledger, errors, expected_date=None, wave_state=None):
+     out = {}
+ 
+     date = structure.get("date")
+@@ -1277,6 +1318,7 @@ def _sanitize(contract, structure, ledger, errors, expected_date=None):
+ 
+     # Search coverage: distinguishes a true zero-match from a degraded search.
+     out["_search_coverage"] = _compute_search_coverage(ledger)
++    out["_search_waves"] = _search_waves_summary(ledger, wave_state)
+     out["_geo_rejections"] = rejections
+ 
+     # BEST MATCH TODAY is selected by code from the final deterministic
+@@ -1295,7 +1337,7 @@ def _sanitize(contract, structure, ledger, errors, expected_date=None):
+     return out
+ 
+ 
+-def validate_contract(name, text, messages, expected_date=None):
++def validate_contract(name, text, messages, expected_date=None, wave_state=None):
+     """Validate ``text`` against contract ``name`` using run-local evidence.
+ 
+     ``expected_date`` is the trusted run-local execution date (YYYY-MM-DD).
+@@ -1317,7 +1359,7 @@ def validate_contract(name, text, messages, expected_date=None):
+ 
+     ledger = build_evidence_ledger(messages, contract)
+     errors = []
+-    sanitized = _sanitize(contract, structure, ledger, errors, expected_date=expected_date)
++    sanitized = _sanitize(contract, structure, ledger, errors, expected_date=expected_date, wave_state=wave_state)
+     return ContractResult(not errors, errors, sanitized)
+ 
+ 
+@@ -1351,12 +1393,43 @@ def _render_coverage(coverage):
+     )
+ 
+ 
+-def render_zero_match(name, date=None, coverage=None):
++def _render_coverage_line(coverage):
++    """Deterministic one-line SEARCH COVERAGE summary (report header)."""
++    if coverage is None:
++        return "SEARCH COVERAGE: Partial"
++    state = coverage.get("state", _COVERAGE_PARTIAL)
++    line = f"SEARCH COVERAGE: {state}"
++    if state == _COVERAGE_COMPLETE:
++        detail = coverage.get("detail", "")
++        if detail:
++            line += f" — {detail}"
++    return line
++
++
++def _render_search_waves(waves):
++    """Deterministic SEARCH WAVES summary (driven waves marked ✓)."""
++    waves = waves or {}
++    parts = []
++    if waves.get("us_core"):
++        parts.append("US Core ✓")
++    if waves.get("us_expansion"):
++        parts.append("US Expansion ✓")
++    if waves.get("international"):
++        parts.append("International ✓")
++    if not parts:
++        return ""
++    return "SEARCH WAVES: " + " | ".join(parts)
++
++
++def render_zero_match(name, date=None, coverage=None, waves=None):
+     """Deterministic visible zero-match report (no model prose involved)."""
+     date = date if isinstance(date, str) else ""
++    waves_line = _render_search_waves(waves)
++    wave_block = f"{waves_line}\n\n" if waves_line else ""
+     return (
+         f"CAREER JOB MATCH REPORT — {date}\n\n"
+         f"SEARCH PRIORITY: {_SEARCH_PRIORITY_LINE}\n\n"
++        f"{wave_block}"
+         "VERIFIED MATCHES: 0\n\n"
+         f"{_render_coverage(coverage)}\n\n"
+         "BEST MATCH TODAY:\n"
+@@ -1376,16 +1449,21 @@ def render_contract(name, structure):
+     coverage = structure.get("_search_coverage")
+ 
+     if vm == 0 or not candidates:
+-        return render_zero_match(name, date, coverage)
++        return render_zero_match(name, date, coverage, structure.get("_search_waves"))
+ 
++    coverage_line = _render_coverage_line(coverage)
++    waves_line = _render_search_waves(structure.get("_search_waves"))
+     lines = [
+         f"CAREER JOB MATCH REPORT — {date}",
+         "",
+         f"SEARCH PRIORITY: {_SEARCH_PRIORITY_LINE}",
+         "",
+-        f"VERIFIED MATCHES: {vm}",
+-        "",
++        coverage_line,
+     ]
++    if waves_line:
++        lines.append("")
++        lines.append(waves_line)
++    lines += ["", f"VERIFIED MATCHES: {vm}", ""]
+     for idx, c in enumerate(candidates, 1):
+         lines.append(f"{idx}. {c.get('score')}/100 — {c.get('title')}")
+         lines.append(f"Company: {c.get('company')}")
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+index 37788e7..7531635 100644
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -267,6 +267,36 @@ def _missing_cron_required_operations(required, messages) -> tuple:
+     )
+ 
+ 
++def _build_career_wave_gate(expected_date):
++    """Return a career-only wave gate closure (HERMES_CRON_SEARCH_WAVES_V1).
++
++    The closure validates the model final answer against the career output
++    contract, counts only surviving candidates, and returns the next
++    required wave ("wave2"/"wave3") while fewer than TARGET valid
++    candidates survive.  Returns ``None`` when finalization may proceed.
++    Any failure degrades to ``None`` (the scheduler fail-closed output
++    contract still applies).
++    """
++    def _gate(text, messages, wave_state):
++        try:
++            from cron.output_contract import validate_contract, _required_next_wave
++            result = validate_contract(
++                "career_job_match_v1", text, messages,
++                expected_date=expected_date,
++            )
++        except Exception:
++            return None
++        if not (
++            result is not None
++            and getattr(result, "valid", False)
++            and getattr(result, "structure", None) is not None
++        ):
++            return None
++        return _required_next_wave(result.structure, wave_state)
++
++    return _gate
++
++
+ class CronRequiredToolNotExecuted(RuntimeError):
+     """A required operation never executed during this cron run.
+ 
+@@ -300,7 +330,7 @@ def _cron_zero_match_report(date):
+     )
+ 
+ 
+-def _finalize_cron_output_contract(output_schema, final_response, messages, expected_date):
++def _finalize_cron_output_contract(output_schema, final_response, messages, expected_date, wave_state=None):
+     """Fail-closed deterministic finalization for an ``output_schema`` job.
+ 
+     Returns the deterministic rendered report on success, or the visible
+@@ -316,6 +346,7 @@ def _finalize_cron_output_contract(output_schema, final_response, messages, expe
+             final_response,
+             messages,
+             expected_date=expected_date,
++            wave_state=wave_state,
+         )
+         valid = bool(
+             result is not None
+@@ -3858,6 +3889,26 @@ def run_job(
+                     job_id, type(_contract_exc).__name__,
+                 )
+ 
++        # HERMES_CRON_SEARCH_WAVES_V1
++        # Career-only code-owned wave orchestration.  The model may search
++        # within a wave, but the code decides when Wave 2 / Wave 3 are
++        # required and blocks premature finalization while fewer than
++        # TARGET valid candidates survive.  Run-local state; bounded.
++        if _output_schema == "career_job_match_v1":
++            try:
++                _wave_state = {"wave2_issued": False, "wave3_issued": False}
++                _wave_gate = _build_career_wave_gate(_expected_date)
++                agent._career_wave_state = _wave_state
++                agent._career_wave_gate = (
++                    lambda text, messages, state=_wave_state, gate=_wave_gate:
++                        gate(text, messages, state)
++                )
++            except Exception as _wave_exc:
++                logger.debug(
++                    "Job '%s': career wave orchestration unavailable: %s",
++                    job_id, type(_wave_exc).__name__,
++                )
++
+         _cron_future = _cron_pool.submit(_cron_context.run, agent.run_conversation, prompt)
+         _inactivity_timeout = False
+         try:
+@@ -4021,6 +4072,7 @@ def run_job(
+                 final_response,
+                 result.get("messages") or [],
+                 _expected_date,
++                getattr(agent, "_career_wave_state", None),
+             )
+         # Use a separate variable for log display; keep final_response clean
+         # for delivery logic (empty response = no delivery).

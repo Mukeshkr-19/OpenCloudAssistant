@@ -21,6 +21,7 @@ PATCH11="$ROOT/integrations/hermes/hermes-cron-repeat-coercion.patch"
 PATCH12="$ROOT/integrations/hermes/hermes-run-now-once-provider-quiet.patch"
 PATCH13="$ROOT/integrations/hermes/hermes-cron-control-fast-path.patch"
 PATCH14="$ROOT/integrations/hermes/hermes-career-geography-search.patch"
+PATCH15="$ROOT/integrations/hermes/hermes-career-search-waves.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
@@ -107,6 +108,11 @@ require_source() {
         echo "ERROR: Hermes career geography + search-coverage patch missing" >&2
         exit 1
     }
+
+    test -f "$PATCH15" || {
+        echo "ERROR: Hermes career search-waves patch missing" >&2
+        exit 1
+    }
 }
 
 compile_file() {
@@ -172,6 +178,14 @@ validate_tree() {
     }
     grep -qF "HERMES_CRON_GEOGRAPHY_POLICY_V1" "$tree/cron/output_contract.py" || {
         echo "ERROR: career geography-policy marker missing in output_contract.py" >&2
+        return 1
+    }
+    grep -qF "HERMES_CRON_SEARCH_WAVES_V1" "$tree/cron/output_contract.py" || {
+        echo "ERROR: career search-waves marker missing in output_contract.py" >&2
+        return 1
+    }
+    grep -qF "HERMES_CRON_SEARCH_WAVES_V1" "$tree/agent/conversation_loop.py" || {
+        echo "ERROR: career search-waves marker missing in conversation_loop.py" >&2
         return 1
     }
     for cron_marker in \
@@ -257,6 +271,10 @@ materialize() {
     echo "HERMES_INSTALL: checking career geography + search-coverage patch"
     git -C "$out" apply --check "$PATCH14"
     git -C "$out" apply "$PATCH14"
+
+    echo "HERMES_INSTALL: checking career search-waves orchestration patch"
+    git -C "$out" apply --check "$PATCH15"
+    git -C "$out" apply "$PATCH15"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
