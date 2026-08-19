@@ -1,0 +1,240 @@
+DAILY CAREER JOB MATCH REPORT
+
+This is an evidence-backed current-job search.
+
+A visible result is required every run.
+NEVER output [SILENT].
+
+You MUST actually execute all operations required by this cron job before
+returning the final JSON.
+
+USER PROFILE
+
+Call mcp__vellum_bridge__get_user_context with:
+
+query:
+complete confirmed career profile target roles skills projects experience graduation date internship timing location preferences work authorization CPT OPT STEM OPT sponsorship eligibility
+
+max_results: 12
+
+Use only confirmed facts returned by Vellum.
+Never invent or assume a user fact.
+
+GEOGRAPHY POLICY (HARD — enforced by the runtime in code)
+
+Target geography is NOT "global" and NOT "USA only".
+
+PRIORITY TIER 1: United States (the primary market).
+PRIORITY TIER 2: high-value opportunities from Europe / EU, Singapore, Malaysia.
+
+DEFAULT EXCLUDED: India, China, Australia, Canada, the Middle East, Latin
+America, and other unrelated markets.
+
+- USA is the primary market. If strong U.S. opportunities exist, they should
+  dominate the report.
+- Never surface an India job merely because it has a decent technical score.
+- For remote roles, surface them only when the exact extracted posting
+  supports employment from one of the allowed markets.
+- Ambiguous remote geography must not be guessed — leave it out.
+- The location field must match the extracted posting. A posting tied to
+  Mumbai must never be reported as New York, and vice versa.
+
+SEARCH STRATEGY (bounded waves)
+
+Run a deterministic, bounded search. Do NOT stop after one weak query, and do
+NOT wander.
+
+WAVE 1 — UNITED STATES CORE (primary): run separate searches for
+  DevOps internship United States
+  Site Reliability Engineer intern United States
+  Cloud Engineer intern United States
+  Platform Engineer intern United States
+  Infrastructure Engineer intern United States
+  Production Engineer intern United States
+  Cloud Operations intern United States
+  CI/CD / Build / Release intern United States
+  Developer Productivity intern United States
+  Infrastructure Software Engineer intern United States
+Also search new-grad, entry-level, and co-op variants when compatible with the
+confirmed graduation timing.
+
+Prefer official ATS / employer domains:
+  site:jobs.lever.co
+  site:job-boards.greenhouse.io
+  site:boards.greenhouse.io
+  site:jobs.ashbyhq.com
+  site:myworkdayjobs.com
+  site:amazon.jobs
+plus official careers pages for relevant employers.
+
+WAVE 2 — U.S. EXPANSION (only when fewer than 3 valid U.S. candidates
+survive Wave 1): broaden to adjacent role names while preserving relevance —
+Systems Engineer Intern, Cloud Infrastructure Intern, Software Engineer -
+Infrastructure, Software Engineer - Platform, Developer Infrastructure,
+DevOps / Developer Experience, Build Engineer Intern, Release Engineer Intern,
+Reliability Engineer Intern, Observability Engineer Intern, Cloud Support /
+Cloud Operations, Infrastructure Automation, Technical Operations Intern.
+Do NOT broaden into unrelated frontend/mobile/data-science roles just to fill
+slots.
+
+WAVE 3 — INTERNATIONAL HIGH-VALUE (only when fewer than 5 strong candidates
+survive): Europe/EU, Singapore, Malaysia, using the same role families.
+Prefer large technology companies, cloud/infrastructure organizations,
+official ATS/employer pages, roles with explicitly stated compensation, and
+roles with realistic work authorization/sponsorship information.
+
+BOUNDS: stop early once 5 strong valid candidates are available. A true
+zero-match is acceptable only after all applicable waves were actually
+executed.
+
+EVIDENCE
+
+Every candidate in the final JSON MUST correspond to a specific job-posting
+URL successfully processed with web_extract during THIS run.
+
+Use the exact complete URL.
+Never truncate a URL with "...".
+
+Prefer employer career pages or official ATS pages.
+
+Use:
+"Verified open"
+
+ONLY when the exact employer/official ATS job page was successfully extracted
+and does not show closed, expired, filled, or no-longer-accepting status.
+
+Otherwise use exactly:
+"Current status not explicitly stated — verify before applying"
+
+SALARY
+
+Only provide compensation when the successfully extracted exact job posting
+explicitly states it.
+
+Never use estimated, approximate, derived, Glassdoor, aggregator, or
+third-party salary estimates.
+
+For Tier-2 markets, preserve the employer's original salary/currency (e.g.
+$35/hour, €4,500/month, SGD 6,000/month, MYR 5,000/month). Never rewrite it
+into fake USD employer compensation.
+
+Otherwise use exactly:
+"Not stated — verify"
+
+ELIGIBILITY
+
+eligibility.requirement:
+what the extracted job posting explicitly requires.
+
+eligibility.user_fit:
+use a short exact confirmed phrase from the Vellum result when possible.
+
+If it cannot be directly supported by Vellum, use exactly:
+"User eligibility against this requirement: Not confirmed"
+
+eligibility.sponsorship:
+what the extracted posting explicitly states.
+
+If not stated, use exactly:
+"Not stated — verify"
+
+Never use the word "assumed".
+
+SCORING
+
+Score each candidate from 0 through 100 using:
+
+Role alignment: 30
+Skills and technology: 25
+Experience-level fit: 15
+Project relevance: 10
+Location fit: 10
+Eligibility / authorization: 10
+
+OUTPUT
+
+Return ONE JSON object only.
+
+Do not use markdown fences.
+Do not add prose before or after the JSON.
+Do not output a formatted human-readable report.
+The runtime will validate and render the report deterministically.
+
+For one or more matches:
+
+{
+  "date": "YYYY-MM-DD",
+  "verified_matches": 1,
+  "candidates": [
+    {
+      "score": 82,
+      "title": "JOB TITLE",
+      "company": "COMPANY",
+      "location": "LOCATION",
+      "type": "Internship",
+      "posted": "DATE or Not stated",
+      "salary": "Not stated — verify",
+      "status": "Verified open",
+      "apply_url": "https://exact-specific-job-url",
+      "jd": [
+        "evidence-backed requirement or responsibility",
+        "evidence-backed requirement or responsibility",
+        "evidence-backed requirement or responsibility"
+      ],
+      "why_match": [
+        "specific evidence-backed match",
+        "specific evidence-backed match"
+      ],
+      "gaps": [
+        "actual gap or No major gap identified"
+      ],
+      "eligibility": {
+        "requirement": "posting requirement or Not stated — verify",
+        "user_fit": "confirmed Vellum phrase or User eligibility against this requirement: Not confirmed",
+        "sponsorship": "posting statement or Not stated — verify"
+      }
+    }
+  ],
+  "best_match": {
+    "candidate_index": 0,
+    "score": 82,
+    "why": "one concise evidence-backed reason"
+  }
+}
+
+Allowed type values are exactly:
+
+"Internship"
+"Co-op"
+"New Grad"
+"Entry Level"
+"Other"
+
+Allowed status values are exactly:
+
+"Verified open"
+
+or
+
+"Current status not explicitly stated — verify before applying"
+
+Maximum candidates: 5.
+
+verified_matches MUST equal the number of objects in candidates.
+
+best_match.candidate_index is zero-based and MUST reference one of the
+candidate objects.
+
+best_match.score MUST exactly equal that candidate's score.
+
+If ZERO candidates satisfy the evidence requirements, return exactly this
+JSON shape using today's actual execution date:
+
+{
+  "date": "YYYY-MM-DD",
+  "verified_matches": 0,
+  "candidates": [],
+  "best_match": null
+}
+
+A valid zero-match JSON result is preferable to unsupported job claims.

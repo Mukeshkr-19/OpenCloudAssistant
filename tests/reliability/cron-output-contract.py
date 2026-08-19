@@ -118,7 +118,7 @@ def _candidate(**overrides):
         "score": 82,
         "title": "DevOps Engineer Intern",
         "company": "Sigmoid",
-        "location": "Bengaluru, India",
+        "location": "United States",
         "type": "Internship",
         "posted": "2026-08-15",
         "salary": "Not stated — verify",
@@ -231,6 +231,8 @@ def main() -> None:
         assert "VERIFIED MATCHES: 0" in rendered_zero
         assert "BEST MATCH TODAY:" in rendered_zero
         assert "[SILENT]" not in rendered_zero
+        assert "SEARCH PRIORITY: United States → High-paying Europe / Singapore / Malaysia" in rendered_zero
+        assert "SEARCH COVERAGE: Partial" in rendered_zero
 
         # ── 5. Structural rejections ──────────────────────────────────────
         # count mismatch: claim 8, emit 4.
@@ -241,7 +243,7 @@ def main() -> None:
         )
         assert not r.valid
         assert any("verified_matches" in e for e in r.errors), r.errors
-        assert any("expected 4, got 8" in e for e in r.errors), r.errors
+        assert any("0..5" in e for e in r.errors), r.errors
 
         # literal SCORE placeholder.
         r = _validate(oc, _report([_candidate(score="SCORE")]), messages)
@@ -275,9 +277,12 @@ def main() -> None:
         assert r.valid, r.errors
         assert r.structure["best_match"]["score"] == r.structure["candidates"][0]["score"]
 
-        # best_match missing when verified_matches > 0 => reject.
+        # best_match is code-selected: a missing model best_match is filled
+        # deterministically from the top-ranked candidate, never an error.
         r = _validate(oc, _report([_candidate()], best_match=None), messages)
-        assert not r.valid and any("best_match: required" in e for e in r.errors), r.errors
+        assert r.valid, r.errors
+        assert r.structure["best_match"]["candidate_index"] == 0
+        assert r.structure["best_match"]["score"] == r.structure["candidates"][0]["score"]
 
         # malformed JSON fails closed.
         r = oc.validate_contract(CONTRACT, "not json at all", messages)
@@ -422,6 +427,7 @@ def main() -> None:
         assert det_score != 82  # the model's score is never trusted
         expected = (
             "CAREER JOB MATCH REPORT — 2026-08-16\n\n"
+            "SEARCH PRIORITY: United States → High-paying Europe / Singapore / Malaysia\n\n"
             "VERIFIED MATCHES: 1\n\n"
             f"1. {det_score}/100 — DevOps Engineer Intern\n"
             "Company: Sigmoid\n"
@@ -440,7 +446,7 @@ def main() -> None:
             "- Sponsorship / work authorization: Not stated — verify\n\n"
             "BEST MATCH TODAY:\n"
             f"Sigmoid — DevOps Engineer Intern — {det_score}/100\n\n"
-            "WHY:\nx\n"
+            "WHY:\nAWS certified\n"
         )
         assert oc.render_contract(CONTRACT, good2.structure) == expected
 

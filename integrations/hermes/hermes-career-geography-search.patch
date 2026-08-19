@@ -1,0 +1,727 @@
+diff --git a/cron/output_contract.py b/cron/output_contract.py
+index 5676e17..d809ac0 100644
+--- a/cron/output_contract.py
++++ b/cron/output_contract.py
+@@ -202,6 +202,9 @@ def build_evidence_ledger(messages, contract=None):
+     extract_calls = set()
+     search_results = set()
+     vellum_parts = []
++    search_queries = []
++    search_failures = 0
++    extract_failures = 0
+ 
+     for msg in messages or []:
+         if not isinstance(msg, dict):
+@@ -217,33 +220,45 @@ def build_evidence_ledger(messages, contract=None):
+                 if not isinstance(fn, dict):
+                     continue
+                 name = str(fn.get("name") or "").strip()
+-                if name != extract_tool:
++                if name not in (extract_tool, search_tool):
+                     continue
+                 raw_args = fn.get("arguments")
+                 try:
+                     args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+                 except (ValueError, TypeError):
+                     args = {}
+-                if isinstance(args, dict):
++                if not isinstance(args, dict):
++                    args = {}
++                if name == extract_tool:
+                     for u in args.get("urls") or []:
+                         if isinstance(u, str) and u.strip():
+                             extract_calls.add(canonicalize_url(u))
++                else:
++                    q = args.get("query")
++                    if isinstance(q, str) and q.strip():
++                        search_queries.append(q.strip())
+         elif role == "tool":
+             name = str(msg.get("name") or msg.get("tool_name") or "").strip()
+             if name == extract_tool:
+                 data = _loads(msg.get("content"))
+                 if isinstance(data, dict):
++                    if data.get("error"):
++                        extract_failures += 1
+                     for r in data.get("results") or []:
+                         if not isinstance(r, dict):
+                             continue
+                         url = r.get("url")
+                         err = r.get("error")
+                         text_content = r.get("content") or ""
+-                        if url and not err and str(text_content).strip():
++                        if url and err:
++                            extract_failures += 1
++                        elif url and not err and str(text_content).strip():
+                             extracted[canonicalize_url(str(url))] = str(text_content)
+             elif name == search_tool:
+                 data = _loads(msg.get("content"))
+                 if isinstance(data, dict):
++                    if data.get("error") or data.get("success") is False:
++                        search_failures += 1
+                     web = None
+                     if isinstance(data.get("data"), dict):
+                         web = data["data"].get("web") or []
+@@ -258,6 +273,9 @@ def build_evidence_ledger(messages, contract=None):
+         "extract_calls": extract_calls,
+         "search_results": search_results,
+         "vellum_text": "\n".join(p for p in vellum_parts if p),
++        "search_queries": search_queries,
++        "search_failures": search_failures,
++        "extract_failures": extract_failures,
+     }
+ 
+ 
+@@ -320,6 +338,108 @@ _PAGE_ERROR_INDICATORS = (
+ 
+ _RAW_REMOTE = frozenset({"remote", "remote — verify", "remote - verify"})
+ 
++# ─────────────────────────────────────────────────────────────────────────
++# Geography policy + compensation normalization
++# ─────────────────────────────────────────────────────────────────────────
++# HERMES_CRON_GEOGRAPHY_POLICY_V1
++# The user's target geography is a HARD validation gate, not a scoring hint.
++# A candidate outside the allowed markets is dropped BEFORE scoring.
++#
++#   Tier 1 (primary):  United States
++#   Tier 2 (fill-in):  Europe / EU, Singapore, Malaysia
++#   Default reject:    India, China, Australia, Canada, Middle East,
++#                      Latin America, and other unrelated markets.
++#
++# Remote roles are accepted only when the exact extracted posting supports
++# employment from one of the allowed markets; ambiguous remote geography is
++# never guessed.
++
++_GEO_US = "US"
++_GEO_EU = "EU"
++_GEO_SG = "SG"
++_GEO_MY = "MY"
++_GEO_REJECT = "REJECT"
++_GEO_UNKNOWN = "UNKNOWN"
++
++# US identification.  A bare ``us`` token is only trusted in short location
++# strings (never in long page text, where it is an ordinary word).
++_US_COUNTRY_MARKERS = (
++    "united states", "united states of america", "usa", "u.s.a", "u.s.",
++)
++
++_US_STATE_NAMES = (
++    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
++    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
++    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
++    "maine", "maryland", "massachusetts", "michigan", "minnesota",
++    "mississippi", "missouri", "montana", "nebraska", "nevada",
++    "new hampshire", "new jersey", "new mexico", "new york",
++    "north carolina", "north dakota", "ohio", "oklahoma", "oregon",
++    "pennsylvania", "rhode island", "south carolina", "south dakota",
++    "tennessee", "texas", "utah", "vermont", "virginia", "washington",
++    "west virginia", "wisconsin", "wyoming", "district of columbia",
++)
++
++_US_STATE_CODES = frozenset({
++    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id",
++    "il", "in", "ia", "ks", "ky", "la", "me", "md", "ma", "mi", "mn", "ms",
++    "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok",
++    "or", "pa", "ri", "sc", "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv",
++    "wi", "wy", "dc",
++})
++
++# Tier-2 Europe: EU member states, the UK, and other European countries.
++_EUROPE_MARKERS = (
++    "germany", "france", "netherlands", "ireland", "spain", "italy", "poland",
++    "sweden", "denmark", "finland", "norway", "belgium", "austria",
++    "switzerland", "portugal", "czech", "czechia", "romania", "hungary",
++    "estonia", "latvia", "lithuania", "luxembourg", "slovakia", "slovenia",
++    "croatia", "bulgaria", "greece", "iceland", "malta", "cyprus",
++    "united kingdom", "england", "scotland", "wales", "europe",
++)
++
++# Markets that are default-rejected unless the user widens the policy later.
++_REJECT_COUNTRY_MARKERS = (
++    "india", "china", "australia", "canada", "japan", "south korea", "korea",
++    "brazil", "mexico", "israel", "uae", "united arab emirates",
++    "saudi arabia", "qatar", "pakistan", "bangladesh", "sri lanka", "nepal",
++    "vietnam", "thailand", "indonesia", "philippines", "argentina", "chile",
++    "colombia", "turkey", "russia", "ukraine", "south africa", "nigeria",
++    "kenya", "new zealand", "hong kong", "taiwan",
++)
++
++_REJECT_CITY_MARKERS = (
++    "mumbai", "bangalore", "bengaluru", "hyderabad", "delhi", "new delhi",
++    "pune", "chennai", "kolkata", "gurgaon", "gurugram", "noida",
++    "ahmedabad", "indore", "jaipur", "lucknow", "kochi", "coimbatore",
++    "beijing", "shanghai", "shenzhen", "sydney", "melbourne", "toronto",
++    "vancouver", "montreal", "dubai",
++)
++
++# Fixed reference FX snapshot (USD per 1 unit of foreign currency), used ONLY
++# for internal relative ranking of compensation.  It is a documented,
++# deterministic snapshot — not a live feed — and is never exposed as employer
++# compensation.  When a currency or amount cannot be parsed, normalization
++# returns ``None`` and salary ranking degrades gracefully (no fabricated
++# conversions).
++_FX_REFERENCE_USD = {
++    "USD": 1.0,
++    "EUR": 1.08,
++    "GBP": 1.27,
++    "SGD": 0.74,
++    "MYR": 0.22,
++}
++
++_ANNUAL_HOURS = 2080
++
++_SEARCH_PRIORITY_LINE = "United States → High-paying Europe / Singapore / Malaysia"
++
++_COVERAGE_COMPLETE = "Complete"
++_COVERAGE_PARTIAL = "Partial"
++_COVERAGE_INCOMPLETE = "Incomplete"
++
++_TIER_RANK = {_GEO_US: 0, _GEO_EU: 1, _GEO_SG: 1, _GEO_MY: 1}
++
+ 
+ def _significant_tokens(text):
+     """Lowercased alphanumeric tokens with stopwords removed."""
+@@ -361,6 +481,277 @@ def _role_family_match(text):
+     return any(kw in norm for kw in _ROLE_FAMILY_KEYWORDS)
+ 
+ 
++# ─────────────────────────────────────────────────────────────────────────
++# Geography classification
++# ─────────────────────────────────────────────────────────────────────────
++
++
++def _has_bare_token(s, token):
++    return token in set(re.findall(r"[a-z0-9]+", _normalize_text(s)))
++
++
++def _has_us_state_code(s):
++    # Only whole two-letter tokens count as state codes, so words like
++    # "singapore" (contains "ga") or "germany" (contains "in") never match.
++    words = set(re.findall(r"\b[a-z]{2}\b", _normalize_text(s)))
++    return bool(words & _US_STATE_CODES)
++
++
++def _classify_location(text):
++    """Classify a model-provided location string into a geography code.
++
++    Returns ``(code, reason)`` where ``code`` is a ``_GEO_*`` constant.
++    Reject markers take priority over allowed markers, so a string carrying
++    both (e.g. "Mumbai, US") is still rejected.
++    """
++    s = _normalize_text(text)
++    if not s or s in ("not stated", "not stated — verify"):
++        return _GEO_UNKNOWN, ""
++    if s in _RAW_REMOTE:
++        return _GEO_UNKNOWN, ""
++    # Strip a leading "remote" qualifier: "Remote - United States" -> US.
++    stripped = re.sub(r"^remote[\s\-—:]+?", "", s)
++    if stripped and stripped != s:
++        s = stripped
++
++    # Reject markers (cities first, then countries).
++    for m in _REJECT_CITY_MARKERS:
++        if _token_in_text(m, s):
++            return _GEO_REJECT, f"location indicates {m}"
++    for m in _REJECT_COUNTRY_MARKERS:
++        if _token_in_text(m, s):
++            return _GEO_REJECT, f"location indicates {m}"
++
++    # United States.
++    if any(_token_in_text(m, s) for m in _US_COUNTRY_MARKERS):
++        return _GEO_US, ""
++    if any(_token_in_text(st, s) for st in _US_STATE_NAMES):
++        return _GEO_US, ""
++    if _has_us_state_code(s):
++        return _GEO_US, ""
++    if _has_bare_token(s, "us"):
++        return _GEO_US, ""
++
++    # Tier-2: Singapore / Malaysia.
++    if _token_in_text("singapore", s):
++        return _GEO_SG, ""
++    if _token_in_text("malaysia", s):
++        return _GEO_MY, ""
++
++    # Tier-2: Europe / EU.
++    for m in _EUROPE_MARKERS:
++        if _token_in_text(m, s):
++            return _GEO_EU, ""
++    if _has_bare_token(s, "eu"):
++        return _GEO_EU, ""
++
++    return _GEO_UNKNOWN, ""
++
++
++def _classify_page_geography(text):
++    """Classify extracted job-page text for geography evidence.
++
++    Long text, so bare ``us``/``eu`` and bare two-letter codes are NOT trusted
++    here.  Only strong, explicit signals count: reject city/country names and
++    full country/state names.  A strong reject city marker always wins.
++    """
++    s = _normalize_text(text)
++    if not s:
++        return _GEO_UNKNOWN, ""
++
++    # Strong city markers always reject (a job page naming Mumbai/Bangalore/
++    # etc. as its location is a rejected market).
++    for m in _REJECT_CITY_MARKERS:
++        if _token_in_text(m, s):
++            return _GEO_REJECT, f"page indicates {m}"
++
++    has_reject_country = any(_token_in_text(m, s) for m in _REJECT_COUNTRY_MARKERS)
++    has_allowed = (
++        any(_token_in_text(m, s) for m in _US_COUNTRY_MARKERS)
++        or any(_token_in_text(st, s) for st in _US_STATE_NAMES)
++        or _token_in_text("singapore", s)
++        or _token_in_text("malaysia", s)
++        or any(_token_in_text(m, s) for m in _EUROPE_MARKERS)
++    )
++    # A rejected country with no allowed market co-mentioned is a reject;
++    # a co-mentioned allowed market (global office list) defers to the model.
++    if has_reject_country and not has_allowed:
++        return _GEO_REJECT, "page indicates a rejected market"
++
++    if any(_token_in_text(m, s) for m in _US_COUNTRY_MARKERS):
++        return _GEO_US, ""
++    if any(_token_in_text(st, s) for st in _US_STATE_NAMES):
++        return _GEO_US, ""
++    if _token_in_text("singapore", s):
++        return _GEO_SG, ""
++    if _token_in_text("malaysia", s):
++        return _GEO_MY, ""
++    for m in _EUROPE_MARKERS:
++        if _token_in_text(m, s):
++            return _GEO_EU, ""
++    return _GEO_UNKNOWN, ""
++
++
++def _resolve_geography(location, page_text):
++    """Return ``(allowed, tier, reason)`` for a candidate's geography.
++
++    Rejected markets are dropped BEFORE scoring.  Remote/ambiguous geography
++    without extracted-page support is never guessed.
++    """
++    loc_code, loc_reason = _classify_location(location)
++    page_code, page_reason = _classify_page_geography(page_text)
++
++    if page_code == _GEO_REJECT:
++        return False, None, page_reason
++    if loc_code == _GEO_REJECT:
++        return False, None, loc_reason
++
++    if loc_code in (_GEO_US, _GEO_EU, _GEO_SG, _GEO_MY):
++        return True, loc_code, ""
++    if page_code in (_GEO_US, _GEO_EU, _GEO_SG, _GEO_MY):
++        return True, page_code, ""
++    return False, None, "ambiguous location not supported by extracted page"
++
++
++# ─────────────────────────────────────────────────────────────────────────
++# Search coverage + compensation normalization
++# ─────────────────────────────────────────────────────────────────────────
++
++
++def _query_targets_us(q):
++    q = _normalize_text(q)
++    return (
++        any(_token_in_text(m, q) for m in _US_COUNTRY_MARKERS)
++        or any(_token_in_text(st, q) for st in _US_STATE_NAMES)
++        or _has_us_state_code(q)
++    )
++
++
++def _query_targets_tier2(q):
++    q = _normalize_text(q)
++    return (
++        _token_in_text("singapore", q)
++        or _token_in_text("malaysia", q)
++        or any(_token_in_text(m, q) for m in _EUROPE_MARKERS)
++    )
++
++
++def _compute_search_coverage(ledger):
++    """Deterministically classify this run's retrieval coverage.
++
++    Distinguishes a true zero-match (searched and extracted, nothing
++    compliant survived) from a degraded/partial search (provider or tool
++    failures, or nothing extracted).
++    """
++    searches = ledger.get("search_queries") or []
++    search_failures = int(ledger.get("search_failures") or 0)
++    extract_ok = len(ledger.get("extracted") or {})
++    extract_failures = int(ledger.get("extract_failures") or 0)
++
++    if not searches and extract_ok == 0:
++        state = _COVERAGE_INCOMPLETE
++    elif search_failures > 0 or extract_failures > 0:
++        state = _COVERAGE_PARTIAL
++    elif extract_ok == 0:
++        state = _COVERAGE_PARTIAL
++    else:
++        state = _COVERAGE_COMPLETE
++
++    us = any(_query_targets_us(q) for q in searches)
++    tier2 = any(_query_targets_tier2(q) for q in searches)
++
++    detail = ""
++    if state == _COVERAGE_COMPLETE:
++        parts = []
++        if us:
++            parts.append("US search completed")
++        if tier2:
++            parts.append("Tier-2 international search completed")
++        detail = " + ".join(parts) or (
++            f"{len(searches)} searches completed" if searches else ""
++        )
++
++    return {
++        "state": state,
++        "detail": detail,
++        "searches": len(searches),
++        "search_failures": search_failures,
++        "extract_ok": extract_ok,
++        "extract_failures": extract_failures,
++        "us": us,
++        "tier2": tier2,
++    }
++
++
++def _detect_currency(s):
++    if "us$" in s or "usd" in s:
++        return "USD"
++    if "s$" in s or "sgd" in s:
++        return "SGD"
++    if "€" in s or "eur" in s:
++        return "EUR"
++    if "£" in s or "gbp" in s:
++        return "GBP"
++    if "myr" in s or "rm" in s:
++        return "MYR"
++    if "$" in s:
++        return "USD"
++    return None
++
++
++def _normalize_compensation(salary):
++    """Annualized USD for INTERNAL ranking only (never shown to the user).
++
++    Returns a float, or ``None`` when the salary cannot be parsed or the
++    currency is not in the reference snapshot.  Ranking degrades gracefully
++    on ``None`` (no fabricated conversions).
++    """
++    if not isinstance(salary, str):
++        return None
++    if _normalize_text(salary) == _normalize_text(_SENTINEL_SALARY):
++        return None
++    if _SALARY_FABRICATION_RE.search(salary):
++        return None
++    s = salary.lower().strip()
++    currency = _detect_currency(s)
++    if currency is None:
++        return None
++    nums = re.findall(r"\d[\d,\.]*", s)
++    if not nums:
++        return None
++    amount = float(nums[0].replace(",", ""))
++    if amount <= 0:
++        return None
++    period = 1  # annual by default
++    if any(w in s for w in ("hour", "/hr", "per hour")):
++        period = _ANNUAL_HOURS
++    elif any(w in s for w in ("week", "/wk", "per week")):
++        period = 52
++    elif any(w in s for w in ("month", "/mo", "per month")):
++        period = 12
++    fx = _FX_REFERENCE_USD.get(currency)
++    if fx is None:
++        return None
++    return round(amount * period * fx, 2)
++
++
++def _ranking_key(c):
++    """Sort key: lower is better.
++
++    Primary: deterministic score (desc).  Tie-breaks: geography priority
++    (US before Tier-2), eligibility certainty, role alignment, then verified
++    compensation (highest first; missing compensation ranks last).
++    """
++    comp = c.get("_norm_comp")
++    return (
++        -(int(c.get("score") or 0)),
++        _TIER_RANK.get(c.get("_geo_tier"), 2),
++        -(int(c.get("_elig_score") or 0)),
++        -(int(c.get("_role_score") or 0)),
++        -(comp) if isinstance(comp, (int, float)) else float("inf"),
++    )
++
++
+ def _contains_assumed_outside_user_fit(cand):
+     """True when the model wrote "assumed" anywhere except ``user_fit``.
+ 
+@@ -377,8 +768,8 @@ def _contains_assumed_outside_user_fit(cand):
+     return _ASSUMED_RE.search(json.dumps(probe, ensure_ascii=False)) is not None
+ 
+ 
+-def _deterministic_score(c, page_text, vellum_text):
+-    """Compute the final candidate score from verified evidence only.
++def _score_components(c, page_text, vellum_text):
++    """Compute the deterministic score components from verified evidence.
+ 
+     # HERMES_CRON_DETERMINISTIC_SCORING_V1
+     The model's ``score`` is never trusted; the code owns the number.  Six
+@@ -440,17 +831,18 @@ def _deterministic_score(c, page_text, vellum_text):
+     ]
+     project = 10 if any(_token_in_text(t, page_text) for t in vellum_tokens) else 0
+ 
+-    # 5. Location (10): supported remote or a location corroborated by Vellum.
+-    loc_norm = _normalize_text(location)
+-    loc_tokens = _significant_tokens(location)
+-    if loc_norm in _RAW_REMOTE:
+-        loc_score = 10 if _token_in_text("remote", vellum_text) else 5
+-    elif loc_tokens and any(_token_in_text(t, vellum_text) for t in loc_tokens):
++    # 5. Location (10): geography is a HARD gate upstream (rejected candidates
++    #    never reach scoring).  Surviving candidates score US=10, Tier-2=6,
++    #    and unknown/not-stated=0.
++    geo_tier = c.get("_geo_tier")
++    if geo_tier is None:
++        geo_tier = _resolve_geography(location, page_text)[1]
++    if geo_tier == _GEO_US:
+         loc_score = 10
+-    elif "not stated" in loc_norm:
+-        loc_score = 0
++    elif geo_tier in (_GEO_EU, _GEO_SG, _GEO_MY):
++        loc_score = 6
+     else:
+-        loc_score = 5
++        loc_score = 0
+ 
+     # 6. Eligibility / work authorization (10): a confirmed user fit is worth
+     #    5; a page-traceable requirement +3; page-stated sponsorship +2.  A
+@@ -472,7 +864,22 @@ def _deterministic_score(c, page_text, vellum_text):
+         ) and _mentions(_significant_tokens(sponsorship), page_text, threshold=0.5):
+             elig_score += 2
+ 
+-    return max(0, min(100, role + skills + exp + project + loc_score + elig_score))
++    total = max(0, min(100, role + skills + exp + project + loc_score + elig_score))
++    return {
++        "total": total,
++        "role": role,
++        "skills": skills,
++        "exp": exp,
++        "project": project,
++        "location": loc_score,
++        "eligibility": elig_score,
++        "geo_tier": geo_tier,
++    }
++
++
++def _deterministic_score(c, page_text, vellum_text):
++    """Return just the deterministic total (kept for callers/tests)."""
++    return _score_components(c, page_text, vellum_text)["total"]
+ 
+ 
+ def _normalize_text(text):
+@@ -689,6 +1096,15 @@ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+     else:
+         extracted_text = extracted.get(canonical, "")
+ 
++    # GEOGRAPHY HARD GATE (HERMES_CRON_GEOGRAPHY_POLICY_V1)
++    # A candidate outside the allowed markets is INVALID before scoring —
++    # dropped, not downgraded.  Extracted-page evidence overrides the model's
++    # location claim.
++    geo_allowed, geo_tier, geo_reason = _resolve_geography(location, extracted_text)
++    if not geo_allowed:
++        return None, f"candidates[{i}]: {geo_reason or 'location outside allowed geography'}"
++    c["_geo_tier"] = geo_tier
++
+     # A 404/error/closed page is never a valid job page — reject regardless
+     # of what the model claimed.
+     if _has_page_error(extracted_text):
+@@ -792,10 +1208,16 @@ def _sanitize_candidate(cand, i, extracted, vellum_text, errors):
+     }
+ 
+     # Deterministic score: the code owns the final number; the model's score
+-    # hint is overwritten with the evidence-derived value.
+-    c["score"] = _deterministic_score(c, extracted_text, vellum_text)
++    # hint is overwritten with the evidence-derived value.  Component scores
++    # are attached (internal only) for deterministic ranking and best-match.
++    comps = _score_components(c, extracted_text, vellum_text)
++    c["score"] = comps["total"]
++    c["_role_score"] = comps["role"]
++    c["_elig_score"] = comps["eligibility"]
++    c["_geo_tier"] = comps["geo_tier"]
++    c["_norm_comp"] = _normalize_compensation(c.get("salary", ""))
+ 
+-    return c
++    return c, None
+ 
+ 
+ def _sanitize(contract, structure, ledger, errors, expected_date=None):
+@@ -816,14 +1238,10 @@ def _sanitize(contract, structure, ledger, errors, expected_date=None):
+         out["date"] = date if isinstance(date, str) else ""
+ 
+     vm = structure.get("verified_matches")
+-    vm_is_int = isinstance(vm, int) and not isinstance(vm, bool)
+-    if not vm_is_int:
++    if isinstance(vm, bool) or not isinstance(vm, int):
+         errors.append(f"verified_matches: must be an integer, got {vm!r}")
+-        vm = None
+-    else:
+-        if not (0 <= vm <= 5):
+-            errors.append(f"verified_matches: must be an integer 0..5, got {vm}")
+-    out["verified_matches"] = vm
++    elif not (0 <= vm <= 5):
++        errors.append(f"verified_matches: must be an integer 0..5, got {vm}")
+ 
+     raw_candidates = structure.get("candidates")
+     if not isinstance(raw_candidates, list):
+@@ -831,30 +1249,46 @@ def _sanitize(contract, structure, ledger, errors, expected_date=None):
+         raw_candidates = []
+     if len(raw_candidates) > 5:
+         errors.append(f"candidates: at most 5 allowed, got {len(raw_candidates)}")
+-    if vm_is_int and vm != len(raw_candidates):
+-        errors.append(f"verified_matches: expected {len(raw_candidates)}, got {vm}")
+ 
+     extracted = ledger["extracted"]
+     vellum_text = ledger["vellum_text"]
+ 
+     sanitized_candidates = []
++    rejections = []
+     for i, cand in enumerate(raw_candidates):
+         if not isinstance(cand, dict):
+             errors.append(f"candidates[{i}]: must be an object")
+             continue
+-        sanitized_candidates.append(
+-            _sanitize_candidate(cand, i, extracted, vellum_text, errors)
+-        )
++        sc, rejection = _sanitize_candidate(cand, i, extracted, vellum_text, errors)
++        if sc is None:
++            if rejection:
++                rejections.append(rejection)
++            continue
++        sanitized_candidates.append(sc)
++
++    # Deterministic ranking: score first, then geography priority, eligibility
++    # certainty, role alignment, and verified compensation (highest first).
++    sanitized_candidates.sort(key=_ranking_key)
++
++    # The code owns verified_matches (= surviving candidates after the
++    # geography hard gate), not the model's claimed count.
++    out["verified_matches"] = len(sanitized_candidates)
+     out["candidates"] = sanitized_candidates
+ 
+-    if vm == 0:
+-        if sanitized_candidates:
+-            errors.append("verified_matches: 0 requires candidates to be empty")
+-        if structure.get("best_match") is not None:
+-            errors.append("best_match: must be null when verified_matches is 0")
+-        out["best_match"] = None
+-    elif vm is not None and vm > 0:
+-        _sanitize_best_match(structure.get("best_match"), out, errors)
++    # Search coverage: distinguishes a true zero-match from a degraded search.
++    out["_search_coverage"] = _compute_search_coverage(ledger)
++    out["_geo_rejections"] = rejections
++
++    # BEST MATCH TODAY is selected by code from the final deterministic
++    # ranking; the model's best_match preference is never trusted.
++    if sanitized_candidates:
++        top = sanitized_candidates[0]
++        why = (top.get("why_match") or [""])[0] if top.get("why_match") else ""
++        out["best_match"] = {
++            "candidate_index": 0,
++            "score": top.get("score"),
++            "why": why,
++        }
+     else:
+         out["best_match"] = None
+ 
+@@ -892,14 +1326,39 @@ def validate_contract(name, text, messages, expected_date=None):
+ # ─────────────────────────────────────────────────────────────────────────
+ 
+ 
+-def render_zero_match(name, date=None):
++def _render_coverage(coverage):
++    """Deterministic SEARCH COVERAGE section (complete/partial/incomplete)."""
++    if coverage is None:
++        return (
++            "SEARCH COVERAGE: Partial\n"
++            "Some search/extraction operations failed; results may be incomplete."
++        )
++    state = coverage.get("state", _COVERAGE_PARTIAL)
++    if state == _COVERAGE_COMPLETE:
++        detail = coverage.get("detail", "")
++        line = "SEARCH COVERAGE: Complete"
++        if detail:
++            line += f" — {detail}"
++        return line + "\nNo candidates survived the evidence/currentness/fit criteria."
++    if state == _COVERAGE_INCOMPLETE:
++        return (
++            "SEARCH COVERAGE: Incomplete\n"
++            "Web search provider unavailable or search not executed."
++        )
++    return (
++        "SEARCH COVERAGE: Partial\n"
++        "Some search/extraction operations failed; results may be incomplete."
++    )
++
++
++def render_zero_match(name, date=None, coverage=None):
+     """Deterministic visible zero-match report (no model prose involved)."""
+     date = date if isinstance(date, str) else ""
+     return (
+         f"CAREER JOB MATCH REPORT — {date}\n\n"
++        f"SEARCH PRIORITY: {_SEARCH_PRIORITY_LINE}\n\n"
+         "VERIFIED MATCHES: 0\n\n"
+-        "No current job openings were successfully verified against the required "
+-        "source/currentness criteria in this run.\n\n"
++        f"{_render_coverage(coverage)}\n\n"
+         "BEST MATCH TODAY:\n"
+         "None\n"
+     )
+@@ -914,10 +1373,19 @@ def render_contract(name, structure):
+     candidates = structure.get("candidates") or []
+     best_match = structure.get("best_match")
+ 
+-    if vm == 0 or not candidates:
+-        return render_zero_match(name, date)
++    coverage = structure.get("_search_coverage")
+ 
+-    lines = [f"CAREER JOB MATCH REPORT — {date}", "", f"VERIFIED MATCHES: {vm}", ""]
++    if vm == 0 or not candidates:
++        return render_zero_match(name, date, coverage)
++
++    lines = [
++        f"CAREER JOB MATCH REPORT — {date}",
++        "",
++        f"SEARCH PRIORITY: {_SEARCH_PRIORITY_LINE}",
++        "",
++        f"VERIFIED MATCHES: {vm}",
++        "",
++    ]
+     for idx, c in enumerate(candidates, 1):
+         lines.append(f"{idx}. {c.get('score')}/100 — {c.get('title')}")
+         lines.append(f"Company: {c.get('company')}")
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+index 0472251..b50c2e8 100644
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -285,14 +285,16 @@ def _cron_zero_match_report(date):
+ 
+     Lives in the scheduler — not in the contract module — so the fail-closed
+     path can still render it when the contract module itself is unavailable.
+-    Its text must match ``cron.output_contract.render_zero_match``.
++    Its text must match ``cron.output_contract.render_zero_match`` called with
++    no coverage argument (the degraded/partial state).
+     """
+     date = date if isinstance(date, str) else ""
+     return (
+         f"CAREER JOB MATCH REPORT — {date}\n\n"
++        "SEARCH PRIORITY: United States → High-paying Europe / Singapore / Malaysia\n\n"
+         "VERIFIED MATCHES: 0\n\n"
+-        "No current job openings were successfully verified against the required "
+-        "source/currentness criteria in this run.\n\n"
++        "SEARCH COVERAGE: Partial\n"
++        "Some search/extraction operations failed; results may be incomplete.\n\n"
+         "BEST MATCH TODAY:\n"
+         "None\n"
+     )

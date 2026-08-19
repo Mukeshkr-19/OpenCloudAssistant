@@ -21,6 +21,7 @@ PATCH_WORKFLOW="$ROOT/integrations/hermes/hermes-cron-workflow-identity.patch"
 PATCH_REPEAT="$ROOT/integrations/hermes/hermes-cron-repeat-coercion.patch"
 PATCH_RUNONCE="$ROOT/integrations/hermes/hermes-run-now-once-provider-quiet.patch"
 PATCH_FASTPATH="$ROOT/integrations/hermes/hermes-cron-control-fast-path.patch"
+PATCH_GEO="$ROOT/integrations/hermes/hermes-career-geography-search.patch"
 
 usage() {
     echo "Usage:"
@@ -67,6 +68,7 @@ materialize() {
     local patch11="$rendered/hermes-cron-repeat-coercion.patch"
     local patch12="$rendered/hermes-run-now-once-provider-quiet.patch"
     local patch13="$rendered/hermes-cron-control-fast-path.patch"
+    local patch14="$rendered/hermes-career-geography-search.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -81,6 +83,7 @@ materialize() {
     require_file "$PATCH_REPEAT"
     require_file "$PATCH_RUNONCE"
     require_file "$PATCH_FASTPATH"
+    require_file "$PATCH_GEO"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -112,6 +115,7 @@ materialize() {
     render_patch "$PATCH_REPEAT" "$patch11"
     render_patch "$PATCH_RUNONCE" "$patch12"
     render_patch "$PATCH_FASTPATH" "$patch13"
+    render_patch "$PATCH_GEO" "$patch14"
 
     if grep -RqsF "__OPEN_CLOUD_HOME__" "$rendered"; then
         echo "ERROR: unresolved Open Cloud home placeholder" >&2
@@ -170,6 +174,10 @@ materialize() {
     echo "MATERIALIZE: checking cron-control fast-path patch"
     git -C "$out" apply --check "$patch13"
     git -C "$out" apply "$patch13"
+
+    echo "MATERIALIZE: checking career geography + search-coverage patch"
+    git -C "$out" apply --check "$patch14"
+    git -C "$out" apply "$patch14"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
@@ -259,6 +267,11 @@ materialize() {
 
     if ! grep -RqsF "HERMES_P13_DIAGNOSTIC_SUPPRESSION_V1" "$out/gateway"; then
         echo "ERROR: P13 diagnostic-suppression marker missing after materialization" >&2
+        exit 1
+    fi
+
+    if ! grep -RqsF "HERMES_CRON_GEOGRAPHY_POLICY_V1" "$out/cron"; then
+        echo "ERROR: career geography-policy marker missing after materialization" >&2
         exit 1
     fi
 
