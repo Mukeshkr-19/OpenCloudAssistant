@@ -29,10 +29,14 @@ def load(name: str, path: Path):
 class FakeFleet:
     def __init__(self) -> None:
         self.failures: list[tuple[str, str]] = []
+        self.successes: list[str] = []
         self.closed = False
 
     def failure(self, candidate: dict, kind: str) -> None:
         self.failures.append((candidate["candidateKey"], kind))
+
+    def success(self, candidate: dict) -> None:
+        self.successes.append(candidate["candidateKey"])
 
     def close(self) -> None:
         self.closed = True
@@ -125,6 +129,13 @@ def main() -> None:
         require(fleet.failures == [(active["candidateKey"], "account_quota")], "failure not recorded once")
         bridge.note_agent_failure(agent, "rate_limit")
         require(len(fleet.failures) == 1, "fallback enum downgraded duplicate failure evidence")
+        agent._hermes_fleet_failover_started_at = 1.0
+        bridge.note_agent_success(agent)
+        require(fleet.successes == [active["candidateKey"]], "recovered route success was not recorded")
+        require(agent._hermes_fleet_last_failure_route is None, "success did not reset failure dedupe")
+        require(agent._hermes_fleet_failover_started_at is None, "success did not reset failover deadline")
+        bridge.note_agent_failure(agent, "rate_limit")
+        require(len(fleet.failures) == 2, "later failure on a recovered route was suppressed")
 
         primary = candidate("nvidia", "nvidia", "nvidia/a", 0)
         available = [
@@ -154,6 +165,7 @@ def main() -> None:
         require("_sync_failover_system_message" in failover_segment, "fallback does not continue same API state")
         require("messages = []" not in failover_segment, "fallback discards gathered tool evidence")
         require("api_messages = []" not in failover_segment, "fallback discards API evidence")
+        require("note_agent_success(agent)" in loop_source, "successful inference does not reset failover state")
 
         summarize = isolated_function(
             tree / "cron/scheduler.py",

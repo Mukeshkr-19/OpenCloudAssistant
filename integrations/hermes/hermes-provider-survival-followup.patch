@@ -1,0 +1,51 @@
+diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
+index 44f307d..fcb53d0 100644
+--- a/agent/conversation_loop.py
++++ b/agent/conversation_loop.py
+@@ -3457,0 +3458,8 @@ def run_conversation(
++                try:
++                    from agent.hermes_fleet_bridge import note_agent_success
++                    note_agent_success(agent)
++                except Exception as _fleet_exc:
++                    logger.debug(
++                        "Fleet success reporting skipped: %s",
++                        type(_fleet_exc).__name__,
++                    )
+diff --git a/agent/hermes_fleet_bridge.py b/agent/hermes_fleet_bridge.py
+index e7c14a9..e668d6d 100644
+--- a/agent/hermes_fleet_bridge.py
++++ b/agent/hermes_fleet_bridge.py
+@@ -1298,0 +1299,26 @@ def note_api_failure(agent, api_error, classified_reason=None) -> bool:
++def note_agent_success(agent) -> None:
++    """Record recovered capacity and reset failure-episode state."""
++
++    role = str(getattr(agent, "_hermes_fleet_role", "") or "")
++    if role not in {"main", "worker", "reviewer"}:
++        return
++
++    provider = str(getattr(agent, "provider", "") or "").strip().lower()
++    model = str(getattr(agent, "model", "") or "").strip()
++    route = (provider, model)
++    recovered = getattr(agent, "_hermes_fleet_last_failure_route", None) == route
++
++    if recovered or getattr(agent, "_hermes_fleet_last_success_route", None) != route:
++        fleet = _fleet()
++        try:
++            candidate = _find(fleet, role, provider=provider, model=model)
++            if candidate:
++                fleet.success(candidate)
++                agent._hermes_fleet_last_success_route = route
++        finally:
++            fleet.close()
++
++    agent._hermes_fleet_last_failure_route = None
++    agent._hermes_fleet_failover_started_at = None
++
++
+diff --git a/tools/web_tools.py b/tools/web_tools.py
+index a76b533..8f488cf 100644
+--- a/tools/web_tools.py
++++ b/tools/web_tools.py
+@@ -840,0 +841,2 @@ async def web_extract_tool(
++    from cron.search_reliability import current_controller
++    _career_controller = current_controller()

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Deterministic, network-free tests for the career search reliability layer."""
 
+import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -43,8 +45,11 @@ def main() -> None:
                 SEARCH_UNAVAILABLE,
                 classify_search_error,
                 classify_search_response,
+                bind_controller,
+                reset_controller,
             )
             from cron import output_contract
+            from tools import web_tools
         finally:
             sys.path.pop(0)
 
@@ -104,6 +109,17 @@ def main() -> None:
         assert '"firecrawl"' in web_tools_source
         assert "CAREER_SEARCH_FALLBACK" in (tree / "cron/search_reliability.py").read_text()
 
+        # Extraction binds its own run-local controller. The production bug
+        # referenced web_search_tool's local variable and raised NameError.
+        controller = CareerSearchController()
+        token = bind_controller(controller)
+        try:
+            extract_result = json.loads(asyncio.run(web_tools.web_extract_tool([])))
+        finally:
+            reset_controller(token)
+        assert "NameError" not in json.dumps(extract_result)
+        assert controller.extract_calls == 1
+
         # Empty status is not a coverage failure; an explicit provider failure is.
         empty_coverage = output_contract._compute_search_coverage({
             "search_queries": ["DevOps internship United States"],
@@ -130,6 +146,7 @@ def main() -> None:
     print("PASS open circuit prevents further provider calls")
     print("PASS hard search bound and per-run reset")
     print("PASS deterministic query normalization and geography")
+    print("PASS web extraction binds the run-local career controller")
     print("PASS empty results do not degrade coverage")
     print("PASS provider failures degrade coverage")
     print("CRON_SEARCH_RELIABILITY: PASS")
