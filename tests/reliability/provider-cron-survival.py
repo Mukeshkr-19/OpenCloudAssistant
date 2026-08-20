@@ -78,18 +78,17 @@ def isolated_function(path: Path, name: str, globals_: dict):
 
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="opencloud-provider-survival-") as tmp:
-        tree = Path(tmp) / "hermes"
-        materialize_env = os.environ.copy()
-        materialize_env.pop("OPEN_CLOUD_HERMES_ROOT", None)
-        result = subprocess.run(
-            ["bash", str(ROOT / "install/30-brain-materialize.sh"), "--stage", str(tree)],
-            cwd=ROOT,
-            env=materialize_env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        require(result.returncode == 0, result.stderr or result.stdout)
+        selected_tree = os.environ.get("OPEN_CLOUD_HERMES_ROOT")
+        tree = Path(selected_tree) if selected_tree else Path(tmp) / "hermes"
+        if not selected_tree:
+            result = subprocess.run(
+                ["bash", str(ROOT / "install/30-brain-materialize.sh"), "--stage", str(tree)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            require(result.returncode == 0, result.stderr or result.stdout)
 
         bridge = load("opencloud_provider_survival_bridge", tree / "agent/hermes_fleet_bridge.py")
 
