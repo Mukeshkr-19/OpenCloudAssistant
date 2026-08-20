@@ -1,0 +1,105 @@
+diff --git a/agent/hermes_fleet_bridge.py b/agent/hermes_fleet_bridge.py
+index e668d6d..836840b 100644
+--- a/agent/hermes_fleet_bridge.py
++++ b/agent/hermes_fleet_bridge.py
+@@ -43,0 +44,44 @@ MAX_FAILOVER_TIME_SECONDS = 180
++def normalize_tool_history(agent, messages):
++    """Serialize completed parallel tool batches for limited fallback models."""
++
++    if not getattr(agent, "_hermes_single_tool_call_history", False):
++        return messages
++
++    results = {
++        str(message.get("tool_call_id") or ""): message
++        for message in messages
++        if message.get("role") == "tool" and message.get("tool_call_id")
++    }
++    consumed = set()
++    normalized = []
++    guidance = (
++        "This model supports only one tool call per assistant response. "
++        "Issue tool calls sequentially, one at a time."
++    )
++
++    for message in messages:
++        if message.get("role") == "system" and isinstance(message.get("content"), str):
++            normalized.append({**message, "content": message["content"] + "\n\n" + guidance})
++            continue
++
++        calls = message.get("tool_calls") if message.get("role") == "assistant" else None
++        if not isinstance(calls, list) or len(calls) <= 1:
++            if message.get("role") != "tool" or message.get("tool_call_id") not in consumed:
++                normalized.append(message)
++            continue
++
++        for index, call in enumerate(calls):
++            split = {**message, "tool_calls": [call]}
++            if index:
++                split["content"] = None
++                for field in ("reasoning", "reasoning_content", "reasoning_details"):
++                    split.pop(field, None)
++            normalized.append(split)
++
++            call_id = str(call.get("id") or call.get("call_id") or "")
++            if call_id in results:
++                normalized.append(results[call_id])
++                consumed.add(call_id)
++
++    return normalized
++
+@@ -1132,0 +1177,3 @@ def _failure_kind(
++    if "only supports single tool-call" in text or "only supports single tool call" in text:
++        return "model_unavailable"
++
+diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
+index fcb53d0..e1f2bd2 100644
+--- a/agent/conversation_loop.py
++++ b/agent/conversation_loop.py
+@@ -1796,0 +1797,12 @@ def run_conversation(
++        # Some verified fallback routes accept tools but reject historical
++        # assistant turns containing more than one tool call. Preserve every
++        # completed result while serializing only the request-local copy.
++        try:
++            from agent.hermes_fleet_bridge import normalize_tool_history
++            api_messages = normalize_tool_history(agent, api_messages)
++        except Exception as _fleet_exc:
++            request_logger.debug(
++                "Fleet tool-history compatibility skipped: %s",
++                type(_fleet_exc).__name__,
++            )
++
+@@ -5092,0 +5105,14 @@ def run_conversation(
++                    _error_text = str(getattr(api_error, "message", "") or api_error).lower()
++                    if (
++                        not getattr(agent, "_hermes_single_tool_call_history", False)
++                        and (
++                            "only supports single tool-call" in _error_text
++                            or "only supports single tool call" in _error_text
++                        )
++                    ):
++                        agent._hermes_single_tool_call_history = True
++                        from agent.hermes_fleet_bridge import normalize_tool_history
++                        api_messages = normalize_tool_history(agent, api_messages)
++                        retry_count = 0
++                        continue
++
+diff --git a/agent/chat_completion_helpers.py b/agent/chat_completion_helpers.py
+index 7b3b802..b545ad1 100644
+--- a/agent/chat_completion_helpers.py
++++ b/agent/chat_completion_helpers.py
+@@ -2251,0 +2252,9 @@ def handle_max_iterations(agent, messages: list, api_call_count: int) -> str:
++        try:
++            from agent.hermes_fleet_bridge import normalize_tool_history
++            api_messages = normalize_tool_history(agent, api_messages)
++        except Exception as _fleet_exc:
++            logger.debug(
++                "Fleet summary tool-history compatibility skipped: %s",
++                type(_fleet_exc).__name__,
++            )
++
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+index 94e8619..8e14ff0 100644
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -122,0 +123 @@ def _summarize_cron_failure_for_delivery(job: dict, error: str | None) -> str:
++        "only supports single tool-call", "only supports single tool call",

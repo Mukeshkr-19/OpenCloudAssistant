@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 import subprocess
 import tempfile
 from datetime import datetime
@@ -78,9 +79,12 @@ def isolated_function(path: Path, name: str, globals_: dict):
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="opencloud-provider-survival-") as tmp:
         tree = Path(tmp) / "hermes"
+        materialize_env = os.environ.copy()
+        materialize_env.pop("OPEN_CLOUD_HERMES_ROOT", None)
         result = subprocess.run(
             ["bash", str(ROOT / "install/30-brain-materialize.sh"), "--stage", str(tree)],
             cwd=ROOT,
+            env=materialize_env,
             text=True,
             capture_output=True,
             check=False,
@@ -104,6 +108,42 @@ def main() -> None:
         require(bridge._failure_kind("HTTP 401 unauthorized") == "auth", "auth misclassified")
         require(bridge._failure_kind("network DNS failure") == "network", "network misclassified")
         require(bridge._failure_kind("request timeout") == "timeout", "timeout misclassified")
+        require(
+            bridge._failure_kind("This model only supports single tool-calls at once!")
+            == "model_unavailable",
+            "tool-call compatibility failure misclassified",
+        )
+
+        parallel_calls = [
+            {"id": "call-search", "function": {"name": "web_search", "arguments": "{}"}},
+            {"id": "call-extract", "function": {"name": "web_extract", "arguments": "{}"}},
+        ]
+        history = [
+            {"role": "system", "content": "system"},
+            {"role": "assistant", "content": "Gathering evidence.", "tool_calls": parallel_calls},
+            {"role": "tool", "tool_call_id": "call-extract", "content": "extract evidence"},
+            {"role": "tool", "tool_call_id": "call-search", "content": "search evidence"},
+        ]
+        limited = SimpleNamespace(_hermes_single_tool_call_history=True)
+        normalized = bridge.normalize_tool_history(limited, history)
+        require(history[1]["tool_calls"] == parallel_calls, "stored tool history was mutated")
+        require(
+            all(len(message.get("tool_calls") or []) <= 1 for message in normalized),
+            "limited fallback still received parallel tool history",
+        )
+        require(
+            [message["content"] for message in normalized if message.get("role") == "tool"]
+            == ["search evidence", "extract evidence"],
+            "tool evidence was lost or mismatched while serializing history",
+        )
+        require("one tool call" in normalized[0]["content"], "single-tool guidance missing")
+        require(
+            bridge.normalize_tool_history(
+                SimpleNamespace(), history
+            )
+            is history,
+            "compatible model history was rewritten",
+        )
 
         unmanaged = SimpleNamespace(provider="openrouter", model="openrouter/free")
         require(
@@ -166,6 +206,15 @@ def main() -> None:
         require("messages = []" not in failover_segment, "fallback discards gathered tool evidence")
         require("api_messages = []" not in failover_segment, "fallback discards API evidence")
         require("note_agent_success(agent)" in loop_source, "successful inference does not reset failover state")
+        require("normalize_tool_history(agent, api_messages)" in loop_source,
+                "main request path does not normalize limited fallback history")
+        require("only supports single tool-call" in loop_source,
+                "single-tool provider rejection does not activate compatibility retry")
+        require(
+            "normalize_tool_history(agent, api_messages)"
+            in (tree / "agent/chat_completion_helpers.py").read_text(encoding="utf-8"),
+            "summary request path does not normalize limited fallback history",
+        )
 
         summarize = isolated_function(
             tree / "cron/scheduler.py",
@@ -183,6 +232,19 @@ def main() -> None:
         require("STATUS: Temporarily unavailable" in report, "infrastructure state missing")
         require("VERIFIED MATCHES: 0" not in report, "provider failure rendered fake zero matches")
         require("free-models-per-day" not in report, "raw provider detail leaked to delivery")
+
+        compatibility_report = summarize(
+            {"name": "Daily Career Job Match Report", "output_schema": "career_job_match_v1"},
+            "RuntimeError: HTTP 400: This model only supports single tool-calls at once!",
+        )
+        require(
+            "STATUS: Temporarily unavailable" in compatibility_report,
+            "tool-call compatibility exhaustion was not sanitized",
+        )
+        require(
+            "single tool-call" not in compatibility_report,
+            "raw tool-call compatibility error leaked to delivery",
+        )
 
     print("PROVIDER_CRON_SURVIVAL_RELIABILITY: PASS")
 
