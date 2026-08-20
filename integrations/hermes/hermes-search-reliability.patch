@@ -1,0 +1,359 @@
+diff --git a/cron/output_contract.py b/cron/output_contract.py
+index 36497aa..923710f 100644
+--- a/cron/output_contract.py
++++ b/cron/output_contract.py
+@@ -207,1 +207,3 @@ def build_evidence_ledger(messages, contract=None)
+     extract_failures = 0
++    search_statuses = []
++    search_providers = []
+@@ -259,3 +261,14 @@ def build_evidence_ledger(messages, contract=None)
+                 if isinstance(data, dict):
+-                    if data.get("error") or data.get("success") is False:
++                    status = str(data.get("search_status") or "").strip()
++                    if status:
++                        search_statuses.append(status)
++                    provider = str(data.get("search_provider") or "").strip()
++                    if provider:
++                        search_providers.append(provider)
++                    if (
++                        data.get("error")
++                        or data.get("success") is False
++                    ) and status not in {
++                        "SEARCH_SUCCESS_WITH_RESULTS", "SEARCH_SUCCESS_EMPTY"
++                    }:
+                         search_failures += 1
+@@ -278,2 +291,4 @@ def build_evidence_ledger(messages, contract=None):
+         "extract_failures": extract_failures,
++        "search_statuses": search_statuses,
++        "search_providers": search_providers,
+     }
+@@ -646,3 +661,8 @@ def _compute_search_coverage(ledger):
+     searches = ledger.get("search_queries") or []
+-    search_failures = int(ledger.get("search_failures") or 0)
++    statuses = list(ledger.get("search_statuses") or [])
++    search_failures = sum(
++        1 for status in statuses
++        if status not in {"SEARCH_SUCCESS_WITH_RESULTS", "SEARCH_SUCCESS_EMPTY"}
++    )
++    search_failures = max(search_failures, int(ledger.get("search_failures") or 0))
+     extract_ok = len(ledger.get("extracted") or {})
+diff --git a/cron/scheduler.py b/cron/scheduler.py
+index 3429631..2bda850 100644
+--- a/cron/scheduler.py
++++ b/cron/scheduler.py
+@@ -285,2 +285,3 @@ def _build_career_wave_gate(expected_date):
+                 expected_date=expected_date,
++                wave_state=wave_state,
+             )
+@@ -3997,5 +3998,16 @@ def run_job(
+         _cron_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+-        # Preserve scheduler-scoped ContextVar state (for example skill-declared
+-        # env passthrough registrations) when the cron run hops into the worker
+-        # thread used for inactivity timeout monitoring.
+-        _cron_context = contextvars.copy_context()
++        # HERMES_CAREER_SEARCH_CONTEXT_V1
++        # Bind the run-local controller only into the cron worker context;
++        # never leak it into unrelated interactive or future cron runs.
++        _search_context_token = None
++        if getattr(agent, "_career_search_controller", None) is not None:
++            from cron.search_reliability import bind_controller, reset_controller
++            _search_context_token = bind_controller(agent._career_search_controller)
++        try:
++            # Preserve scheduler-scoped ContextVar state (for example
++            # skill-declared env passthrough registrations) when the cron run
++            # hops into the worker thread used for inactivity timeout monitoring.
++            _cron_context = contextvars.copy_context()
++        finally:
++            if _search_context_token is not None:
++                reset_controller(_search_context_token)
+@@ -4034,10 +4046,11 @@ def run_job(
+-        # HERMES_CRON_SEARCH_WAVES_V1
+-        # Career-only code-owned wave orchestration.  The model may search
+-        # within a wave, but the code decides when Wave 2 / Wave 3 are
+-        # required and blocks premature finalization while fewer than
+-        # TARGET valid candidates survive.  Run-local state; bounded.
++        # HERMES_CAREER_SEARCH_CONTROLLER_V1
++        # Career search health is run-local and copied into the worker context.
+         if _output_schema == "career_job_match_v1":
+             try:
++                from cron.search_reliability import CareerSearchController
+                 _wave_state = {"wave2_issued": False, "wave3_issued": False}
++                _search_controller = CareerSearchController()
++                _search_controller.wave_state = _wave_state
+                 _wave_gate = _build_career_wave_gate(_expected_date)
++                agent._career_search_controller = _search_controller
+                 agent._career_wave_state = _wave_state
+@@ -4050,3 +4063,3 @@ def run_job(
+                 logger.debug(
+-                    "Job '%s': career wave orchestration unavailable: %s",
++                    "Job '%s': career search reliability unavailable: %s",
+                     job_id, type(_wave_exc).__name__,
+diff --git a/cron/search_reliability.py b/cron/search_reliability.py
+new file mode 100644
+index 0000000..46664d2
+--- /dev/null
++++ b/cron/search_reliability.py
+@@ -0,0 +1,147 @@
++"""Run-local reliability controls for career web search."""
++from __future__ import annotations
++import contextvars
++import logging
++import re
++import time
++from dataclasses import dataclass, field
++from typing import Any
++
++logger = logging.getLogger(__name__)
++SEARCH_SUCCESS_WITH_RESULTS = "SEARCH_SUCCESS_WITH_RESULTS"
++SEARCH_SUCCESS_EMPTY = "SEARCH_SUCCESS_EMPTY"
++SEARCH_PROVIDER_FAILURE = "SEARCH_PROVIDER_FAILURE"
++SEARCH_TIMEOUT = "SEARCH_TIMEOUT"
++SEARCH_RATE_LIMIT = "SEARCH_RATE_LIMIT"
++SEARCH_AUTH_FAILURE = "SEARCH_AUTH_FAILURE"
++SEARCH_NETWORK_FAILURE = "SEARCH_NETWORK_FAILURE"
++SEARCH_INVALID_REQUEST = "SEARCH_INVALID_REQUEST"
++SEARCH_UNAVAILABLE = "SEARCH_UNAVAILABLE"
++MAX_SEARCH_CALLS = 18
++MAX_EXTRACT_CALLS = 12
++MAX_SEARCH_FAILURES = 2
++MAX_PROVIDER_SWITCHES = 1
++MAX_SEARCH_ORCHESTRATION_TIME = 180.0
++_controller_var: contextvars.ContextVar["CareerSearchController | None"] = contextvars.ContextVar("hermes_career_search_controller", default=None)
++
++def current_controller() -> "CareerSearchController | None":
++    return _controller_var.get()
++
++def bind_controller(controller: "CareerSearchController"):
++    return _controller_var.set(controller)
++
++def reset_controller(token) -> None:
++    _controller_var.reset(token)
++
++def classify_search_error(error: Any) -> str:
++    text = str(error or "").lower()
++    if "no results" in text: return SEARCH_SUCCESS_EMPTY
++    if "429" in text or "rate limit" in text or "too many requests" in text: return SEARCH_RATE_LIMIT
++    if "401" in text or "403" in text or "auth" in text or "forbidden" in text: return SEARCH_AUTH_FAILURE
++    if "timeout" in text or "timed out" in text: return SEARCH_TIMEOUT
++    if any(x in text for x in ("connection", "network", "dns", "connecterror")): return SEARCH_NETWORK_FAILURE
++    if any(x in text for x in ("invalid query", "malformed", "bad request")): return SEARCH_INVALID_REQUEST
++    return SEARCH_PROVIDER_FAILURE
++
++def classify_search_response(response: Any) -> str:
++    if not isinstance(response, dict): return SEARCH_PROVIDER_FAILURE
++    explicit = str(response.get("search_status") or "").strip()
++    if explicit: return explicit
++    if response.get("success") is False or response.get("error"): return classify_search_error(response.get("error"))
++    data = response.get("data")
++    return SEARCH_SUCCESS_WITH_RESULTS if isinstance(data, dict) and data.get("web") else SEARCH_SUCCESS_EMPTY
++
++@dataclass
++class SearchProviderState:
++    provider: str
++    attempts: int = 0
++    successes: int = 0
++    empty_successes: int = 0
++    failures: int = 0
++    consecutive_failures: int = 0
++    distinct_failed_queries: set[str] = field(default_factory=set)
++    last_failure_class: str = ""
++    circuit_open: bool = False
++
++class CareerSearchController:
++    def __init__(self) -> None:
++        self.started = time.monotonic()
++        self.search_calls = 0
++        self.extract_calls = 0
++        self.search_failures = 0
++        self.extract_failures = 0
++        self.provider_switches = 0
++        self.fallback_used = False
++        self.provider_attempt_order: list[str] = []
++        self.states: dict[str, SearchProviderState] = {}
++        self.wave_state: dict[str, Any] = {}
++
++    def _wave(self) -> str:
++        if self.wave_state.get("wave3_issued"): return "wave3"
++        if self.wave_state.get("wave2_issued"): return "wave2"
++        return "wave1"
++
++    def normalize_query(self, query: str) -> tuple[str, str | None]:
++        raw = " ".join(str(query or "").split())
++        if not raw: return "", SEARCH_INVALID_REQUEST
++        raw = re.sub(r"\b(?:companycareers\.com|jobsite\.com)\b", "", raw, flags=re.I)
++        role = raw.lower()
++        if not any(x in role for x in ("devops", "sre", "reliability", "cloud", "platform", "infrastructure", "systems", "build", "release", "observability")):
++            raw = "infrastructure cloud platform DevOps SRE " + raw
++        if not any(x in role for x in ("intern", "internship", "co-op", "new grad", "entry level")):
++            raw += " internship entry-level"
++        geo = raw.lower()
++        if self._wave() in ("wave1", "wave2") and not any(x in geo for x in ("united states", "usa", "u.s.")):
++            raw += " United States"
++        elif self._wave() == "wave3" and not any(x in geo for x in ("europe", "eu", "singapore", "malaysia", "uk")):
++            raw += " Europe Singapore Malaysia"
++        return " ".join(raw.split()), None
++
++    def allow_search_attempt(self, query: str, provider: str) -> tuple[bool, str | None]:
++        if time.monotonic() - self.started >= MAX_SEARCH_ORCHESTRATION_TIME: return False, SEARCH_TIMEOUT
++        if self.search_calls >= MAX_SEARCH_CALLS: return False, SEARCH_UNAVAILABLE
++        state = self.states.setdefault(provider, SearchProviderState(provider))
++        if state.circuit_open: return False, SEARCH_UNAVAILABLE
++        self.search_calls += 1
++        return True, None
++
++    def observe_search(self, query: str, provider: str, response: Any) -> str:
++        state = self.states.setdefault(provider, SearchProviderState(provider))
++        state.attempts += 1
++        status = classify_search_response(response)
++        if status in (SEARCH_SUCCESS_WITH_RESULTS, SEARCH_SUCCESS_EMPTY):
++            state.successes += 1
++            if status == SEARCH_SUCCESS_EMPTY: state.empty_successes += 1
++            state.consecutive_failures = 0
++        else:
++            state.failures += 1
++            state.consecutive_failures += 1
++            state.distinct_failed_queries.add(query)
++            state.last_failure_class = status
++            self.search_failures += 1
++            if len(state.distinct_failed_queries) >= MAX_SEARCH_FAILURES:
++                state.circuit_open = True
++                logger.warning("CAREER_SEARCH_CIRCUIT_OPEN provider=%s failures=%d", provider, state.failures)
++        if provider not in self.provider_attempt_order: self.provider_attempt_order.append(provider)
++        logger.info("CAREER_SEARCH_RESULT provider=%s status=%s calls=%d failures=%d wave=%s", provider, status, self.search_calls, self.search_failures, self._wave())
++        return status
++
++    def note_fallback(self, provider: str, alternate: str) -> None:
++        self.provider_switches += 1
++        self.fallback_used = True
++        logger.warning("CAREER_SEARCH_FALLBACK primary=%s alternate=%s switches=%d", provider, alternate, self.provider_switches)
++
++    def allow_extract(self, urls: list[str]) -> tuple[list[str], str | None]:
++        if time.monotonic() - self.started >= MAX_SEARCH_ORCHESTRATION_TIME: return [], SEARCH_TIMEOUT
++        if self.extract_calls >= MAX_EXTRACT_CALLS: return [], SEARCH_UNAVAILABLE
++        self.extract_calls += 1
++        valid = [u.strip() for u in urls if re.match(r"^https?://[^\s]+$", str(u or "").strip(), re.I) and "..." not in str(u)]
++        if not valid: return [], SEARCH_INVALID_REQUEST
++        return valid[:5], None
++
++    def observe_extract(self, response: Any) -> None:
++        if not isinstance(response, list) or not response or all(isinstance(x, dict) and x.get("error") for x in response): self.extract_failures += 1
++
++    def can_continue_wave(self) -> bool:
++        if time.monotonic() - self.started >= MAX_SEARCH_ORCHESTRATION_TIME: return False
++        return self.search_calls < MAX_SEARCH_CALLS or any(x.successes for x in self.states.values())
+diff --git a/plugins/web/ddgs/provider.py b/plugins/web/ddgs/provider.py
+index 824f3ed..0c2fe69 100644
+--- a/plugins/web/ddgs/provider.py
++++ b/plugins/web/ddgs/provider.py
+@@ -344,3 +344,20 @@ class DDGSWebSearchProvider(WebSearchProvider):
+         except Exception as exc:  # noqa: BLE001 — ddgs raises its own exceptions
+-            logger.warning("DDGS search error: %s", exc)
+-            return {"success": False, "error": f"DuckDuckGo search failed: {exc}"}
++            # HERMES_SEARCH_EMPTY_RESULT_SEMANTICS_V1
++            # ddgs uses the same exception for a legitimate zero-hit query
++            # and for infrastructure failures. Empty search is successful;
++            # only actual provider failures are errors.
++            if "no results found" in str(exc).lower() or "no results" in str(exc).lower():
++                logger.info("DDGS search returned no results for query: %r", query)
++                return {
++                    "success": True,
++                    "search_status": "SEARCH_SUCCESS_EMPTY",
++                    "data": {"web": []},
++                }
++            from cron.search_reliability import classify_search_error
++            status = classify_search_error(exc)
++            logger.warning("DDGS search error status=%s: %s", status, exc)
++            return {
++                "success": False,
++                "search_status": status,
++                "error": f"DuckDuckGo search failed: {exc}",
++            }
+diff --git a/tools/web_tools.py b/tools/web_tools.py
+index 31c425f..a76b533 100644
+--- a/tools/web_tools.py
++++ b/tools/web_tools.py
+@@ -657,1 +657,14 @@ def web_search_tool(query: str, limit: int = 5) -> str:
++    # HERMES_CAREER_SEARCH_CONTROLLER_V1
++    from cron.search_reliability import current_controller
++    _career_controller = current_controller()
++    _career_query = query
++    if _career_controller is not None:
++        _career_query, _query_error = _career_controller.normalize_query(query)
++        if _query_error:
++            return json.dumps({
++                "success": False,
++                "search_status": _query_error,
++                "error": "Search query was invalid",
++            })
++
+     debug_call_data = {
+@@ -717,6 +730,52 @@ def web_search_tool(query: str, limit: int = 5) -> str:
+         else:
+-            logger.info(
+-                "Web search via %s: '%s' (limit: %d)",
+-                provider.name, query, limit,
+-            )
+-            response_data = provider.search(query, limit)
++            _actual_query = _career_query if _career_controller is not None else query
++            _allowed, _bound_status = (True, None)
++            if _career_controller is not None:
++                _allowed, _bound_status = _career_controller.allow_search_attempt(
++                    _actual_query, provider.name
++                )
++            if not _allowed:
++                response_data = {
++                    "success": False,
++                    "search_status": _bound_status or "SEARCH_UNAVAILABLE",
++                    "error": "Career search bound reached",
++                }
++            else:
++                logger.info(
++                    "Web search via %s: '%s' (limit: %d)",
++                    provider.name, _actual_query, limit,
++                )
++                response_data = provider.search(_actual_query, limit)
++            if _career_controller is not None and _allowed:
++                _status = _career_controller.observe_search(
++                    _actual_query, provider.name, response_data
++                )
++                if (
++                    _status in {
++                        "SEARCH_PROVIDER_FAILURE", "SEARCH_TIMEOUT",
++                        "SEARCH_RATE_LIMIT", "SEARCH_AUTH_FAILURE",
++                        "SEARCH_NETWORK_FAILURE", "SEARCH_INVALID_REQUEST",
++                    }
++                    and provider.name != "firecrawl"
++                    and _career_controller.provider_switches < 1
++                ):
++                    _alternate = _wsp_get_provider("firecrawl")
++                    if (
++                        _alternate is not None
++                        and _alternate.supports_search()
++                        and _alternate.is_available()
++                    ):
++                        _career_controller.note_fallback(provider.name, "firecrawl")
++                        _ok, _ = _career_controller.allow_search_attempt(
++                            _actual_query, "firecrawl"
++                        )
++                        if _ok:
++                            response_data = _alternate.search(_actual_query, limit)
++                            _status = _career_controller.observe_search(
++                                _actual_query, "firecrawl", response_data
++                            )
++                            provider = _alternate
++                response_data = dict(response_data or {})
++                response_data.setdefault("search_status", _status)
++                response_data["search_provider"] = provider.name
++                response_data["query_used"] = _actual_query
+@@ -820,1 +879,6 @@ async def web_extract_tool(
++    if _career_controller is not None:
++        normalized_urls, _extract_bound = _career_controller.allow_extract(normalized_urls)
++        if _extract_bound:
++            normalized_urls = []
++
+     debug_call_data = {
+@@ -964,1 +1028,4 @@ async def web_extract_tool(
++        if _career_controller is not None:
++            _career_controller.observe_extract(results)
++
+         response = {"results": results}
