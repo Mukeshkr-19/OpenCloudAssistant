@@ -24,6 +24,7 @@ PATCH_FASTPATH="$ROOT/integrations/hermes/hermes-cron-control-fast-path.patch"
 PATCH_GEO="$ROOT/integrations/hermes/hermes-career-geography-search.patch"
 PATCH_WAVES="$ROOT/integrations/hermes/hermes-career-search-waves.patch"
 PATCH_REJECT="$ROOT/integrations/hermes/hermes-career-candidate-rejection.patch"
+PATCH_SEARCH="$ROOT/integrations/hermes/hermes-search-reliability.patch"
 
 usage() {
     echo "Usage:"
@@ -73,6 +74,7 @@ materialize() {
     local patch14="$rendered/hermes-career-geography-search.patch"
     local patch15="$rendered/hermes-career-search-waves.patch"
     local patch16="$rendered/hermes-career-candidate-rejection.patch"
+    local patch17="$rendered/hermes-search-reliability.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -90,6 +92,7 @@ materialize() {
     require_file "$PATCH_GEO"
     require_file "$PATCH_WAVES"
     require_file "$PATCH_REJECT"
+    require_file "$PATCH_SEARCH"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -124,6 +127,15 @@ materialize() {
     render_patch "$PATCH_GEO" "$patch14"
     render_patch "$PATCH_WAVES" "$patch15"
     render_patch "$PATCH_REJECT" "$patch16"
+    render_patch "$PATCH_SEARCH" "$patch17"
+
+    # The exported archive is intentionally not a Git checkout.  Create a
+    # temporary local index so git apply validates and applies patches to the
+    # staged tree rather than silently walking up to the OpenCloudAssistant
+    # repository and skipping every patch (nested output directories otherwise
+    # make `git -C "$out" apply` a false-positive).
+    git -C "$out" init --quiet
+    git -C "$out" add -A
 
     if grep -RqsF "__OPEN_CLOUD_HOME__" "$rendered"; then
         echo "ERROR: unresolved Open Cloud home placeholder" >&2
@@ -194,6 +206,10 @@ materialize() {
     echo "MATERIALIZE: checking career candidate-rejection patch"
     git -C "$out" apply --check "$patch16"
     git -C "$out" apply "$patch16"
+
+    echo "MATERIALIZE: checking career search reliability patch"
+    git -C "$out" apply --check --unidiff-zero "$patch17"
+    git -C "$out" apply --unidiff-zero "$patch17"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
@@ -301,6 +317,17 @@ materialize() {
         exit 1
     fi
 
+    for search_marker in \
+        HERMES_SEARCH_EMPTY_RESULT_SEMANTICS_V1 \
+        HERMES_CAREER_SEARCH_CONTROLLER_V1 \
+        HERMES_CAREER_SEARCH_CONTEXT_V1
+    do
+        if ! grep -RqsF "$search_marker" "$out/agent" "$out/tools" "$out/plugins" "$out/cron"; then
+            echo "ERROR: search-reliability marker missing after materialization: $search_marker" >&2
+            exit 1
+        fi
+    done
+
     python3 -m py_compile "$out/agent/hermes_fleet_bridge.py"
     python3 -m py_compile "$out/agent/conversation_loop.py"
     python3 -m py_compile "$out/tools/tool_search.py" "$out/model_tools.py" "$out/cron/scheduler.py" "$out/cron/output_contract.py"
@@ -308,8 +335,11 @@ materialize() {
     python3 -m py_compile "$out/agent/opencloud_self_repair.py"
     python3 -m py_compile "$out/tools/cronjob_tools.py"
     python3 -m py_compile "$out/gateway/cron_control_fast_path.py"
+    python3 -m py_compile "$out/tools/web_tools.py" "$out/plugins/web/ddgs/provider.py"
+    python3 -m py_compile "$out/cron/search_reliability.py"
 
     rm -rf "$rendered"
+    rm -rf "$out/.git"
 
     echo "HERMES_BRAIN_MATERIALIZATION: PASS"
 

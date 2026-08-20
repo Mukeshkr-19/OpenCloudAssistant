@@ -23,11 +23,12 @@ PATCH13="$ROOT/integrations/hermes/hermes-cron-control-fast-path.patch"
 PATCH14="$ROOT/integrations/hermes/hermes-career-geography-search.patch"
 PATCH15="$ROOT/integrations/hermes/hermes-career-search-waves.patch"
 PATCH16="$ROOT/integrations/hermes/hermes-career-candidate-rejection.patch"
+PATCH17="$ROOT/integrations/hermes/hermes-search-reliability.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
-FILES="agent/agent_init.py agent/conversation_loop.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py tools/tool_search.py cron/scheduler.py cron/output_contract.py gateway/run.py gateway/cron_control_fast_path.py model_tools.py agent/hermes_fleet_bridge.py agent/opencloud_routing_v1.py hermes_cli/cli_agent_setup_mixin.py agent/provider_metadata_guard.py agent/transports/chat_completions.py agent/transports/codex.py agent/opencloud_self_repair.py tools/cronjob_tools.py"
-MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1 HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1 HERMES_CRON_OUTPUT_CONTRACT_V1 HERMES_OPENCLOUD_METADATA_GUARD_V1 HERMES_OPENCLOUD_SELF_REPAIR_V1 HERMES_CRON_DUPLICATE_GUARD_V1 HERMES_CRON_WORKFLOW_IDENTITY_V1 HERMES_CRON_REPEAT_COERCION_V1 HERMES_CRON_RUN_NOW_ONCE_V1"
+FILES="agent/agent_init.py agent/conversation_loop.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py tools/tool_search.py tools/web_tools.py plugins/web/ddgs/provider.py cron/scheduler.py cron/output_contract.py cron/search_reliability.py gateway/run.py gateway/cron_control_fast_path.py model_tools.py agent/hermes_fleet_bridge.py agent/opencloud_routing_v1.py hermes_cli/cli_agent_setup_mixin.py agent/provider_metadata_guard.py agent/transports/chat_completions.py agent/transports/codex.py agent/opencloud_self_repair.py tools/cronjob_tools.py"
+MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1 HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1 HERMES_CRON_OUTPUT_CONTRACT_V1 HERMES_OPENCLOUD_METADATA_GUARD_V1 HERMES_OPENCLOUD_SELF_REPAIR_V1 HERMES_CRON_DUPLICATE_GUARD_V1 HERMES_CRON_WORKFLOW_IDENTITY_V1 HERMES_CRON_REPEAT_COERCION_V1 HERMES_CRON_RUN_NOW_ONCE_V1 HERMES_SEARCH_EMPTY_RESULT_SEMANTICS_V1 HERMES_CAREER_SEARCH_CONTROLLER_V1 HERMES_CAREER_SEARCH_CONTEXT_V1"
 
 require_source() {
     test -d "$HERMES_ROOT/.git" || {
@@ -119,6 +120,11 @@ require_source() {
         echo "ERROR: Hermes career candidate-rejection patch missing" >&2
         exit 1
     }
+
+    test -f "$PATCH17" || {
+        echo "ERROR: Hermes search-reliability patch missing" >&2
+        exit 1
+    }
 }
 
 compile_file() {
@@ -136,7 +142,7 @@ validate_tree() {
     }
 
     for marker in $MARKERS; do
-        grep -RqsF "$marker" "$tree/agent" "$tree/tools" || {
+        grep -RqsF "$marker" "$tree/agent" "$tree/tools" "$tree/plugins" "$tree/cron" || {
             echo "ERROR: Hermes integration marker missing: $marker" >&2
             return 1
         }
@@ -226,6 +232,12 @@ materialize() {
 
     git -C "$HERMES_ROOT" archive "$HERMES_BASELINE_REV" | tar -x -C "$out"
 
+    # Materialized archives are not Git checkouts. Use a temporary local index
+    # so patch validation cannot silently walk up to the OpenCloudAssistant
+    # repository and skip nested Hermes paths.
+    git -C "$out" init --quiet
+    git -C "$out" add -A
+
     echo "HERMES_INSTALL: checking Fleet bridge patch"
     git -C "$out" apply --check "$PATCH1"
     git -C "$out" apply "$PATCH1"
@@ -289,6 +301,10 @@ materialize() {
     echo "HERMES_INSTALL: checking career candidate-rejection patch"
     git -C "$out" apply --check "$PATCH16"
     git -C "$out" apply "$PATCH16"
+
+    echo "HERMES_INSTALL: checking career search reliability patch"
+    git -C "$out" apply --check --unidiff-zero "$PATCH17"
+    git -C "$out" apply --unidiff-zero "$PATCH17"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
