@@ -27,6 +27,7 @@ test -f tests/reliability/cron-control-fast-path.py
 test -f tests/reliability/cron-career-geography.py
 test -f tests/reliability/cron-career-search-waves.py
 test -f tests/reliability/cron-career-candidate-rejection.py
+test -f tests/reliability/cron-baseline-fetch.py
 test -x tests/reliability/cron-routing-v1.py
 test -x tests/reliability/messaging-delivery.py
 test -x tests/reliability/self-repair-rollback.sh
@@ -69,6 +70,8 @@ PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/fleet-runtime-confi
 PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/fleet-lock-concurrency.py
 PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/vellum-worker-state.py
 PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/daemon-pool-compat.py
+
+PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/cron-baseline-fetch.py
 
 HERMES_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
 
