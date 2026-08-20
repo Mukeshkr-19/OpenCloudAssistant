@@ -25,6 +25,7 @@ PATCH_GEO="$ROOT/integrations/hermes/hermes-career-geography-search.patch"
 PATCH_WAVES="$ROOT/integrations/hermes/hermes-career-search-waves.patch"
 PATCH_REJECT="$ROOT/integrations/hermes/hermes-career-candidate-rejection.patch"
 PATCH_SEARCH="$ROOT/integrations/hermes/hermes-search-reliability.patch"
+PATCH_PROVIDER_SURVIVAL="$ROOT/integrations/hermes/hermes-provider-survival.patch"
 
 usage() {
     echo "Usage:"
@@ -75,6 +76,7 @@ materialize() {
     local patch15="$rendered/hermes-career-search-waves.patch"
     local patch16="$rendered/hermes-career-candidate-rejection.patch"
     local patch17="$rendered/hermes-search-reliability.patch"
+    local patch18="$rendered/hermes-provider-survival.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -93,6 +95,7 @@ materialize() {
     require_file "$PATCH_WAVES"
     require_file "$PATCH_REJECT"
     require_file "$PATCH_SEARCH"
+    require_file "$PATCH_PROVIDER_SURVIVAL"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -128,6 +131,7 @@ materialize() {
     render_patch "$PATCH_WAVES" "$patch15"
     render_patch "$PATCH_REJECT" "$patch16"
     render_patch "$PATCH_SEARCH" "$patch17"
+    render_patch "$PATCH_PROVIDER_SURVIVAL" "$patch18"
 
     # The exported archive is intentionally not a Git checkout.  Create a
     # temporary local index so git apply validates and applies patches to the
@@ -211,6 +215,10 @@ materialize() {
     git -C "$out" apply --check --unidiff-zero "$patch17"
     git -C "$out" apply --unidiff-zero "$patch17"
 
+    echo "MATERIALIZE: checking provider routing/cron survival patch"
+    git -C "$out" apply --check --unidiff-zero "$patch18"
+    git -C "$out" apply --unidiff-zero "$patch18"
+
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
 
@@ -221,7 +229,9 @@ materialize() {
         HERMES_FLEET_WORKER_ATTACH_BEGIN \
         HERMES_FLEET_FAILURE_ATTACH_BEGIN \
         HERMES_FLEET_FALLBACK_SKIP_BEGIN \
-        HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1
+        HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 \
+        HERMES_PROVIDER_SURVIVAL_V1 \
+        HERMES_PROVIDER_FAILOVER_DEADLINE_V1
     do
         if ! grep -RqsF "$marker" "$out/agent" "$out/tools"; then
             echo "ERROR: expected Hermes marker missing after materialization: $marker" >&2
