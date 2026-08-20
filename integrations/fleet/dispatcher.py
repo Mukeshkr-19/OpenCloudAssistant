@@ -1270,6 +1270,12 @@ class HermesFleet:
 
 
         mapping = {
+            "account_quota":
+                (
+                    "quotaCooldownSeconds",
+                    21600,
+                ),
+
             "quota":
                 (
                     "quotaCooldownSeconds",
@@ -1584,6 +1590,7 @@ class HermesFleet:
         if kind in {
             "auth",
             "account_access",
+            "account_quota",
             "network",
         }:
 

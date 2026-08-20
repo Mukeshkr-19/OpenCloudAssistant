@@ -489,6 +489,24 @@ def test_timeout_candidate_isolation() -> None:
     )
 
 
+def test_account_quota_provider_scope() -> None:
+
+    with FleetCase() as case:
+
+        first = selected(case)
+        case.fleet.failure(first, "account_quota")
+
+        require(
+            provider_cooling(case, "nvidia"),
+            "account-wide quota did not cool provider",
+        )
+
+        fallback = selected(case)
+        assert_model(fallback, "openrouter/free")
+
+    print("PASS account-scoped quota isolation")
+
+
 
 def test_routing_v1_profile_selection() -> None:
 
@@ -1156,6 +1174,7 @@ def main() -> None:
 
     test_candidate_isolation_and_success_recovery()
     test_quota_candidate_isolation()
+    test_account_quota_provider_scope()
     test_timeout_candidate_isolation()
     test_routing_v1_profile_selection()
     test_routing_v1_discovered_fallback_and_final_escape()
