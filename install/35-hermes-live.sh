@@ -22,6 +22,7 @@ PATCH12="$ROOT/integrations/hermes/hermes-run-now-once-provider-quiet.patch"
 PATCH13="$ROOT/integrations/hermes/hermes-cron-control-fast-path.patch"
 PATCH14="$ROOT/integrations/hermes/hermes-career-geography-search.patch"
 PATCH15="$ROOT/integrations/hermes/hermes-career-search-waves.patch"
+PATCH16="$ROOT/integrations/hermes/hermes-career-candidate-rejection.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
@@ -113,6 +114,11 @@ require_source() {
         echo "ERROR: Hermes career search-waves patch missing" >&2
         exit 1
     }
+
+    test -f "$PATCH16" || {
+        echo "ERROR: Hermes career candidate-rejection patch missing" >&2
+        exit 1
+    }
 }
 
 compile_file() {
@@ -182,6 +188,10 @@ validate_tree() {
     }
     grep -qF "HERMES_CRON_SEARCH_WAVES_V1" "$tree/cron/output_contract.py" || {
         echo "ERROR: career search-waves marker missing in output_contract.py" >&2
+        return 1
+    }
+    grep -qF "HERMES_CRON_CANDIDATE_REJECTION_V1" "$tree/cron/output_contract.py" || {
+        echo "ERROR: career candidate-rejection marker missing in output_contract.py" >&2
         return 1
     }
     grep -qF "HERMES_CRON_SEARCH_WAVES_V1" "$tree/agent/conversation_loop.py" || {
@@ -275,6 +285,10 @@ materialize() {
     echo "HERMES_INSTALL: checking career search-waves orchestration patch"
     git -C "$out" apply --check "$PATCH15"
     git -C "$out" apply "$PATCH15"
+
+    echo "HERMES_INSTALL: checking career candidate-rejection patch"
+    git -C "$out" apply --check "$PATCH16"
+    git -C "$out" apply "$PATCH16"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"

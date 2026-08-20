@@ -26,6 +26,7 @@ test -f tests/reliability/cron-run-now-once.py
 test -f tests/reliability/cron-control-fast-path.py
 test -f tests/reliability/cron-career-geography.py
 test -f tests/reliability/cron-career-search-waves.py
+test -f tests/reliability/cron-career-candidate-rejection.py
 test -x tests/reliability/cron-routing-v1.py
 test -x tests/reliability/messaging-delivery.py
 test -x tests/reliability/self-repair-rollback.sh
@@ -98,6 +99,8 @@ if [ -f "$HERMES_ROOT/tools/delegate_tool.py" ]; then
     PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT"         "$HERMES_PYTHON"         tests/reliability/cron-career-geography.py
 
     PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT"         "$HERMES_PYTHON"         tests/reliability/cron-career-search-waves.py
+
+    PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT"         "$HERMES_PYTHON"         tests/reliability/cron-career-candidate-rejection.py
 
     PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$HERMES_ROOT"         "$HERMES_PYTHON"         tests/reliability/messaging-delivery.py
 
