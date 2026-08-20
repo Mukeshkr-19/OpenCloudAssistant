@@ -27,6 +27,7 @@ PATCH_REJECT="$ROOT/integrations/hermes/hermes-career-candidate-rejection.patch"
 PATCH_SEARCH="$ROOT/integrations/hermes/hermes-search-reliability.patch"
 PATCH_PROVIDER_SURVIVAL="$ROOT/integrations/hermes/hermes-provider-survival.patch"
 PATCH_PROVIDER_SURVIVAL_FOLLOWUP="$ROOT/integrations/hermes/hermes-provider-survival-followup.patch"
+PATCH_PROVIDER_TOOL_COMPAT="$ROOT/integrations/hermes/hermes-provider-tool-call-compatibility.patch"
 
 usage() {
     echo "Usage:"
@@ -79,6 +80,7 @@ materialize() {
     local patch17="$rendered/hermes-search-reliability.patch"
     local patch18="$rendered/hermes-provider-survival.patch"
     local patch19="$rendered/hermes-provider-survival-followup.patch"
+    local patch20="$rendered/hermes-provider-tool-call-compatibility.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -99,6 +101,7 @@ materialize() {
     require_file "$PATCH_SEARCH"
     require_file "$PATCH_PROVIDER_SURVIVAL"
     require_file "$PATCH_PROVIDER_SURVIVAL_FOLLOWUP"
+    require_file "$PATCH_PROVIDER_TOOL_COMPAT"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -136,6 +139,7 @@ materialize() {
     render_patch "$PATCH_SEARCH" "$patch17"
     render_patch "$PATCH_PROVIDER_SURVIVAL" "$patch18"
     render_patch "$PATCH_PROVIDER_SURVIVAL_FOLLOWUP" "$patch19"
+    render_patch "$PATCH_PROVIDER_TOOL_COMPAT" "$patch20"
 
     # The exported archive is intentionally not a Git checkout.  Create a
     # temporary local index so git apply validates and applies patches to the
@@ -226,6 +230,10 @@ materialize() {
     echo "MATERIALIZE: checking provider survival acceptance follow-up patch"
     git -C "$out" apply --check --unidiff-zero "$patch19"
     git -C "$out" apply --unidiff-zero "$patch19"
+
+    echo "MATERIALIZE: checking provider tool-call compatibility patch"
+    git -C "$out" apply --check --unidiff-zero "$patch20"
+    git -C "$out" apply --unidiff-zero "$patch20"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"

@@ -26,6 +26,7 @@ PATCH16="$ROOT/integrations/hermes/hermes-career-candidate-rejection.patch"
 PATCH17="$ROOT/integrations/hermes/hermes-search-reliability.patch"
 PATCH18="$ROOT/integrations/hermes/hermes-provider-survival.patch"
 PATCH19="$ROOT/integrations/hermes/hermes-provider-survival-followup.patch"
+PATCH20="$ROOT/integrations/hermes/hermes-provider-tool-call-compatibility.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
@@ -135,6 +136,11 @@ require_source() {
 
     test -f "$PATCH19" || {
         echo "ERROR: Hermes provider-survival follow-up patch missing" >&2
+        exit 1
+    }
+
+    test -f "$PATCH20" || {
+        echo "ERROR: Hermes provider tool-call compatibility patch missing" >&2
         exit 1
     }
 }
@@ -325,6 +331,10 @@ materialize() {
     echo "HERMES_INSTALL: checking provider survival acceptance follow-up patch"
     git -C "$out" apply --check --unidiff-zero "$PATCH19"
     git -C "$out" apply --unidiff-zero "$PATCH19"
+
+    echo "HERMES_INSTALL: checking provider tool-call compatibility patch"
+    git -C "$out" apply --check --unidiff-zero "$PATCH20"
+    git -C "$out" apply --unidiff-zero "$PATCH20"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
