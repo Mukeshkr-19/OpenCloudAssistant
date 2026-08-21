@@ -26,10 +26,20 @@ file_mode() {
     stat -c "%a" "$1" 2>/dev/null || stat -f "%Lp" "$1" 2>/dev/null || echo unknown
 }
 
+# Provider keys may live in OpenCloud config (preferred) or Hermes .env
+# (gateway/fleet refresh load Hermes credentials via hermes_cli). Doctor must
+# not SKIP "not configured" when the live runtime already has keys.
+HERMES_ENV="${HERMES_HOME:-$HOME/.hermes}/.env"
+
 has_value() {
     local key="$1"
-    [ -f "$CONFIG" ] || return 1
-    grep -Eq "^${key}=.+" "$CONFIG"
+    if [ -f "$CONFIG" ] && grep -Eq "^${key}=.+" "$CONFIG"; then
+        return 0
+    fi
+    if [ -f "$HERMES_ENV" ] && grep -Eq "^${key}=.+" "$HERMES_ENV"; then
+        return 0
+    fi
+    return 1
 }
 
 POLICY="$ROOT/config/fleet/hermes-fleet-policy.json"

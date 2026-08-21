@@ -5,10 +5,19 @@ CONFIG="${OPEN_CLOUD_CONFIG:-$HOME/.opencloud/config.env}"
 DIR="$(dirname "$CONFIG")"
 COMMAND="${1:-status}"
 
+# Match doctor-fleet: OpenCloud config.env preferred; Hermes .env also counts
+# because the gateway and Fleet refresh resolve credentials via Hermes.
+HERMES_ENV="${HERMES_HOME:-$HOME/.hermes}/.env"
+
 has_value() {
     local key="$1"
-    [ -f "$CONFIG" ] || return 1
-    grep -Eq "^${key}=.+" "$CONFIG"
+    if [ -f "$CONFIG" ] && grep -Eq "^${key}=.+" "$CONFIG"; then
+        return 0
+    fi
+    if [ -f "$HERMES_ENV" ] && grep -Eq "^${key}=.+" "$HERMES_ENV"; then
+        return 0
+    fi
+    return 1
 }
 
 set_key() {

@@ -42,6 +42,7 @@ fi
 "$ROOT/tests/smoke/uninstall.sh"
 
 "$ROOT/tests/smoke/doctor-runtime.sh"
+"$ROOT/tests/smoke/doctor-fleet-credentials.sh"
 
 "$ROOT/tests/smoke/release.sh"
 
