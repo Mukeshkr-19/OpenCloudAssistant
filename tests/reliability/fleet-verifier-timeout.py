@@ -10,12 +10,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 hermes_cli = types.ModuleType("hermes_cli")
 runtime = types.ModuleType("hermes_cli.runtime_provider")
-runtime.resolve_runtime_provider = lambda *args, **kwargs: None
+runtime.resolve_runtime_provider = lambda *args, **kwargs: {
+    "provider": "nvidia", "base_url": "https://example.invalid", "api_key": "key",
+}
 agent = types.ModuleType("agent")
 credentials = types.ModuleType("agent.credential_pool")
 credentials.load_pool = lambda: None
+metadata = types.ModuleType("agent.model_metadata")
+metadata.MINIMUM_CONTEXT_LENGTH = 64_000
+metadata.get_model_context_length = lambda *args, **kwargs: 128_000
 sys.modules.update({"hermes_cli": hermes_cli, "hermes_cli.runtime_provider": runtime,
-                    "agent": agent, "agent.credential_pool": credentials})
+                    "agent": agent, "agent.credential_pool": credentials,
+                    "agent.model_metadata": metadata})
 spec = importlib.util.spec_from_file_location("fleet_verify", ROOT / "integrations/fleet/registry/verify.py")
 verify = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verify)

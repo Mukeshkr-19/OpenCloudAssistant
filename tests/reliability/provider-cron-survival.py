@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import importlib
 import importlib.util
 import os
 import subprocess
@@ -9,6 +10,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -91,6 +93,38 @@ def main() -> None:
             require(result.returncode == 0, result.stderr or result.stdout)
 
         bridge = load("opencloud_provider_survival_bridge", tree / "agent/hermes_fleet_bridge.py")
+
+        # Selection must apply the same context floor as AIAgent construction,
+        # before a candidate can be pinned to an interactive session.
+        runtime_provider = importlib.import_module("hermes_cli.runtime_provider")
+        model_metadata = importlib.import_module("agent.model_metadata")
+        context_candidate = candidate("nvidia", "nvidia", "nvidia/too-small", 0)
+        with (
+            patch.object(runtime_provider, "resolve_runtime_provider", return_value={
+                "provider": "nvidia",
+                "base_url": "https://example.invalid/v1",
+                "api_key": "test",
+            }),
+            patch.object(model_metadata, "get_model_context_length", return_value=16_000),
+        ):
+            try:
+                bridge._runtime(context_candidate)
+            except bridge.FleetBridgeError:
+                pass
+            else:
+                raise AssertionError("sub-64K model passed Fleet runtime eligibility")
+        with (
+            patch.object(runtime_provider, "resolve_runtime_provider", return_value={
+                "provider": "nvidia",
+                "base_url": "https://example.invalid/v1",
+                "api_key": "test",
+            }),
+            patch.object(model_metadata, "get_model_context_length", return_value=128_000),
+        ):
+            require(
+                bridge._runtime(context_candidate)["provider"] == "nvidia",
+                "Hermes-compatible candidate was rejected",
+            )
 
         require(bridge.MAX_PROVIDER_ATTEMPTS_PER_REQUEST == 6, "request attempt bound drifted")
         require(bridge.MAX_ATTEMPTS_PER_PROVIDER == 2, "provider attempt bound drifted")
