@@ -1,0 +1,132 @@
+diff --git a/agent/hermes_fleet_bridge.py b/agent/hermes_fleet_bridge.py
+--- a/agent/hermes_fleet_bridge.py
++++ b/agent/hermes_fleet_bridge.py
+@@ -775,0 +776,23 @@
++    # HERMES_FLEET_CONTEXT_ELIGIBILITY_V1
++    # Fleet's synthetic tool probe alone is insufficient: Hermes refuses to
++    # initialize models whose effective context window is below its runtime
++    # floor.  Apply the same metadata resolver before pinning a candidate so a
++    # startup-incompatible model is cooled and selection can continue.
++    from agent.model_metadata import (
++        MINIMUM_CONTEXT_LENGTH,
++        get_model_context_length,
++    )
++
++    context_length = get_model_context_length(
++        _model(candidate),
++        base_url=runtime.get("base_url", "") or "",
++        api_key=runtime.get("api_key", "") or "",
++        provider=runtime.get("provider") or _provider(candidate),
++    )
++
++    if context_length and context_length < MINIMUM_CONTEXT_LENGTH:
++        raise FleetBridgeError(
++            f"model context {context_length} is below Hermes minimum "
++            f"{MINIMUM_CONTEXT_LENGTH}"
++        )
++
+diff --git a/cron/search_reliability.py b/cron/search_reliability.py
+--- a/cron/search_reliability.py
++++ b/cron/search_reliability.py
+@@ -5,0 +6 @@
++import threading
+@@ -67,0 +69 @@
++        self._lock = threading.RLock()
+@@ -101,6 +103,11 @@
+-        if time.monotonic() - self.started >= MAX_SEARCH_ORCHESTRATION_TIME: return False, SEARCH_TIMEOUT
+-        if self.search_calls >= MAX_SEARCH_CALLS: return False, SEARCH_UNAVAILABLE
+-        state = self.states.setdefault(provider, SearchProviderState(provider))
+-        if state.circuit_open: return False, SEARCH_UNAVAILABLE
+-        self.search_calls += 1
+-        return True, None
++        # HERMES_CAREER_SEARCH_ATOMIC_BOUNDS_V1
++        # Tool calls from one model response may execute concurrently.  The
++        # check and increment must be one operation or every caller can observe
++        # the same stale count and collectively exceed the run budget.
++        with self._lock:
++            if time.monotonic() - self.started >= MAX_SEARCH_ORCHESTRATION_TIME: return False, SEARCH_TIMEOUT
++            if self.search_calls >= MAX_SEARCH_CALLS: return False, SEARCH_UNAVAILABLE
++            state = self.states.setdefault(provider, SearchProviderState(provider))
++            if state.circuit_open: return False, SEARCH_UNAVAILABLE
++            self.search_calls += 1
++            return True, None
+@@ -109,19 +116,20 @@
+-        state = self.states.setdefault(provider, SearchProviderState(provider))
+-        state.attempts += 1
+-        status = classify_search_response(response)
+-        if status in (SEARCH_SUCCESS_WITH_RESULTS, SEARCH_SUCCESS_EMPTY):
+-            state.successes += 1
+-            if status == SEARCH_SUCCESS_EMPTY: state.empty_successes += 1
+-            state.consecutive_failures = 0
+-        else:
+-            state.failures += 1
+-            state.consecutive_failures += 1
+-            state.distinct_failed_queries.add(query)
+-            state.last_failure_class = status
+-            self.search_failures += 1
+-            if len(state.distinct_failed_queries) >= MAX_SEARCH_FAILURES:
+-                state.circuit_open = True
+-                logger.warning("CAREER_SEARCH_CIRCUIT_OPEN provider=%s failures=%d", provider, state.failures)
+-        if provider not in self.provider_attempt_order: self.provider_attempt_order.append(provider)
+-        logger.info("CAREER_SEARCH_RESULT provider=%s status=%s calls=%d failures=%d wave=%s", provider, status, self.search_calls, self.search_failures, self._wave())
+-        return status
++        with self._lock:
++            state = self.states.setdefault(provider, SearchProviderState(provider))
++            state.attempts += 1
++            status = classify_search_response(response)
++            if status in (SEARCH_SUCCESS_WITH_RESULTS, SEARCH_SUCCESS_EMPTY):
++                state.successes += 1
++                if status == SEARCH_SUCCESS_EMPTY: state.empty_successes += 1
++                state.consecutive_failures = 0
++            else:
++                state.failures += 1
++                state.consecutive_failures += 1
++                state.distinct_failed_queries.add(query)
++                state.last_failure_class = status
++                self.search_failures += 1
++                if len(state.distinct_failed_queries) >= MAX_SEARCH_FAILURES:
++                    state.circuit_open = True
++                    logger.warning("CAREER_SEARCH_CIRCUIT_OPEN provider=%s failures=%d", provider, state.failures)
++            if provider not in self.provider_attempt_order: self.provider_attempt_order.append(provider)
++            logger.info("CAREER_SEARCH_RESULT provider=%s status=%s calls=%d failures=%d wave=%s", provider, status, self.search_calls, self.search_failures, self._wave())
++            return status
+@@ -129,4 +137,8 @@
+-    def note_fallback(self, provider: str, alternate: str) -> None:
+-        self.provider_switches += 1
+-        self.fallback_used = True
+-        logger.warning("CAREER_SEARCH_FALLBACK primary=%s alternate=%s switches=%d", provider, alternate, self.provider_switches)
++    def note_fallback(self, provider: str, alternate: str) -> bool:
++        with self._lock:
++            if self.provider_switches >= MAX_PROVIDER_SWITCHES:
++                return False
++            self.provider_switches += 1
++            self.fallback_used = True
++            logger.warning("CAREER_SEARCH_FALLBACK primary=%s alternate=%s switches=%d", provider, alternate, self.provider_switches)
++            return True
+@@ -135,6 +147,7 @@
+-        if time.monotonic() - self.started >= MAX_SEARCH_ORCHESTRATION_TIME: return [], SEARCH_TIMEOUT
+-        if self.extract_calls >= MAX_EXTRACT_CALLS: return [], SEARCH_UNAVAILABLE
+-        self.extract_calls += 1
+-        valid = [u.strip() for u in urls if re.match(r"^https?://[^\s]+$", str(u or "").strip(), re.I) and "..." not in str(u)]
+-        if not valid: return [], SEARCH_INVALID_REQUEST
+-        return valid[:5], None
++        with self._lock:
++            if time.monotonic() - self.started >= MAX_SEARCH_ORCHESTRATION_TIME: return [], SEARCH_TIMEOUT
++            if self.extract_calls >= MAX_EXTRACT_CALLS: return [], SEARCH_UNAVAILABLE
++            self.extract_calls += 1
++            valid = [u.strip() for u in urls if re.match(r"^https?://[^\s]+$", str(u or "").strip(), re.I) and "..." not in str(u)]
++            if not valid: return [], SEARCH_INVALID_REQUEST
++            return valid[:5], None
+diff --git a/tools/web_tools.py b/tools/web_tools.py
+--- a/tools/web_tools.py
++++ b/tools/web_tools.py
+@@ -768 +768,3 @@
+-                        _career_controller.note_fallback(provider.name, "firecrawl")
++                        _claimed = _career_controller.note_fallback(
++                            provider.name, "firecrawl"
++                        )
+@@ -771,2 +773,2 @@
+-                        )
+-                        if _ok:
++                        ) if _claimed else (False, None)
++                        if _claimed and _ok:

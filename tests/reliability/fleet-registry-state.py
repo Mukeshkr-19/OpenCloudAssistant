@@ -24,13 +24,23 @@ def main():
     model_switch = types.ModuleType("hermes_cli.model_switch")
     model_switch.list_provider_models = lambda _: []
     runtime = types.ModuleType("hermes_cli.runtime_provider")
-    runtime.resolve_runtime_provider = lambda *args, **kwargs: None
+    runtime.resolve_runtime_provider = lambda *args, **kwargs: {
+        "provider": kwargs.get("requested", ""),
+        "base_url": "https://example.invalid/v1",
+        "api_key": "test",
+    }
     agent = types.ModuleType("agent")
     credentials = types.ModuleType("agent.credential_pool")
     credentials.load_pool = lambda: None
+    metadata = types.ModuleType("agent.model_metadata")
+    metadata.MINIMUM_CONTEXT_LENGTH = 64_000
+    metadata.get_model_context_length = lambda model, **kwargs: (
+        16_000 if model == "too-small" else 128_000
+    )
     sys.modules.update({"hermes_cli": hermes_cli, "hermes_cli.model_switch": model_switch,
                         "hermes_cli.runtime_provider": runtime, "agent": agent,
-                        "agent.credential_pool": credentials})
+                        "agent.credential_pool": credentials,
+                        "agent.model_metadata": metadata})
     refresh = load("fleet_refresh", ROOT / "integrations/fleet/registry/refresh.py")
     verify = load("fleet_verify", ROOT / "integrations/fleet/registry/verify.py")
 
@@ -108,12 +118,30 @@ def main():
         verify.main()
         assert json.loads(output.read_text())["productionModels"]["zen"] == []
 
+        # Tool-call success cannot override Hermes' hard runtime context floor.
+        too_small = {
+            "models": [{"provider": "nvidia", "providerGroup": "nvidia",
+                        "id": "too-small", "verification": "verified",
+                        "verifiedAtMs": 3_000_000_000, "lastProbeMs": 3_000_000_000,
+                        "productionEligible": True, "excludedReason": None}],
+            "productionModels": {"zen": [], "nvidia": ["too-small"]},
+        }
+        output.write_text(json.dumps(too_small))
+        verify.TARGET = {"zen": 0, "nvidia": 0}
+        verify.time.time = lambda: 3_000_001
+        verify.main()
+        rejected = json.loads(output.read_text())
+        assert rejected["models"][0]["verification"] == "incompatible"
+        assert rejected["models"][0]["lastProbeReason"] == "context_below_hermes_minimum"
+        assert rejected["productionModels"]["nvidia"] == []
+
     print("PASS failed discovery retains degraded last-known-good rows")
     print("PASS successful discovery authoritatively removes absent models")
     print("PASS model verification freshness expires at configured TTL")
     print("PASS stale verified model is re-probed and refreshes verifiedAtMs")
     print("PASS failed stale re-probe demotes model from production")
     print("PASS stale verified model cannot survive an exhausted probe budget")
+    print("PASS Hermes-incompatible context cannot remain production eligible")
     print("FLEET_REGISTRY_STATE_RELIABILITY: PASS")
 
 

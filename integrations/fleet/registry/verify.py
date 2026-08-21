@@ -39,6 +39,30 @@ MAX_ATTEMPTS = {
 VERIFICATION_TTL_MS = verification_ttl_ms()
 
 
+def hermes_context_compatible(provider, model, runtime=None):
+    """Return whether Hermes can initialize this candidate's context window."""
+    try:
+        if runtime is None:
+            runtime = runtime_for(provider, model)
+        from agent.model_metadata import (
+            MINIMUM_CONTEXT_LENGTH,
+            get_model_context_length,
+        )
+        context_length = get_model_context_length(
+            model,
+            base_url=runtime.get("base_url", "") or "",
+            api_key=runtime.get("api_key", "") or "",
+            provider=runtime.get("provider") or provider,
+        )
+    except Exception:
+        return False, None
+
+    return (
+        not context_length or context_length >= MINIMUM_CONTEXT_LENGTH,
+        context_length,
+    )
+
+
 def verification_is_fresh(row, now_ms):
     if row.get("verification") != "verified":
         return False
@@ -543,6 +567,19 @@ def probe(
             "native_runtime_resolution_failed",
             True,
             None,
+        )
+
+    context_ok, _ = hermes_context_compatible(
+        provider,
+        model,
+        runtime,
+    )
+    if not context_ok:
+        return (
+            False,
+            "context_below_hermes_minimum",
+            False,
+            endpoint,
         )
 
 
@@ -1113,6 +1150,7 @@ def main():
 
                 if reason in (
                     "no_tool_call",
+                    "context_below_hermes_minimum",
                     "model_or_route_unavailable_http_403",
                     "model_or_route_unavailable_http_404",
                 ):
@@ -1172,6 +1210,19 @@ def main():
         if group not in production:
             continue
 
+        context_ok = True
+        if (
+            row.get("verification") == "verified"
+            and verification_is_fresh(row, now_ms)
+        ):
+            context_ok, _ = hermes_context_compatible(
+                row.get("provider"),
+                row.get("id"),
+            )
+            if not context_ok:
+                row["verification"] = "incompatible"
+                row["lastProbeReason"] = "context_below_hermes_minimum"
+
 
         eligible = (
             row.get(
@@ -1185,6 +1236,7 @@ def main():
             and likely_general(
                 row
             )
+            and context_ok
         )
 
 

@@ -28,6 +28,7 @@ PATCH_SEARCH="$ROOT/integrations/hermes/hermes-search-reliability.patch"
 PATCH_PROVIDER_SURVIVAL="$ROOT/integrations/hermes/hermes-provider-survival.patch"
 PATCH_PROVIDER_SURVIVAL_FOLLOWUP="$ROOT/integrations/hermes/hermes-provider-survival-followup.patch"
 PATCH_PROVIDER_TOOL_COMPAT="$ROOT/integrations/hermes/hermes-provider-tool-call-compatibility.patch"
+PATCH_RUNTIME_ELIGIBILITY="$ROOT/integrations/hermes/hermes-runtime-eligibility-search-bounds.patch"
 
 usage() {
     echo "Usage:"
@@ -81,6 +82,7 @@ materialize() {
     local patch18="$rendered/hermes-provider-survival.patch"
     local patch19="$rendered/hermes-provider-survival-followup.patch"
     local patch20="$rendered/hermes-provider-tool-call-compatibility.patch"
+    local patch21="$rendered/hermes-runtime-eligibility-search-bounds.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -102,6 +104,7 @@ materialize() {
     require_file "$PATCH_PROVIDER_SURVIVAL"
     require_file "$PATCH_PROVIDER_SURVIVAL_FOLLOWUP"
     require_file "$PATCH_PROVIDER_TOOL_COMPAT"
+    require_file "$PATCH_RUNTIME_ELIGIBILITY"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -140,6 +143,7 @@ materialize() {
     render_patch "$PATCH_PROVIDER_SURVIVAL" "$patch18"
     render_patch "$PATCH_PROVIDER_SURVIVAL_FOLLOWUP" "$patch19"
     render_patch "$PATCH_PROVIDER_TOOL_COMPAT" "$patch20"
+    render_patch "$PATCH_RUNTIME_ELIGIBILITY" "$patch21"
 
     # The exported archive is intentionally not a Git checkout.  Create a
     # temporary local index so git apply validates and applies patches to the
@@ -235,6 +239,10 @@ materialize() {
     git -C "$out" apply --check --unidiff-zero "$patch20"
     git -C "$out" apply --unidiff-zero "$patch20"
 
+    echo "MATERIALIZE: checking runtime eligibility + atomic search bounds patch"
+    git -C "$out" apply --check --unidiff-zero "$patch21"
+    git -C "$out" apply --unidiff-zero "$patch21"
+
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
 
@@ -247,7 +255,8 @@ materialize() {
         HERMES_FLEET_FALLBACK_SKIP_BEGIN \
         HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 \
         HERMES_PROVIDER_SURVIVAL_V1 \
-        HERMES_PROVIDER_FAILOVER_DEADLINE_V1
+        HERMES_PROVIDER_FAILOVER_DEADLINE_V1 \
+        HERMES_FLEET_CONTEXT_ELIGIBILITY_V1
     do
         if ! grep -RqsF "$marker" "$out/agent" "$out/tools"; then
             echo "ERROR: expected Hermes marker missing after materialization: $marker" >&2
@@ -265,7 +274,8 @@ materialize() {
         HERMES_CRON_RAW_TOOL_PROTOCOL_GUARD_V1 \
         HERMES_CRON_FAILURE_CLASSIFICATION_V1 \
         HERMES_ROUTING_V1_CRON_PROFILE \
-        HERMES_CRON_STRICT_SILENT_DELIVERY_V1
+        HERMES_CRON_STRICT_SILENT_DELIVERY_V1 \
+        HERMES_CAREER_SEARCH_ATOMIC_BOUNDS_V1
     do
         if ! grep -RqsF "$cron_marker" "$out/tools" "$out/cron" "$out/model_tools.py"; then
             echo "ERROR: expected cron tool-safety marker missing after materialization: $cron_marker" >&2

@@ -2,6 +2,7 @@
 """Deterministic, network-free tests for the career search reliability layer."""
 
 import asyncio
+import concurrent.futures
 import json
 import os
 import subprocess
@@ -95,6 +96,27 @@ def main() -> None:
         fresh = CareerSearchController()
         assert fresh.search_calls == 0 and not fresh.states
 
+        # Parallel tool-call execution cannot race past the run budget.
+        concurrent_controller = CareerSearchController()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
+            decisions = list(pool.map(
+                lambda i: concurrent_controller.allow_search_attempt(
+                    f"parallel-{i}", "ddgs"
+                )[0],
+                range(64),
+            ))
+        assert sum(decisions) == 18
+        assert concurrent_controller.search_calls == 18
+
+        fallback_controller = CareerSearchController()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+            claims = list(pool.map(
+                lambda _: fallback_controller.note_fallback("ddgs", "firecrawl"),
+                range(32),
+            ))
+        assert sum(claims) == 1
+        assert fallback_controller.provider_switches == 1
+
         # Query policy removes placeholders and supplies role/stage/geography.
         query, error = fresh.normalize_query("Cloud Engineering internships near me companycareers.com")
         assert error is None
@@ -145,6 +167,8 @@ def main() -> None:
     print("PASS repeated same-query failures do not open the circuit")
     print("PASS open circuit prevents further provider calls")
     print("PASS hard search bound and per-run reset")
+    print("PASS parallel search calls cannot exceed the run budget")
+    print("PASS parallel provider fallback remains single-switch")
     print("PASS deterministic query normalization and geography")
     print("PASS web extraction binds the run-local career controller")
     print("PASS empty results do not degrade coverage")
