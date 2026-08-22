@@ -44,7 +44,7 @@ PLAN="$(OPEN_CLOUD_CHANNELS_STATE="$STATE" install/95-services.sh --plan)"
 [[ "$PLAN" == *"Guarded runtime update timer: REQUIRED"* ]]
 [[ "$PLAN" == *"Hermes gateway: SKIP"* ]]
 
-scripts/runtime-update.sh --check
+OPEN_CLOUD_ROOT="$ROOT" scripts/runtime-update.sh --check
 
 echo "SMOKE: Telegram plan"
 
