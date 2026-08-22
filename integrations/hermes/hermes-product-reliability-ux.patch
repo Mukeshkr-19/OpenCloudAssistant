@@ -10,7 +10,8 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 +# conversational turns. Not an exact-string "Hi" hack: matches short greeting /
 +# pleasantry intents and strips side-effect toolsets for that turn only.
 +# Gateway caches agents across turns: always restore before filtering again and
-+# before returning so later task turns keep their tools.
++# before returning so later task turns keep their tools. Apply after
++# build_turn_context (MCP between-turns refresh rebuilds agent.tools).
 +_OPENCLOUD_SIDE_EFFECT_TOOLS = frozenset({
 +    "browser_navigate", "browser_snapshot", "browser_click", "browser_type",
 +    "browser_scroll", "browser_back", "browser_press", "browser_wait",
@@ -92,11 +93,12 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
  def run_conversation(
      agent,
      user_message: Any,
-@@ -1291,6 +1375,16 @@
-     agent._last_compression_attempt_recorded = False
-     agent._last_compression_attempt_in_place = None
+@@ -1333,6 +1417,17 @@
+     _plugin_user_context = _ctx.plugin_user_context
+     _ext_prefetch_cache = _ctx.ext_prefetch_cache
  
-+    # HERMES_OPENCLOUD_TOOL_INTENT_V1
++    # HERMES_OPENCLOUD_TOOL_INTENT_V1 — after build_turn_context so between-turns
++    # MCP refresh cannot re-expand side-effect tools for greeting turns.
 +    try:
 +        _greeting_src = persist_user_message if persist_user_message is not None else user_message
 +        if isinstance(_greeting_src, str):
@@ -106,10 +108,9 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 +    except Exception:
 +        pass
 +
-     # ── Per-turn setup (the prologue) ──
-     # All once-per-turn setup — stdio guarding, retry-counter resets, user
-     # message sanitization, todo/nudge hydration, system-prompt restore-or-
-@@ -7538,6 +7632,7 @@
+     # Commentary deduplication spans all provider continuations and tool calls
+     # within one user turn, but must not suppress the same phrase next turn.
+@@ -7538,6 +7633,7 @@
      # (god-file decomposition Phase 1 step 4). Behavior-neutral: the assembled
      # result dict is returned exactly as before.
      from agent.turn_finalizer import finalize_turn
