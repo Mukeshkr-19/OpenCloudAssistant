@@ -29,11 +29,12 @@ PATCH19="$ROOT/integrations/hermes/hermes-provider-survival-followup.patch"
 PATCH20="$ROOT/integrations/hermes/hermes-provider-tool-call-compatibility.patch"
 PATCH21="$ROOT/integrations/hermes/hermes-runtime-eligibility-search-bounds.patch"
 PATCH22="$ROOT/integrations/hermes/hermes-product-reliability-ux.patch"
+PATCH23="$ROOT/integrations/hermes/hermes-photon-http-events.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
-FILES="tools/registry.py hermes_state.py tools/browser_camofox.py tools/browser_tool.py gateway/slash_commands.py hermes_cli/commands.py agent/agent_init.py agent/conversation_loop.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py tools/tool_search.py tools/web_tools.py plugins/web/ddgs/provider.py cron/scheduler.py cron/output_contract.py cron/search_reliability.py gateway/run.py gateway/cron_control_fast_path.py model_tools.py agent/hermes_fleet_bridge.py agent/opencloud_routing_v1.py hermes_cli/cli_agent_setup_mixin.py agent/provider_metadata_guard.py agent/transports/chat_completions.py agent/transports/codex.py agent/opencloud_self_repair.py tools/cronjob_tools.py"
-MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 HERMES_PROVIDER_SURVIVAL_V1 HERMES_PROVIDER_FAILOVER_DEADLINE_V1 HERMES_FLEET_CONTEXT_ELIGIBILITY_V1 HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1 HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1 HERMES_CRON_OUTPUT_CONTRACT_V1 HERMES_OPENCLOUD_METADATA_GUARD_V1 HERMES_OPENCLOUD_SELF_REPAIR_V1 HERMES_CRON_DUPLICATE_GUARD_V1 HERMES_CRON_WORKFLOW_IDENTITY_V1 HERMES_CRON_REPEAT_COERCION_V1 HERMES_CRON_RUN_NOW_ONCE_V1 HERMES_SEARCH_EMPTY_RESULT_SEMANTICS_V1 HERMES_CAREER_SEARCH_CONTROLLER_V1 HERMES_CAREER_SEARCH_CONTEXT_V1 HERMES_CAREER_SEARCH_ATOMIC_BOUNDS_V1 HERMES_OPENCLOUD_MODEL_ALIAS_V1 HERMES_OPENCLOUD_FLEET_MODEL_UX_V1 HERMES_OPENCLOUD_CAMOFOX_SCOPE_V1 HERMES_OPENCLOUD_BROWSER_AVAIL_V1 HERMES_OPENCLOUD_SYSTEM_PROMPT_V1 HERMES_OPENCLOUD_TOOL_INTENT_V1"
+FILES="tools/registry.py hermes_state.py tools/browser_camofox.py tools/browser_tool.py gateway/slash_commands.py hermes_cli/commands.py agent/agent_init.py agent/conversation_loop.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py tools/tool_search.py tools/web_tools.py plugins/web/ddgs/provider.py cron/scheduler.py cron/output_contract.py cron/search_reliability.py gateway/run.py gateway/cron_control_fast_path.py model_tools.py agent/hermes_fleet_bridge.py agent/opencloud_routing_v1.py hermes_cli/cli_agent_setup_mixin.py agent/provider_metadata_guard.py agent/transports/chat_completions.py agent/transports/codex.py agent/opencloud_self_repair.py tools/cronjob_tools.py plugins/platforms/photon/adapter.py"
+MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 HERMES_PROVIDER_SURVIVAL_V1 HERMES_PROVIDER_FAILOVER_DEADLINE_V1 HERMES_FLEET_CONTEXT_ELIGIBILITY_V1 HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1 HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1 HERMES_CRON_OUTPUT_CONTRACT_V1 HERMES_OPENCLOUD_METADATA_GUARD_V1 HERMES_OPENCLOUD_SELF_REPAIR_V1 HERMES_CRON_DUPLICATE_GUARD_V1 HERMES_CRON_WORKFLOW_IDENTITY_V1 HERMES_CRON_REPEAT_COERCION_V1 HERMES_CRON_RUN_NOW_ONCE_V1 HERMES_SEARCH_EMPTY_RESULT_SEMANTICS_V1 HERMES_CAREER_SEARCH_CONTROLLER_V1 HERMES_CAREER_SEARCH_CONTEXT_V1 HERMES_CAREER_SEARCH_ATOMIC_BOUNDS_V1 HERMES_OPENCLOUD_MODEL_ALIAS_V1 HERMES_OPENCLOUD_FLEET_MODEL_UX_V1 HERMES_OPENCLOUD_CAMOFOX_SCOPE_V1 HERMES_OPENCLOUD_BROWSER_AVAIL_V1 HERMES_OPENCLOUD_SYSTEM_PROMPT_V1 HERMES_OPENCLOUD_TOOL_INTENT_V1 HERMES_OPENCLOUD_PHOTON_HTTP_EVENTS_V1"
 
 require_source() {
     test -d "$HERMES_ROOT/.git" || {
@@ -153,6 +154,11 @@ require_source() {
 
     test -f "$PATCH22" || {
         echo "ERROR: Hermes product reliability UX patch missing" >&2
+        exit 1
+    }
+
+    test -f "$PATCH23" || {
+        echo "ERROR: Hermes Photon HTTP events patch missing" >&2
         exit 1
     }
 
@@ -356,6 +362,10 @@ materialize() {
     echo "HERMES_INSTALL: checking product reliability UX patch"
     git -C "$out" apply --check "$PATCH22"
     git -C "$out" apply "$PATCH22"
+
+    echo "HERMES_INSTALL: checking Photon HTTP events inject patch"
+    git -C "$out" apply --check "$PATCH23"
+    git -C "$out" apply "$PATCH23"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"

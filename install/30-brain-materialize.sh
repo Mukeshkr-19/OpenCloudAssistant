@@ -30,6 +30,7 @@ PATCH_PROVIDER_SURVIVAL_FOLLOWUP="$ROOT/integrations/hermes/hermes-provider-surv
 PATCH_PROVIDER_TOOL_COMPAT="$ROOT/integrations/hermes/hermes-provider-tool-call-compatibility.patch"
 PATCH_RUNTIME_ELIGIBILITY="$ROOT/integrations/hermes/hermes-runtime-eligibility-search-bounds.patch"
 PATCH_PRODUCT_UX="$ROOT/integrations/hermes/hermes-product-reliability-ux.patch"
+PATCH_PHOTON_HTTP="$ROOT/integrations/hermes/hermes-photon-http-events.patch"
 
 usage() {
     echo "Usage:"
@@ -85,6 +86,7 @@ materialize() {
     local patch20="$rendered/hermes-provider-tool-call-compatibility.patch"
     local patch21="$rendered/hermes-runtime-eligibility-search-bounds.patch"
     local patch22="$rendered/hermes-product-reliability-ux.patch"
+    local patch23="$rendered/hermes-photon-http-events.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -108,6 +110,7 @@ materialize() {
     require_file "$PATCH_PROVIDER_TOOL_COMPAT"
     require_file "$PATCH_RUNTIME_ELIGIBILITY"
     require_file "$PATCH_PRODUCT_UX"
+    require_file "$PATCH_PHOTON_HTTP"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -148,6 +151,7 @@ materialize() {
     render_patch "$PATCH_PROVIDER_TOOL_COMPAT" "$patch20"
     render_patch "$PATCH_RUNTIME_ELIGIBILITY" "$patch21"
     render_patch "$PATCH_PRODUCT_UX" "$patch22"
+    render_patch "$PATCH_PHOTON_HTTP" "$patch23"
 
     # The exported archive is intentionally not a Git checkout.  Create a
     # temporary local index so git apply validates and applies patches to the
@@ -251,6 +255,10 @@ materialize() {
     git -C "$out" apply --check "$patch22"
     git -C "$out" apply "$patch22"
 
+    echo "MATERIALIZE: checking Photon HTTP events inject patch"
+    git -C "$out" apply --check "$patch23"
+    git -C "$out" apply "$patch23"
+
 
     for ux_marker in \
         HERMES_OPENCLOUD_MODEL_ALIAS_V1 \
@@ -258,9 +266,10 @@ materialize() {
         HERMES_OPENCLOUD_CAMOFOX_SCOPE_V1 \
         HERMES_OPENCLOUD_BROWSER_AVAIL_V1 \
         HERMES_OPENCLOUD_SYSTEM_PROMPT_V1 \
-        HERMES_OPENCLOUD_TOOL_INTENT_V1
+        HERMES_OPENCLOUD_TOOL_INTENT_V1 \
+        HERMES_OPENCLOUD_PHOTON_HTTP_EVENTS_V1
     do
-        if ! grep -RqsF "$ux_marker" "$out/agent" "$out/gateway" "$out/tools" "$out/hermes_cli" "$out/hermes_state.py"; then
+        if ! grep -RqsF "$ux_marker" "$out/agent" "$out/gateway" "$out/tools" "$out/hermes_cli" "$out/hermes_state.py" "$out/plugins"; then
             echo "ERROR: product UX marker missing after materialization: $ux_marker" >&2
             exit 1
         fi

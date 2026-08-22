@@ -1,0 +1,32 @@
+diff --git a/plugins/platforms/photon/adapter.py b/plugins/platforms/photon/adapter.py
+--- a/plugins/platforms/photon/adapter.py
++++ b/plugins/platforms/photon/adapter.py
+@@ -1940,6 +1940,28 @@ class PhotonAdapter(BasePlatformAdapter):
+                 pass
+             self._watchdog_task = None
+ 
++    # HERMES_OPENCLOUD_PHOTON_HTTP_EVENTS_V1 — loopback acceptance inject.
++    # POST /api/platforms/photon/events (API_SERVER_KEY bearer) → _dispatch_inbound.
++    # Lets recovery prove Photon session+outbound without an Apple-device inbound.
++    def verify_http_event_request(self, auth_header: str):
++        import hmac
++
++        expected = (_get_scoped_secret("API_SERVER_KEY") or "").strip()
++        if not expected:
++            return False, "photon_http_events_not_configured"
++        if not isinstance(auth_header, str) or not auth_header.startswith("Bearer "):
++            return False, "missing_photon_bearer"
++        token = auth_header[7:].strip()
++        if not token or len(token) != len(expected) or not hmac.compare_digest(token, expected):
++            return False, "invalid_photon_bearer"
++        return True, ""
++
++    async def dispatch_http_event(self, payload: Dict[str, Any]) -> Dict[str, Any]:
++        if not isinstance(payload, dict):
++            return {"ok": False, "error": "invalid_payload"}
++        await self._dispatch_inbound(payload)
++        return {"ok": True}
++
+     # -- Outbound ----------------------------------------------------------
+ 
+     async def send(

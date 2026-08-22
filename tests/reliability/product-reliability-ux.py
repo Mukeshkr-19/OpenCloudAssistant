@@ -7,6 +7,7 @@ Covers:
   - Camofox scope fail-closed marker
   - system-prompt write guard marker
   - browser availability no-grace marker
+  - Photon HTTP events inject markers (loopback acceptance)
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PATCH = ROOT / "integrations/hermes/hermes-product-reliability-ux.patch"
+PHOTON_PATCH = ROOT / "integrations/hermes/hermes-photon-http-events.patch"
 
 
 def require(cond: bool, msg: str) -> None:
@@ -46,6 +48,14 @@ def main() -> None:
     require("Reading os.environ here would risk" not in text.split("get_camofox_url")[0][-200:] + text.split("get_camofox_url")[1][:500] or "return \"\"" in text.split("get_camofox_url")[1][:800], "Camofox unscoped path must return empty")
     require("except UnscopedSecretError" in text, "Camofox must catch UnscopedSecretError")
     require("--catalog" in text and "--auto" in text, "Fleet /model flags missing")
+
+    photon = PHOTON_PATCH.read_text()
+    require("HERMES_OPENCLOUD_PHOTON_HTTP_EVENTS_V1" in photon, "Photon HTTP events marker missing")
+    require("def verify_http_event_request" in photon, "Photon verify_http_event_request missing")
+    require("async def dispatch_http_event" in photon, "Photon dispatch_http_event missing")
+    require("API_SERVER_KEY" in photon, "Photon inject must auth with API_SERVER_KEY")
+    require("_dispatch_inbound" in photon, "Photon inject must call _dispatch_inbound")
+
     # Mirror of patched helper (kept in sync with HERMES_OPENCLOUD_TOOL_INTENT_V1).
     def _opencloud_is_conversational_greeting(raw_text: str) -> bool:
         raw = (raw_text or "").strip()
