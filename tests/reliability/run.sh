@@ -31,6 +31,7 @@ test -f tests/reliability/cron-search-reliability.py
 test -f tests/reliability/provider-cron-survival.py
 test -f tests/reliability/cron-baseline-fetch.py
 test -f tests/reliability/product-reliability-ux.py
+test -f tests/reliability/imessage-model-control-turn-recovery.py
 test -x tests/reliability/cron-routing-v1.py
 test -x tests/reliability/messaging-delivery.py
 test -x tests/reliability/self-repair-rollback.sh
@@ -41,6 +42,12 @@ HERMES_PYTHON="${OPEN_CLOUD_HERMES_PYTHON:-$HOME/.hermes/hermes-agent/venv/bin/p
 if [ ! -x "$HERMES_PYTHON" ]; then HERMES_PYTHON="$(command -v python3)"; fi
 
 "$HERMES_PYTHON" -c "import yaml"
+
+# Materialize-backed product UX / iMessage control tests first so a stale live
+# Hermes checkout cannot block them behind live-tree-only checks.
+PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/product-reliability-ux.py
+PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}" \
+    python3 tests/reliability/imessage-model-control-turn-recovery.py
 
 "$HERMES_PYTHON" tests/reliability/fleet-failover.py
 PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/routing-v1-workload.py
@@ -75,8 +82,6 @@ PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/vellum-worker-state
 PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/daemon-pool-compat.py
 
 PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/cron-baseline-fetch.py
-
-PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/product-reliability-ux.py
 
 HERMES_ROOT="${OPEN_CLOUD_HERMES_ROOT:-$HOME/.hermes/hermes-agent}"
 

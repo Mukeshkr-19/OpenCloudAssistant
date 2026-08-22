@@ -31,11 +31,12 @@ PATCH21="$ROOT/integrations/hermes/hermes-runtime-eligibility-search-bounds.patc
 PATCH22="$ROOT/integrations/hermes/hermes-product-reliability-ux.patch"
 PATCH23="$ROOT/integrations/hermes/hermes-photon-http-events.patch"
 PATCH24="$ROOT/integrations/hermes/hermes-greeting-tool-choice-none.patch"
+PATCH25="$ROOT/integrations/hermes/hermes-imessage-model-control-turn-recovery.patch"
 BACKUP_ROOT="$TARGET_HOME/.opencloud/backups"
 MODE="${1:---check}"
 
-FILES="tools/registry.py hermes_state.py tools/browser_camofox.py tools/browser_tool.py gateway/slash_commands.py hermes_cli/commands.py agent/agent_init.py agent/conversation_loop.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py tools/tool_search.py tools/web_tools.py plugins/web/ddgs/provider.py cron/scheduler.py cron/output_contract.py cron/search_reliability.py gateway/run.py gateway/cron_control_fast_path.py model_tools.py agent/hermes_fleet_bridge.py agent/opencloud_routing_v1.py hermes_cli/cli_agent_setup_mixin.py agent/provider_metadata_guard.py agent/transports/chat_completions.py agent/transports/codex.py agent/opencloud_self_repair.py tools/cronjob_tools.py plugins/platforms/photon/adapter.py"
-MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 HERMES_PROVIDER_SURVIVAL_V1 HERMES_PROVIDER_FAILOVER_DEADLINE_V1 HERMES_FLEET_CONTEXT_ELIGIBILITY_V1 HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1 HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1 HERMES_CRON_OUTPUT_CONTRACT_V1 HERMES_OPENCLOUD_METADATA_GUARD_V1 HERMES_OPENCLOUD_SELF_REPAIR_V1 HERMES_CRON_DUPLICATE_GUARD_V1 HERMES_CRON_WORKFLOW_IDENTITY_V1 HERMES_CRON_REPEAT_COERCION_V1 HERMES_CRON_RUN_NOW_ONCE_V1 HERMES_SEARCH_EMPTY_RESULT_SEMANTICS_V1 HERMES_CAREER_SEARCH_CONTROLLER_V1 HERMES_CAREER_SEARCH_CONTEXT_V1 HERMES_CAREER_SEARCH_ATOMIC_BOUNDS_V1 HERMES_OPENCLOUD_MODEL_ALIAS_V1 HERMES_OPENCLOUD_FLEET_MODEL_UX_V1 HERMES_OPENCLOUD_CAMOFOX_SCOPE_V1 HERMES_OPENCLOUD_BROWSER_AVAIL_V1 HERMES_OPENCLOUD_SYSTEM_PROMPT_V1 HERMES_OPENCLOUD_TOOL_INTENT_V1 HERMES_OPENCLOUD_PHOTON_HTTP_EVENTS_V1 HERMES_OPENCLOUD_GREETING_TOOL_CHOICE_NONE_V1"
+FILES="tools/registry.py hermes_state.py tools/browser_camofox.py tools/browser_tool.py gateway/slash_commands.py hermes_cli/commands.py agent/agent_init.py agent/conversation_loop.py agent/agent_runtime_helpers.py agent/auxiliary_client.py agent/chat_completion_helpers.py tools/delegate_tool.py tools/daemon_pool.py tools/tool_search.py tools/web_tools.py plugins/web/ddgs/provider.py cron/scheduler.py cron/output_contract.py cron/search_reliability.py gateway/run.py gateway/cron_control_fast_path.py gateway/model_control_fast_path.py model_tools.py agent/hermes_fleet_bridge.py agent/opencloud_routing_v1.py hermes_cli/cli_agent_setup_mixin.py agent/provider_metadata_guard.py agent/transports/chat_completions.py agent/transports/codex.py agent/opencloud_self_repair.py tools/cronjob_tools.py tools/terminal_tool.py plugins/platforms/photon/adapter.py"
+MARKERS="HERMES_FLEET_MAIN_ATTACH_BEGIN HERMES_FLEET_WORKER_ATTACH_BEGIN HERMES_FLEET_FAILURE_ATTACH_BEGIN HERMES_FLEET_FALLBACK_SKIP_BEGIN HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1 HERMES_PROVIDER_SURVIVAL_V1 HERMES_PROVIDER_FAILOVER_DEADLINE_V1 HERMES_FLEET_CONTEXT_ELIGIBILITY_V1 HERMES_CRON_REQUIRED_TOOLS_PROTECT_V1 HERMES_CRON_REQUIRED_EXECUTION_CONTINUATION_V1 HERMES_CRON_OUTPUT_CONTRACT_V1 HERMES_OPENCLOUD_METADATA_GUARD_V1 HERMES_OPENCLOUD_SELF_REPAIR_V1 HERMES_CRON_DUPLICATE_GUARD_V1 HERMES_CRON_WORKFLOW_IDENTITY_V1 HERMES_CRON_REPEAT_COERCION_V1 HERMES_CRON_RUN_NOW_ONCE_V1 HERMES_SEARCH_EMPTY_RESULT_SEMANTICS_V1 HERMES_CAREER_SEARCH_CONTROLLER_V1 HERMES_CAREER_SEARCH_CONTEXT_V1 HERMES_CAREER_SEARCH_ATOMIC_BOUNDS_V1 HERMES_OPENCLOUD_MODEL_ALIAS_V1 HERMES_OPENCLOUD_FLEET_MODEL_UX_V1 HERMES_OPENCLOUD_CAMOFOX_SCOPE_V1 HERMES_OPENCLOUD_BROWSER_AVAIL_V1 HERMES_OPENCLOUD_SYSTEM_PROMPT_V1 HERMES_OPENCLOUD_TOOL_INTENT_V1 HERMES_OPENCLOUD_PHOTON_HTTP_EVENTS_V1 HERMES_OPENCLOUD_GREETING_TOOL_CHOICE_NONE_V1 HERMES_OPENCLOUD_MODEL_CONTROL_FAST_PATH_V1 HERMES_OPENCLOUD_CLARIFY_RELEASE_V1 HERMES_OPENCLOUD_STOP_RECOVERY_V1 HERMES_OPENCLOUD_PROGRESS_STATE_V1 HERMES_OPENCLOUD_TOOL_RESULT_TRUTH_V1"
 
 require_source() {
     test -d "$HERMES_ROOT/.git" || {
@@ -168,6 +169,11 @@ require_source() {
         exit 1
     }
 
+    test -f "$PATCH25" || {
+        echo "ERROR: Hermes iMessage model-control turn-recovery patch missing" >&2
+        exit 1
+    }
+
 }
 
 compile_file() {
@@ -207,12 +213,36 @@ validate_tree() {
         echo "ERROR: cron-control fast-path module missing" >&2
         return 1
     }
+    test -f "$tree/gateway/model_control_fast_path.py" || {
+        echo "ERROR: model-control fast-path module missing" >&2
+        return 1
+    }
     grep -qF "HERMES_CRON_CONTROL_FAST_PATH_V1" "$tree/gateway/cron_control_fast_path.py" || {
         echo "ERROR: cron-control fast-path marker missing" >&2
         return 1
     }
     grep -qF "HERMES_CRON_CONTROL_FAST_PATH_V1" "$tree/gateway/run.py" || {
         echo "ERROR: cron-control fast-path wiring marker missing" >&2
+        return 1
+    }
+    grep -qF "HERMES_OPENCLOUD_MODEL_CONTROL_FAST_PATH_V1" "$tree/gateway/model_control_fast_path.py" || {
+        echo "ERROR: model-control fast-path marker missing" >&2
+        return 1
+    }
+    grep -qF "HERMES_OPENCLOUD_MODEL_CONTROL_FAST_PATH_V1" "$tree/gateway/run.py" || {
+        echo "ERROR: model-control fast-path wiring marker missing" >&2
+        return 1
+    }
+    grep -qF "HERMES_OPENCLOUD_CLARIFY_RELEASE_V1" "$tree/gateway/run.py" || {
+        echo "ERROR: clarify-release marker missing" >&2
+        return 1
+    }
+    grep -qF "HERMES_OPENCLOUD_STOP_RECOVERY_V1" "$tree/gateway/run.py" || {
+        echo "ERROR: stop-recovery marker missing" >&2
+        return 1
+    }
+    grep -qF "HERMES_OPENCLOUD_TOOL_RESULT_TRUTH_V1" "$tree/tools/terminal_tool.py" || {
+        echo "ERROR: tool-result truthfulness marker missing" >&2
         return 1
     }
     grep -qF "HERMES_COMPRESSION_FAILSAFE_V1" "$tree/gateway/run.py" || {
@@ -376,6 +406,10 @@ materialize() {
     echo "HERMES_INSTALL: checking greeting tool_choice none patch"
     git -C "$out" apply --check "$PATCH24"
     git -C "$out" apply "$PATCH24"
+
+    echo "HERMES_INSTALL: checking iMessage model-control + turn-recovery patch"
+    git -C "$out" apply --check "$PATCH25"
+    git -C "$out" apply "$PATCH25"
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
