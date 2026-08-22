@@ -1,10 +1,13 @@
 diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 --- a/agent/conversation_loop.py
 +++ b/agent/conversation_loop.py
-@@ -1230,6 +1230,90 @@
+@@ -1228,8 +1228,94 @@
+             getattr(agent, "session_id", None) or "-",
+             exc_info=True,
          )
- 
- 
++
++
++
 +
 +# HERMES_OPENCLOUD_TOOL_INTENT_V1 — role-suitable tool exposure for short
 +# conversational turns. Not an exact-string "Hi" hack: matches short greeting /
@@ -79,21 +82,21 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 +        agent.max_iterations = min(int(prev_max or 1), 2)
 +    except Exception:
 +        agent.max_iterations = 2
-+
+ 
 +    def _restore():
 +        agent.tools = prev_tools
 +        if prev_names is not None:
 +            agent.valid_tool_names = prev_names
 +        if prev_max is not None:
 +            agent.max_iterations = prev_max
-+
+ 
 +    agent._opencloud_tool_restore = _restore
 +
 +
  def run_conversation(
      agent,
      user_message: Any,
-@@ -1333,6 +1417,17 @@
+@@ -1333,6 +1419,17 @@
      _plugin_user_context = _ctx.plugin_user_context
      _ext_prefetch_cache = _ctx.ext_prefetch_cache
  
@@ -110,7 +113,8 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 +
      # Commentary deduplication spans all provider continuations and tool calls
      # within one user turn, but must not suppress the same phrase next turn.
-@@ -7538,6 +7633,7 @@
+     agent._delivered_interim_texts = set()
+@@ -7283,6 +7380,7 @@
      # (god-file decomposition Phase 1 step 4). Behavior-neutral: the assembled
      # result dict is returned exactly as before.
      from agent.turn_finalizer import finalize_turn
