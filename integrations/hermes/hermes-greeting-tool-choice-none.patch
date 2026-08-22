@@ -1,0 +1,57 @@
+diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
+--- a/agent/conversation_loop.py
++++ b/agent/conversation_loop.py
+@@ -1284,24 +1284,17 @@
+     _opencloud_restore_tools(agent)
+     if not _opencloud_is_conversational_greeting(user_text):
+         return
+-    tools = getattr(agent, "tools", None) or []
+-    if not tools:
+-        return
+-    prev_tools = tools
++    # HERMES_OPENCLOUD_GREETING_TOOL_CHOICE_NONE_V1 — leftover non-side-effect
++    # tool schemas still put some providers into tool mode; greeting replies
++    # become "There is no function to call with the given prompt." Clear tools
++    # and force tool_choice=none for this turn only.
++    prev_tools = getattr(agent, "tools", None) or []
+     prev_names = getattr(agent, "valid_tool_names", None)
+     prev_max = getattr(agent, "max_iterations", None)
+-    kept = []
+-    for td in tools:
+-        name = (td.get("function") or {}).get("name") or td.get("name") or ""
+-        if name in _OPENCLOUD_SIDE_EFFECT_TOOLS or name.startswith("browser_"):
+-            continue
+-        kept.append(td)
+-    agent.tools = kept
+-    agent.valid_tool_names = {
+-        (t.get("function") or {}).get("name")
+-        for t in kept
+-        if (t.get("function") or {}).get("name")
+-    }
++    prev_choice = getattr(agent, "_opencloud_tool_choice", None)
++    agent.tools = []
++    agent.valid_tool_names = set()
++    agent._opencloud_tool_choice = "none"
+     try:
+         agent.max_iterations = min(int(prev_max or 1), 2)
+     except Exception:
+@@ -1313,6 +1306,7 @@
+             agent.valid_tool_names = prev_names
+         if prev_max is not None:
+             agent.max_iterations = prev_max
++        agent._opencloud_tool_choice = prev_choice
+ 
+     agent._opencloud_tool_restore = _restore
+ 
+@@ -2327,6 +2321,11 @@
+                         api_messages,
+                         tools_for_api=tools_for_api,
+                     )
++                # HERMES_OPENCLOUD_GREETING_TOOL_CHOICE_NONE_V1
++                if getattr(agent, "_opencloud_tool_choice", None) == "none":
++                    api_kwargs.pop("tools", None)
++                    api_kwargs["tool_choice"] = "none"
++                    api_kwargs.pop("parallel_tool_calls", None)
+                 if agent._force_ascii_payload:
+                     _sanitize_structure_non_ascii(api_kwargs)
+                 if agent.api_mode == "codex_responses":

@@ -29,6 +29,9 @@ PATCH_PROVIDER_SURVIVAL="$ROOT/integrations/hermes/hermes-provider-survival.patc
 PATCH_PROVIDER_SURVIVAL_FOLLOWUP="$ROOT/integrations/hermes/hermes-provider-survival-followup.patch"
 PATCH_PROVIDER_TOOL_COMPAT="$ROOT/integrations/hermes/hermes-provider-tool-call-compatibility.patch"
 PATCH_RUNTIME_ELIGIBILITY="$ROOT/integrations/hermes/hermes-runtime-eligibility-search-bounds.patch"
+PATCH_PRODUCT_UX="$ROOT/integrations/hermes/hermes-product-reliability-ux.patch"
+PATCH_PHOTON_HTTP="$ROOT/integrations/hermes/hermes-photon-http-events.patch"
+PATCH_GREETING_TOOL_CHOICE="$ROOT/integrations/hermes/hermes-greeting-tool-choice-none.patch"
 
 usage() {
     echo "Usage:"
@@ -83,6 +86,9 @@ materialize() {
     local patch19="$rendered/hermes-provider-survival-followup.patch"
     local patch20="$rendered/hermes-provider-tool-call-compatibility.patch"
     local patch21="$rendered/hermes-runtime-eligibility-search-bounds.patch"
+    local patch22="$rendered/hermes-product-reliability-ux.patch"
+    local patch23="$rendered/hermes-photon-http-events.patch"
+    local patch24="$rendered/hermes-greeting-tool-choice-none.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -105,6 +111,9 @@ materialize() {
     require_file "$PATCH_PROVIDER_SURVIVAL_FOLLOWUP"
     require_file "$PATCH_PROVIDER_TOOL_COMPAT"
     require_file "$PATCH_RUNTIME_ELIGIBILITY"
+    require_file "$PATCH_PRODUCT_UX"
+    require_file "$PATCH_PHOTON_HTTP"
+    require_file "$PATCH_GREETING_TOOL_CHOICE"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -144,6 +153,9 @@ materialize() {
     render_patch "$PATCH_PROVIDER_SURVIVAL_FOLLOWUP" "$patch19"
     render_patch "$PATCH_PROVIDER_TOOL_COMPAT" "$patch20"
     render_patch "$PATCH_RUNTIME_ELIGIBILITY" "$patch21"
+    render_patch "$PATCH_PRODUCT_UX" "$patch22"
+    render_patch "$PATCH_PHOTON_HTTP" "$patch23"
+    render_patch "$PATCH_GREETING_TOOL_CHOICE" "$patch24"
 
     # The exported archive is intentionally not a Git checkout.  Create a
     # temporary local index so git apply validates and applies patches to the
@@ -242,6 +254,35 @@ materialize() {
     echo "MATERIALIZE: checking runtime eligibility + atomic search bounds patch"
     git -C "$out" apply --check --unidiff-zero "$patch21"
     git -C "$out" apply --unidiff-zero "$patch21"
+
+    echo "MATERIALIZE: checking product reliability UX patch"
+    git -C "$out" apply --check "$patch22"
+    git -C "$out" apply "$patch22"
+
+    echo "MATERIALIZE: checking Photon HTTP events inject patch"
+    git -C "$out" apply --check "$patch23"
+    git -C "$out" apply "$patch23"
+
+    echo "MATERIALIZE: checking greeting tool_choice none patch"
+    git -C "$out" apply --check "$patch24"
+    git -C "$out" apply "$patch24"
+
+
+    for ux_marker in \
+        HERMES_OPENCLOUD_MODEL_ALIAS_V1 \
+        HERMES_OPENCLOUD_FLEET_MODEL_UX_V1 \
+        HERMES_OPENCLOUD_CAMOFOX_SCOPE_V1 \
+        HERMES_OPENCLOUD_BROWSER_AVAIL_V1 \
+        HERMES_OPENCLOUD_SYSTEM_PROMPT_V1 \
+        HERMES_OPENCLOUD_TOOL_INTENT_V1 \
+        HERMES_OPENCLOUD_PHOTON_HTTP_EVENTS_V1 \
+        HERMES_OPENCLOUD_GREETING_TOOL_CHOICE_NONE_V1
+    do
+        if ! grep -RqsF "$ux_marker" "$out/agent" "$out/gateway" "$out/tools" "$out/hermes_cli" "$out/hermes_state.py" "$out/plugins"; then
+            echo "ERROR: product UX marker missing after materialization: $ux_marker" >&2
+            exit 1
+        fi
+    done
 
     echo "HERMES_INSTALL: applying Routing V1 workload compatibility"
     python3 "$ROOT/integrations/hermes/routing_v1_compat.py" "$out"
@@ -373,6 +414,8 @@ materialize() {
     python3 -m py_compile "$out/gateway/cron_control_fast_path.py"
     python3 -m py_compile "$out/tools/web_tools.py" "$out/plugins/web/ddgs/provider.py"
     python3 -m py_compile "$out/cron/search_reliability.py"
+    python3 -m py_compile "$out/gateway/slash_commands.py" "$out/hermes_cli/commands.py" "$out/hermes_state.py"
+    python3 -m py_compile "$out/tools/browser_camofox.py" "$out/tools/registry.py"
 
     rm -rf "$rendered"
     rm -rf "$out/.git"

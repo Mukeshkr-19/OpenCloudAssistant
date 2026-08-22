@@ -6,15 +6,28 @@ cd "$ROOT"
 
 echo "Open Cloud Assistant service installer smoke test"
 
-install/95-services.sh --check
+test -x scripts/runtime-update.sh
 
+TMP_HOME="$(mktemp -d)"
 TMP="$(mktemp -d)"
 
 cleanup() {
-    rm -rf "$TMP"
+    rm -rf "$TMP_HOME" "$TMP"
 }
 
 trap cleanup EXIT
+
+HOME="$TMP_HOME" OPEN_CLOUD_HOME="$TMP_HOME" install/95-services.sh --check
+
+UPDATER="$TMP_HOME/.local/bin/opencloud-runtime-update"
+test -x "$UPDATER"
+cmp -s scripts/runtime-update.sh "$UPDATER"
+
+grep -qF 'ExecStart=%h/.local/bin/opencloud-runtime-update --run' \
+    services/systemd/opencloud-runtime-update.service
+
+HOME="$TMP_HOME" OPEN_CLOUD_HOME="$TMP_HOME" install/95-services.sh --check
+cmp -s scripts/runtime-update.sh "$UPDATER"
 
 STATE="$TMP/channels.json"
 
@@ -28,7 +41,10 @@ PLAN="$(OPEN_CLOUD_CHANNELS_STATE="$STATE" install/95-services.sh --plan)"
 
 [[ "$PLAN" == *"Fleet registry timer: REQUIRED"* ]]
 [[ "$PLAN" == *"Fleet verifier timer: REQUIRED"* ]]
+[[ "$PLAN" == *"Guarded runtime update timer: REQUIRED"* ]]
 [[ "$PLAN" == *"Hermes gateway: SKIP"* ]]
+
+OPEN_CLOUD_ROOT="$ROOT" scripts/runtime-update.sh --check
 
 echo "SMOKE: Telegram plan"
 

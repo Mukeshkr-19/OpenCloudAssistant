@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily guarded Open Cloud Assistant runtime updates
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+Persistent=true
+RandomizedDelaySec=30min
+Unit=opencloud-runtime-update.service
+
+[Install]
+WantedBy=timers.target

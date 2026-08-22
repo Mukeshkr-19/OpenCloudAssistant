@@ -1,0 +1,390 @@
+diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
+--- a/agent/conversation_loop.py
++++ b/agent/conversation_loop.py
+@@ -1228,8 +1228,95 @@
+             getattr(agent, "session_id", None) or "-",
+             exc_info=True,
+         )
++
++
++
++
++# HERMES_OPENCLOUD_TOOL_INTENT_V1 — role-suitable tool exposure for short
++# conversational turns. Not an exact-string "Hi" hack: matches short greeting /
++# pleasantry intents and strips side-effect toolsets for that turn only.
++# Gateway caches agents across turns: always restore before filtering again and
++# before returning so later task turns keep their tools. Apply after
++# build_turn_context (MCP between-turns refresh rebuilds agent.tools).
++_OPENCLOUD_SIDE_EFFECT_TOOLS = frozenset({
++    "browser_navigate", "browser_snapshot", "browser_click", "browser_type",
++    "browser_scroll", "browser_back", "browser_press", "browser_wait",
++    "browser_vision", "browser_cdp", "browser_dialog",
++    "web_search", "web_extract", "search_web", "search",
++    "clarify", "ask_user", "cronjob", "delegate_task", "execute_code",
++    "terminal", "run_terminal", "shell", "bash",
++})
+ 
+ 
++def _opencloud_is_conversational_greeting(text: str) -> bool:
++    import re
++    raw = (text or "").strip()
++    if not raw or len(raw) > 80:
++        return False
++    if re.search(r"https?://|/\S|\b(search|find|browse|open|run|fix|deploy|cron)\b", raw, re.I):
++        return False
++    if re.fullmatch(
++        r"(?i)(hi|hello|hey|yo|sup|howdy|hiya|good\s*(morning|afternoon|evening))"
++        r"([,.!]+\s*[A-Za-z]{0,24})?[.!]?",
++        raw,
++    ):
++        return True
++    if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\s+(there|hermes|assistant|friend)[.!]?", raw):
++        return True
++    return False
++
++
++def _opencloud_restore_tools(agent) -> None:
++    restore = getattr(agent, "_opencloud_tool_restore", None)
++    if not callable(restore):
++        return
++    try:
++        restore()
++    except Exception:
++        pass
++    try:
++        agent._opencloud_tool_restore = None
++    except Exception:
++        pass
++
++
++def _opencloud_filter_tools_for_intent(agent, user_text: str) -> None:
++    _opencloud_restore_tools(agent)
++    if not _opencloud_is_conversational_greeting(user_text):
++        return
++    tools = getattr(agent, "tools", None) or []
++    if not tools:
++        return
++    prev_tools = tools
++    prev_names = getattr(agent, "valid_tool_names", None)
++    prev_max = getattr(agent, "max_iterations", None)
++    kept = []
++    for td in tools:
++        name = (td.get("function") or {}).get("name") or td.get("name") or ""
++        if name in _OPENCLOUD_SIDE_EFFECT_TOOLS or name.startswith("browser_"):
++            continue
++        kept.append(td)
++    agent.tools = kept
++    agent.valid_tool_names = {
++        (t.get("function") or {}).get("name")
++        for t in kept
++        if (t.get("function") or {}).get("name")
++    }
++    try:
++        agent.max_iterations = min(int(prev_max or 1), 2)
++    except Exception:
++        agent.max_iterations = 2
++
++    def _restore():
++        agent.tools = prev_tools
++        if prev_names is not None:
++            agent.valid_tool_names = prev_names
++        if prev_max is not None:
++            agent.max_iterations = prev_max
++
++    agent._opencloud_tool_restore = _restore
++
++
+ def run_conversation(
+     agent,
+     user_message: Any,
+@@ -1332,6 +1419,17 @@
+     _should_review_memory = _ctx.should_review_memory
+     _plugin_user_context = _ctx.plugin_user_context
+     _ext_prefetch_cache = _ctx.ext_prefetch_cache
++
++    # HERMES_OPENCLOUD_TOOL_INTENT_V1 — after build_turn_context so between-turns
++    # MCP refresh cannot re-expand side-effect tools for greeting turns.
++    try:
++        _greeting_src = persist_user_message if persist_user_message is not None else user_message
++        if isinstance(_greeting_src, str):
++            _opencloud_filter_tools_for_intent(agent, _greeting_src)
++        else:
++            _opencloud_restore_tools(agent)
++    except Exception:
++        pass
+ 
+     # Commentary deduplication spans all provider continuations and tool calls
+     # within one user turn, but must not suppress the same phrase next turn.
+@@ -7283,6 +7381,7 @@
+     # (god-file decomposition Phase 1 step 4). Behavior-neutral: the assembled
+     # result dict is returned exactly as before.
+     from agent.turn_finalizer import finalize_turn
++    _opencloud_restore_tools(agent)
+     return finalize_turn(
+         agent,
+         final_response=final_response,
+diff --git a/gateway/slash_commands.py b/gateway/slash_commands.py
+--- a/gateway/slash_commands.py
++++ b/gateway/slash_commands.py
+@@ -1668,6 +1668,58 @@
+             getattr(getattr(event, "source", None), "platform", None),
+         )
+ 
++
++    def _opencloud_fleet_model_lines(self) -> list[str]:
++        """HERMES_OPENCLOUD_FLEET_MODEL_UX_V1: usable verified Fleet choices."""
++        lines: list[str] = []
++        try:
++            from agent.hermes_fleet_bridge import (
++                enabled,
++                _available,
++                _fleet,
++                _provider,
++                _model,
++                _group,
++            )
++            if not enabled():
++                return lines
++            fleet = _fleet()
++            cands = _available(fleet, "main")
++            if not cands:
++                return lines
++            lines.append("Fleet verified (main / balanced preference order):")
++            for i, c in enumerate(cands[:12], 1):
++                lines.append(
++                    f"  {i}. {_provider(c)} / {_model(c)}  [{_group(c)}]"
++                )
++            lines.append(
++                "Switch: /model <id> --provider <provider>   |   /model --auto   |   /model --catalog"
++            )
++        except Exception:
++            return []
++        return lines
++
++    def _opencloud_describe_model_state(self, session_key: str, current_model: str, current_provider: str) -> str:
++        """Distinguish bootstrap vs Fleet pin vs session override vs fallback."""
++        bits = [f"Active: {current_provider}/{current_model}"]
++        try:
++            override = self._session_model_overrides.get(session_key) or {}
++            if override.get("model"):
++                bits.append("source=MANUAL_SESSION")
++            else:
++                bits.append("source=AUTO_OR_BOOTSTRAP")
++        except Exception:
++            pass
++        try:
++            from agent.hermes_fleet_bridge import session_is_pinned, enabled
++            if enabled() and session_is_pinned(session_key, "main"):
++                bits.append("fleet_pin=yes")
++            else:
++                bits.append("fleet_pin=no")
++        except Exception:
++            pass
++        return " | ".join(bits)
++
+     async def _handle_model_command(self, event: MessageEvent) -> Optional[str]:
+         """Handle /model command — switch model.
+ 
+@@ -1690,6 +1742,17 @@
+         from hermes_cli.providers import get_label
+ 
+         raw_args = event.get_command_args().strip()
++        # HERMES_OPENCLOUD_FLEET_MODEL_UX_V1
++        _want_catalog = False
++        _want_auto = False
++        _tokens = raw_args.split()
++        if "--catalog" in _tokens or "-catalog" in _tokens:
++            _want_catalog = True
++            _tokens = [t for t in _tokens if t not in ("--catalog", "-catalog")]
++        if "--auto" in _tokens:
++            _want_auto = True
++            _tokens = [t for t in _tokens if t != "--auto"]
++        raw_args = " ".join(_tokens).strip()
+         source = event.source
+         _command_profile_home = None
+         if getattr(getattr(self, "config", None), "multiplex_profiles", False):
+@@ -1769,6 +1832,31 @@
+             current_provider = override.get("provider", current_provider)
+             current_base_url = override.get("base_url", current_base_url)
+             current_api_key = override.get("api_key", current_api_key)
++
++        # HERMES_OPENCLOUD_FLEET_MODEL_UX_V1 — AUTO clears session override (return to Fleet)
++        if _want_auto and not model_input:
++            self._session_model_overrides.pop(session_key, None)
++            try:
++                self._pending_one_turn_model_restores.pop(session_key, None)
++            except Exception:
++                pass
++            try:
++                from agent.hermes_fleet_bridge import clear_session_pin
++                clear_session_pin(session_key, "main")
++            except Exception:
++                pass
++            try:
++                self._evict_cached_agent(session_key)
++            except Exception:
++                pass
++            return "✅ Returned to AUTO (Fleet routing). Session manual override cleared."
++
++        # No args: Fleet-aware summary first (usable verified), unless --catalog
++        if not model_input and not explicit_provider and not _want_catalog:
++            fleet_lines = self._opencloud_fleet_model_lines()
++            state = self._opencloud_describe_model_state(session_key, current_model, current_provider)
++            if fleet_lines:
++                return state + "\n\n" + "\n".join(fleet_lines)
+ 
+         # No args: show interactive picker (Telegram/Discord) or text list
+         if not model_input and not explicit_provider:
+diff --git a/hermes_cli/commands.py b/hermes_cli/commands.py
+--- a/hermes_cli/commands.py
++++ b/hermes_cli/commands.py
+@@ -183,7 +183,8 @@
+     CommandDef("config", "Show current configuration", "Configuration",
+                cli_only=True),
+     CommandDef("model", "Switch model (session-scoped; --global to persist)", "Configuration",
+-               args_hint="[model] [--provider name] [--global|--session] [--refresh]",
++               aliases=("models",),  # HERMES_OPENCLOUD_MODEL_ALIAS_V1
++               args_hint="[model] [--provider name] [--global|--session|--auto|--catalog] [--refresh]",
+                busy_policy="reject", busy_handler="model"),
+     CommandDef("codex-runtime", "Toggle codex app-server runtime for OpenAI/Codex models",
+                "Configuration", aliases=("codex_runtime",),
+diff --git a/hermes_state.py b/hermes_state.py
+--- a/hermes_state.py
++++ b/hermes_state.py
+@@ -4291,9 +4291,20 @@
+     def update_system_prompt(
+         self, session_id: str, system_prompt: Optional[str]
+     ) -> None:
+-        """Store the full assembled system prompt snapshot."""
++        """Store the full assembled system prompt snapshot.
++
++        HERMES_OPENCLOUD_SYSTEM_PROMPT_V1: refuse to write None/blank prompts.
++        A None write would set system_prompt_hash=NULL and leave get_session
++        resolving system_prompt as null on every subsequent turn (prefix-cache
++        miss + warning storm). Callers must rebuild before persisting.
++        """
++        if system_prompt is None or not str(system_prompt).strip():
++            return
++
+         def _do(conn):
+             system_prompt_hash = self._store_system_prompt(conn, system_prompt)
++            if system_prompt_hash is None:
++                return
+             conn.execute(
+                 "UPDATE sessions "
+                 "SET system_prompt_hash = ?, system_prompt = NULL WHERE id = ?",
+diff --git a/tools/browser_camofox.py b/tools/browser_camofox.py
+--- a/tools/browser_camofox.py
++++ b/tools/browser_camofox.py
+@@ -83,15 +83,36 @@
+ 
+ def _auth_headers() -> Dict[str, str]:
+     """Return Authorization header when CAMOFOX_API_KEY is set."""
+-    key = (get_secret("CAMOFOX_API_KEY", "") or "").strip()
++    try:
++        from agent.secret_scope import UnscopedSecretError
++    except Exception:  # pragma: no cover
++        UnscopedSecretError = Exception  # type: ignore
++    try:
++        key = (get_secret("CAMOFOX_API_KEY", "") or "").strip()
++    except UnscopedSecretError:
++        return {}
+     if key:
+         return {"Authorization": f"Bearer {key}"}
+     return {}
+ 
+ 
+ def get_camofox_url() -> str:
+-    """Return the configured Camofox server URL, or empty string."""
+-    return (get_secret("CAMOFOX_URL", "") or "").rstrip("/")
++    """Return the configured Camofox server URL, or empty string.
++
++    HERMES_OPENCLOUD_CAMOFOX_SCOPE_V1: background cleanup/reaper threads may
++    call this while multiplexing is on without a profile secret scope. Raising
++    UnscopedSecretError there spams logs and aborts cleanup. Fail closed:
++    treat Camofox as unset for that call (do NOT read os.environ — preserves
++    multiplex isolation).
++    """
++    try:
++        from agent.secret_scope import UnscopedSecretError
++    except Exception:  # pragma: no cover
++        UnscopedSecretError = Exception  # type: ignore
++    try:
++        return (get_secret("CAMOFOX_URL", "") or "").rstrip("/")
++    except UnscopedSecretError:
++        return ""
+ 
+ 
+ def _config_cdp_url() -> str:
+diff --git a/tools/browser_tool.py b/tools/browser_tool.py
+--- a/tools/browser_tool.py
++++ b/tools/browser_tool.py
+@@ -4885,9 +4885,15 @@
+     Returns:
+         True if all requirements are met, False otherwise
+     """
+-    # Camofox backend — only needs the server URL, no agent-browser CLI
++    # Camofox backend — only needs the server URL, no agent-browser CLI.
++    # HERMES_OPENCLOUD_BROWSER_AVAIL_V1: require Camofox to be reachable so we
++    # do not advertise browser tools that will fail at call time.
+     if _is_camofox_mode():
+-        return True
++        try:
++            from tools.browser_camofox import check_camofox_available
++            return bool(check_camofox_available())
++        except Exception:
++            return False
+ 
+     # CDP override mode can connect to an existing remote/local browser endpoint
+     # without requiring the local agent-browser binary on PATH.
+@@ -4931,6 +4937,9 @@
+         return False
+ 
+     return True
++
++
++check_browser_requirements._opencloud_no_failure_grace = True  # HERMES_OPENCLOUD_BROWSER_AVAIL_V1
+ 
+ 
+ def check_browser_vision_requirements() -> bool:
+diff --git a/tools/registry.py b/tools/registry.py
+--- a/tools/registry.py
++++ b/tools/registry.py
+@@ -313,19 +313,24 @@
+             _check_fn_cache[cache_key] = (now, True)
+             return True
+ 
+-        last_good = _check_fn_last_good.get(cache_key)
+-        if last_good is not None and now - last_good < _CHECK_FN_FAILURE_GRACE_SECONDS:
+-            # Recent success → treat this failure as a flake. Serve last-good
+-            # True and do NOT cache the failure, so the next call re-probes
+-            # rather than pinning a stale verdict for the full TTL.
+-            logger.warning(
+-                "check_fn %s failed (%s) within %.0fs of last success; "
+-                "treating as transient and keeping tool(s) available",
+-                getattr(fn, "__qualname__", fn),
+-                "raised" if raised else "returned False",
+-                _CHECK_FN_FAILURE_GRACE_SECONDS,
+-            )
+-            return True
++        # HERMES_OPENCLOUD_BROWSER_AVAIL_V1: permanent-missing backends
++        # (e.g. Chrome not installed) must not stay advertised via grace.
++        if getattr(fn, "_opencloud_no_failure_grace", False):
++            pass
++        else:
++            last_good = _check_fn_last_good.get(cache_key)
++            if last_good is not None and now - last_good < _CHECK_FN_FAILURE_GRACE_SECONDS:
++                # Recent success → treat this failure as a flake. Serve last-good
++                # True and do NOT cache the failure, so the next call re-probes
++                # rather than pinning a stale verdict for the full TTL.
++                logger.warning(
++                    "check_fn %s failed (%s) within %.0fs of last success; "
++                    "treating as transient and keeping tool(s) available",
++                    getattr(fn, "__qualname__", fn),
++                    "raised" if raised else "returned False",
++                    _CHECK_FN_FAILURE_GRACE_SECONDS,
++                )
++                return True
+ 
+         # No recent success (or grace expired) — honor the failure. Log it so
+         # silent tool loss in quiet mode (subagents) is diagnosable.
