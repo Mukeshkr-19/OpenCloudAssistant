@@ -6,15 +6,28 @@ cd "$ROOT"
 
 echo "Open Cloud Assistant service installer smoke test"
 
-install/95-services.sh --check
+test -x scripts/runtime-update.sh
 
+TMP_HOME="$(mktemp -d)"
 TMP="$(mktemp -d)"
 
 cleanup() {
-    rm -rf "$TMP"
+    rm -rf "$TMP_HOME" "$TMP"
 }
 
 trap cleanup EXIT
+
+HOME="$TMP_HOME" OPEN_CLOUD_HOME="$TMP_HOME" install/95-services.sh --check
+
+UPDATER="$TMP_HOME/.local/bin/opencloud-runtime-update"
+test -x "$UPDATER"
+cmp -s scripts/runtime-update.sh "$UPDATER"
+
+grep -qF 'ExecStart=%h/.local/bin/opencloud-runtime-update --run' \
+    services/systemd/opencloud-runtime-update.service
+
+HOME="$TMP_HOME" OPEN_CLOUD_HOME="$TMP_HOME" install/95-services.sh --check
+cmp -s scripts/runtime-update.sh "$UPDATER"
 
 STATE="$TMP/channels.json"
 

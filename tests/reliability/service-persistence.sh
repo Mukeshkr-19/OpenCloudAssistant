@@ -156,12 +156,19 @@ chmod 755 "$BIN/loginctl"
 
 run_fake_install() {
     PATH="$BIN:$PATH" \
+    HOME="$HOME_TARGET" \
     FAKE_SYSTEMD_STATE="$SYSTEMD_STATE" \
     FAKE_SYSTEMD_DIR="$HOME_TARGET/.config/systemd/user" \
     OPEN_CLOUD_HOME="$HOME_TARGET" \
     OPEN_CLOUD_FLEET_HOME="$FLEET" \
     OPEN_CLOUD_SYSTEMD_DIR="$HOME_TARGET/.config/systemd/user" \
     "$INSTALLER" --install >/dev/null
+}
+
+assert_runtime_updater() {
+    local updater="$HOME_TARGET/.local/bin/opencloud-runtime-update"
+    test -x "$updater"
+    cmp -s "$ROOT/scripts/runtime-update.sh" "$updater"
 }
 
 assert_timer_state() {
@@ -174,11 +181,13 @@ assert_timer_state() {
 }
 
 run_fake_install
+assert_runtime_updater
 assert_timer_state "$REGISTRY_TIMER"
 assert_timer_state "$VERIFIER_TIMER"
 echo "PASS fresh install enables, activates, and schedules both timers"
 
 run_fake_install
+assert_runtime_updater
 [ "$(cat "$SYSTEMD_STATE/$REGISTRY_TIMER.restarts")" = "2" ]
 [ "$(cat "$SYSTEMD_STATE/$VERIFIER_TIMER.restarts")" = "2" ]
 echo "PASS repeated install re-arms both active timers idempotently"

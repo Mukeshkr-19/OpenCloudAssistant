@@ -72,6 +72,11 @@ render_all() {
     done
 }
 
+materialize_runtime_updater() {
+    mkdir -p "$TARGET_HOME/.local/bin"
+    install -m 755 "$ROOT/scripts/runtime-update.sh" "$TARGET_HOME/.local/bin/opencloud-runtime-update"
+}
+
 validate_rendered() {
     local out="$1"
 
@@ -92,7 +97,7 @@ validate_rendered() {
     done
 
     if command -v systemd-analyze >/dev/null 2>&1; then
-        systemd-analyze verify \
+        HOME="$TARGET_HOME" systemd-analyze verify \
             "$out/hermes-fleet-registry.service" \
             "$out/hermes-fleet-registry.timer" \
             "$out/hermes-fleet-verifier.service" \
@@ -124,6 +129,7 @@ plan() {
 
 case "$MODE" in
     --check)
+        materialize_runtime_updater
         TMP="$(mktemp -d)"
         render_all "$TMP"
         validate_rendered "$TMP"
@@ -146,7 +152,7 @@ case "$MODE" in
             exit 1
         }
 
-        mkdir -p "$SYSTEMD_DIR" "$STATE_DIR" "$(dirname "$CONFIG")" "$TARGET_HOME/.local/bin"
+        mkdir -p "$SYSTEMD_DIR" "$STATE_DIR" "$(dirname "$CONFIG")"
         chmod 700 "$SYSTEMD_DIR" "$STATE_DIR" "$(dirname "$CONFIG")"
 
         if [ ! -f "$CONFIG" ]; then
@@ -154,6 +160,7 @@ case "$MODE" in
         fi
         chmod 600 "$CONFIG"
 
+        materialize_runtime_updater
         TMP="$(mktemp -d)"
         render_all "$TMP"
         validate_rendered "$TMP"
@@ -162,7 +169,6 @@ case "$MODE" in
         install -m 644 "$TMP/hermes-fleet-registry.timer" "$SYSTEMD_DIR/hermes-fleet-registry.timer"
         install -m 644 "$TMP/hermes-fleet-verifier.service" "$SYSTEMD_DIR/hermes-fleet-verifier.service"
         install -m 644 "$TMP/hermes-fleet-verifier.timer" "$SYSTEMD_DIR/hermes-fleet-verifier.timer"
-        install -m 755 "$ROOT/scripts/runtime-update.sh" "$TARGET_HOME/.local/bin/opencloud-runtime-update"
         install -m 644 "$TMP/opencloud-runtime-update.service" "$SYSTEMD_DIR/opencloud-runtime-update.service"
         install -m 644 "$TMP/opencloud-runtime-update.timer" "$SYSTEMD_DIR/opencloud-runtime-update.timer"
 
