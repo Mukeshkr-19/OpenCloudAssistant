@@ -69,7 +69,7 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 +    kept = []
 +    for td in tools:
 +        name = (td.get("function") or {}).get("name") or td.get("name") or ""
-+        if name in _OPENCLOUD_SIDE_EFFECT_TOOLS:
++        if name in _OPENCLOUD_SIDE_EFFECT_TOOLS or name.startswith("browser_"):
 +            continue
 +        kept.append(td)
 +    agent.tools = kept
