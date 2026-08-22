@@ -138,10 +138,12 @@ else
 fi
 
 if has_value OPENROUTER_API_KEY; then
+    # openrouter/free is the permanent Fleet final-escape route, not a dynamic
+    # discovery pool. Registry providerStatus only covers nvidia / zen.
     if [ "$OPENROUTER_OK" = "true" ]; then
         pass "OpenRouter provider" "runtime discovery healthy; route openrouter/free"
     else
-        fail "OpenRouter provider" "configured but runtime discovery is not healthy"
+        pass "OpenRouter provider" "credential present; route openrouter/free"
     fi
 else
     skip "OpenRouter provider" "not configured"
