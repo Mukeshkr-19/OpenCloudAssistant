@@ -21,6 +21,7 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 +    "browser_vision", "browser_cdp", "browser_dialog",
 +    "web_search", "web_extract", "search_web", "search",
 +    "clarify", "ask_user", "cronjob", "delegate_task", "execute_code",
++    "terminal", "run_terminal", "shell", "bash",
 +})
 +
 +
