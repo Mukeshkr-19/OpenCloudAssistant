@@ -10,7 +10,7 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 -        return
 -    prev_tools = tools
 +    # HERMES_OPENCLOUD_GREETING_TOOL_CHOICE_NONE_V1 — leftover non-side-effect
-+    # tool schemas still put NVIDIA/Llama into tool mode; greeting replies
++    # tool schemas still put some providers into tool mode; greeting replies
 +    # become "There is no function to call with the given prompt." Clear tools
 +    # and force tool_choice=none for this turn only.
 +    prev_tools = getattr(agent, "tools", None) or []

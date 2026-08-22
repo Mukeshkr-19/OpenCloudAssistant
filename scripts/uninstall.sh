@@ -14,6 +14,8 @@ UNITS=(
     hermes-fleet-registry.service
     hermes-fleet-verifier.timer
     hermes-fleet-verifier.service
+    opencloud-runtime-update.timer
+    opencloud-runtime-update.service
 )
 
 show_retained() {
@@ -128,6 +130,10 @@ fi
 remove_if_managed \
     "$ROOT/integrations/self-repair/hermes-code-repair" \
     "$HOME/.local/bin/hermes-code-repair"
+
+remove_if_managed \
+    "$ROOT/scripts/runtime-update.sh" \
+    "$HOME/.local/bin/opencloud-runtime-update"
 
 show_retained
 

@@ -64,7 +64,9 @@ render_all() {
         hermes-fleet-registry.service \
         hermes-fleet-registry.timer \
         hermes-fleet-verifier.service \
-        hermes-fleet-verifier.timer
+        hermes-fleet-verifier.timer \
+        opencloud-runtime-update.service \
+        opencloud-runtime-update.timer
     do
         render_unit "$ROOT/services/systemd/$name" "$out/$name"
     done
@@ -77,7 +79,9 @@ validate_rendered() {
         hermes-fleet-registry.service \
         hermes-fleet-registry.timer \
         hermes-fleet-verifier.service \
-        hermes-fleet-verifier.timer
+        hermes-fleet-verifier.timer \
+        opencloud-runtime-update.service \
+        opencloud-runtime-update.timer
     do
         test -s "$out/$name"
 
@@ -93,6 +97,8 @@ validate_rendered() {
             "$out/hermes-fleet-registry.timer" \
             "$out/hermes-fleet-verifier.service" \
             "$out/hermes-fleet-verifier.timer" \
+            "$out/opencloud-runtime-update.service" \
+            "$out/opencloud-runtime-update.timer" \
             >/dev/null
     fi
 }
@@ -101,6 +107,7 @@ plan() {
     echo "Open Cloud Assistant service plan"
     echo "Fleet registry timer: REQUIRED"
     echo "Fleet verifier timer: REQUIRED"
+    echo "Guarded runtime update timer: REQUIRED"
 
     if gateway_required; then
         echo "Hermes gateway: REQUIRED"
@@ -139,7 +146,7 @@ case "$MODE" in
             exit 1
         }
 
-        mkdir -p "$SYSTEMD_DIR" "$STATE_DIR" "$(dirname "$CONFIG")"
+        mkdir -p "$SYSTEMD_DIR" "$STATE_DIR" "$(dirname "$CONFIG")" "$TARGET_HOME/.local/bin"
         chmod 700 "$SYSTEMD_DIR" "$STATE_DIR" "$(dirname "$CONFIG")"
 
         if [ ! -f "$CONFIG" ]; then
@@ -155,16 +162,21 @@ case "$MODE" in
         install -m 644 "$TMP/hermes-fleet-registry.timer" "$SYSTEMD_DIR/hermes-fleet-registry.timer"
         install -m 644 "$TMP/hermes-fleet-verifier.service" "$SYSTEMD_DIR/hermes-fleet-verifier.service"
         install -m 644 "$TMP/hermes-fleet-verifier.timer" "$SYSTEMD_DIR/hermes-fleet-verifier.timer"
+        install -m 755 "$ROOT/scripts/runtime-update.sh" "$TARGET_HOME/.local/bin/opencloud-runtime-update"
+        install -m 644 "$TMP/opencloud-runtime-update.service" "$SYSTEMD_DIR/opencloud-runtime-update.service"
+        install -m 644 "$TMP/opencloud-runtime-update.timer" "$SYSTEMD_DIR/opencloud-runtime-update.timer"
 
         rm -rf "$TMP"
 
         systemctl --user daemon-reload
         systemctl --user enable \
             hermes-fleet-registry.timer \
-            hermes-fleet-verifier.timer
+            hermes-fleet-verifier.timer \
+            opencloud-runtime-update.timer
         systemctl --user restart \
             hermes-fleet-registry.timer \
-            hermes-fleet-verifier.timer
+            hermes-fleet-verifier.timer \
+            opencloud-runtime-update.timer
 
         if gateway_required; then
             command -v hermes >/dev/null 2>&1 || {

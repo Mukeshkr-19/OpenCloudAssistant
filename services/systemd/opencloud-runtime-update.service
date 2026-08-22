@@ -1,0 +1,9 @@
+[Unit]
+Description=Update Open Cloud Assistant managed runtimes
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/opencloud-runtime-update --run
+TimeoutStartSec=1800

@@ -22,6 +22,7 @@ case "$COMMAND" in
         echo
         unit_status hermes-fleet-registry.timer
         unit_status hermes-fleet-verifier.timer
+        unit_status opencloud-runtime-update.timer
 
         if systemctl --user cat hermes-gateway.service >/dev/null 2>&1; then
             unit_status hermes-gateway.service

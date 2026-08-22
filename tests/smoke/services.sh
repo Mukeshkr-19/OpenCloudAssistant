@@ -28,7 +28,10 @@ PLAN="$(OPEN_CLOUD_CHANNELS_STATE="$STATE" install/95-services.sh --plan)"
 
 [[ "$PLAN" == *"Fleet registry timer: REQUIRED"* ]]
 [[ "$PLAN" == *"Fleet verifier timer: REQUIRED"* ]]
+[[ "$PLAN" == *"Guarded runtime update timer: REQUIRED"* ]]
 [[ "$PLAN" == *"Hermes gateway: SKIP"* ]]
+
+scripts/runtime-update.sh --check
 
 echo "SMOKE: Telegram plan"
 
