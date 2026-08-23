@@ -3,6 +3,11 @@
 Open Cloud Assistant includes an optional restricted code-repair mechanism for
 Hermes source defects.
 
+For the guarded Open Cloud Assistant **source** self-healing control plane
+(incident lifecycle, isolated worktrees, canary, promotion policy), see
+[SELF_HEAL.md](SELF_HEAL.md). That plane extends this harness; it does not
+replace it.
+
 The repair system separates the AI editing layer from the trusted deployment
 layer.
 

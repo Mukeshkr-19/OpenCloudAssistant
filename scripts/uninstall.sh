@@ -16,6 +16,8 @@ UNITS=(
     hermes-fleet-verifier.service
     opencloud-runtime-update.timer
     opencloud-runtime-update.service
+    opencloud-self-heal.timer
+    opencloud-self-heal.service
 )
 
 show_retained() {
@@ -133,7 +135,9 @@ remove_if_managed \
 
 remove_if_managed \
     "$ROOT/scripts/runtime-update.sh" \
-    "$HOME/.local/bin/opencloud-runtime-update"
+    "$HOME/.local/bin/opencloud-runtime-update" \
+    "$ROOT/scripts/self-heal.sh" \
+    "$HOME/.local/bin/opencloud-self-heal"
 
 show_retained
 
