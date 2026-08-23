@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI: opencloud self-heal status|incidents|show|retry|disable|enable|ingest|run."""
+"""CLI: opencloud self-heal status|incidents|show|retry|disable|enable|ingest|detect|run."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT / "integrations" / "self-repair"))
 
 from guarded_heal.controller import SelfHealController  # noqa: E402
+from guarded_heal.detector import RuntimeDetector  # noqa: E402
 
 
 def _controller(repo: Path | None = None) -> SelfHealController:
@@ -82,8 +83,17 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_detect(args: argparse.Namespace) -> int:
+    """Lightweight journal → ingest. Separate from expensive repair tick."""
+    ctrl = _controller()
+    det = RuntimeDetector(state_root=ctrl.state_root, ingest_fn=ctrl.ingest)
+    result = det.detect(auto_run=not args.no_run)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
-    """Timer entry: auto-ingest inbox events, then report status."""
+    """Repair timer entry: drain inbox, then report status."""
     ctrl = _controller()
     ingested = ctrl.scan_inbox(auto_run=not getattr(args, "no_run", False))
     st = ctrl.status()
@@ -129,6 +139,14 @@ def main(argv: list[str] | None = None) -> int:
     p_ing.add_argument("--context", default="")
     p_ing.add_argument("--no-run", action="store_true")
     p_ing.set_defaults(func=cmd_ingest)
+
+    p_det = sub.add_parser("detect")
+    p_det.add_argument(
+        "--no-run",
+        action="store_true",
+        help="ingest detections only; do not auto-process",
+    )
+    p_det.set_defaults(func=cmd_detect)
 
     p_run = sub.add_parser("run")
     p_run.add_argument(

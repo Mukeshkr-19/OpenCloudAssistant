@@ -1,0 +1,11 @@
+[Unit]
+Description=Frequent lightweight self-heal journal detection
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+RandomizedDelaySec=15s
+Unit=opencloud-self-heal-detect.service
+
+[Install]
+WantedBy=timers.target

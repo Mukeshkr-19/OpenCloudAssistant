@@ -89,14 +89,21 @@ Package: `integrations/self-repair/guarded_heal/`
 - **Severity**: HIGH/CRITICAL never auto-promote. MEDIUM → `HUMAN_REQUIRED`
   for auto-merge unless `OPEN_CLOUD_SELF_HEAL_ALLOW_MEDIUM_AUTOMERGE=1`.
   LOW may auto-merge through all gates.
-- **Canary**: synthetic/local (product UX greeting + gateway health), **not**
-  user iMessage. Injected adapters for deterministic CI.
-- **Deploy / rollback** adapters after merge; separate circuits for
-  `repair_attempts`, `promotions`, `deploys`, `rollbacks`
+- **Canary**: synthetic/local — **PRE_PROMOTION_CANARY** (worktree/patch UX) vs
+  **POST_DEPLOY_RUNTIME_CANARY** (gateway active + materialized greeting
+  classifier + Fleet verify). UNKNOWN/TIMEOUT = FAIL. Not user iMessage.
+- **Deploy / rollback** adapters after merge; **ROLLED_BACK** only when HEAD/
+  TREE match previous, materialize rc=0, restart rc=0, gateway active, and
+  post-rollback canary PASS — else **ROLLBACK_FAILED** + CRITICAL /
+  HUMAN_REQUIRED. Failed SHA quarantined before/during rollback.
 - **Dedup / reoccurrence**: `occurrence_count`; reopen window; escalate
   repeats → `HUMAN_REQUIRED`; never retry quarantined SHA
 - **Auto-ingest**: timer tick drains `~/.opencloud/self-repair/inbox/*.json`
   (production-style clarify/errors) without manual `self-heal ingest`
+- **Runtime detector**: `opencloud self-heal detect` reads `journalctl` for
+  `hermes-gateway` (+ justified OpenCloud units), persists a cursor, sanitizes,
+  and `controller.ingest()`s — no manual ingest required. Frequent detect timer
+  (1–2 min) is separate from the slower repair tick.
 - **Never** runs `hermes update` as unattended repair
 - **Private sync** recorded as `PRIVATE_SYNC_ELIGIBLE` only after post-deploy
   canary PASS — **no private write** from this public controller
@@ -111,19 +118,25 @@ opencloud self-heal retry <id>
 opencloud self-heal disable
 opencloud self-heal enable
 opencloud self-heal ingest --exc-type ValueError --message '...'
-opencloud self-heal run   # timer: auto-ingest inbox + status
+opencloud self-heal detect  # journal → ingest (lightweight)
+opencloud self-heal run     # repair tick: inbox + status
 ```
 
 ## systemd
 
-Optional user units `opencloud-self-heal.service` / `.timer` (tick runs inbox
-auto-ingest). Installed alongside existing fleet/runtime-update timers; does
-not replace `opencloud-runtime-update` or Hermes gateway.
+User units:
+
+- `opencloud-self-heal-detect.timer` — frequent journal detection (≈2 min)
+- `opencloud-self-heal.timer` — bounded repair / inbox tick (15–30 min)
+
+Installed alongside existing fleet/runtime-update timers; does not replace
+`opencloud-runtime-update` or Hermes gateway. Uninstaller removes both.
 
 ## Tests
 
 ```bash
 python3 tests/reliability/guarded-self-heal.py
+python3 tests/reliability/guarded-self-heal-detect.py
 ./tests/reliability/guarded-self-heal-e2e.sh
 ```
 

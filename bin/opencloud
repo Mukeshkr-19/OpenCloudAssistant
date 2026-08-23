@@ -110,6 +110,8 @@ case "$COMMAND" in
         echo "  opencloud self-heal retry ID"
         echo "  opencloud self-heal enable"
         echo "  opencloud self-heal disable"
+        echo "  opencloud self-heal detect"
+        echo "  opencloud self-heal run"
         echo "  opencloud version"
         echo "  opencloud help"
         ;;
