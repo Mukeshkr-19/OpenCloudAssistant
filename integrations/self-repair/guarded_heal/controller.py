@@ -522,7 +522,7 @@ class SelfHealController:
         self.canary = canary or CanaryAdapter()
         self.promoter = promoter or GitHubPromoter()
         self.deployer = deployer or DeployAdapter(repo_root=self.repo_root)
-        self.p8 = p8 or P8RuntimeAdapter()
+        self.p8 = p8  # legacy/manual only — automatic queue never invokes P8
         self.runtime = runtime or RuntimeServiceAdapter()
         self.fleet = fleet or FleetAdapter()
         self.notify_fn = notify_fn or (lambda _msg: None)
@@ -870,9 +870,9 @@ class SelfHealController:
         )
 
     def _tier1_runtime(self, incident_id: str) -> dict[str, Any]:
-        """Gateway crash / stuck turn → RuntimeServiceAdapter; else legacy P8.
+        """Gateway crash / stuck turn / lifecycle → RuntimeServiceAdapter only.
 
-        Never hermes-code-repair / live Hermes scan for crash/lifecycle/stuck.
+        Any other Tier-1 reason fails closed — never P8 / hermes-code-repair.
         """
         incident = self.store.get(incident_id)
         assert incident
@@ -915,8 +915,12 @@ class SelfHealController:
                 meta_update=meta,
             )
 
-        # Internal TypeError/AttributeError etc. — legacy P8 path (not crash).
-        return self._tier1_p8(incident_id)
+        return self.store.transition(
+            incident_id,
+            "HUMAN_REQUIRED",
+            detail=f"unsupported_tier1_runtime_reason={reason or 'unknown'}",
+            meta_update={"p8_used": False, "hermes_code_repair": False},
+        )
 
     def _tier1_p8(self, incident_id: str) -> dict[str, Any]:
         incident = self.store.get(incident_id)

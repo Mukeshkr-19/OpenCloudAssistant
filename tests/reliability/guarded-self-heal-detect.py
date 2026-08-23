@@ -997,6 +997,62 @@ def test_systemd_bounds_present() -> None:
     require("TimeoutStartSec=25min" in ctrl, "controller TimeoutStartSec")
 
 
+def test_generic_typeerror_tier1_fail_closed_no_p8() -> None:
+    """Generic TypeError Tier-1: detector queues → controller HUMAN_REQUIRED; P8=0."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        p8_calls = {"n": 0}
+        runtime_calls = {"n": 0}
+
+        def p8_dry(task, fp):
+            p8_calls["n"] += 1
+            return ActionResult(status="RECOVERED", detail="must_not_run", verified=True)
+
+        def runtime_dry(kind, reason):
+            runtime_calls["n"] += 1
+            return ActionResult(status="RECOVERED", detail="must_not_run", verified=True)
+
+        ctrl = SelfHealController(
+            repo_root=repo,
+            state_root=state,
+            p8=P8RuntimeAdapter(dry_invoke=p8_dry),
+            runtime=RuntimeServiceAdapter(dry_invoke=runtime_dry),
+            test_mode=True,
+        )
+        journal = FakeJournal(
+            [(["TypeError: foo() missing 1 required positional argument: 'bar'"], "c-type")]
+        )
+        det = RuntimeDetector(
+            state_root=state, ingest_fn=ctrl.ingest, journal=journal
+        )
+        r = det.detect()
+        require(r["ingested"] >= 1, f"queued {r}")
+        row = ctrl.store.list_incidents()[0]
+        require(row["tier"] == 1, f"tier {row['tier']}")
+        require(row["state"] == "QUEUED", f"state {row['state']}")
+        require((row.get("meta") or {}).get("reason") == "internal_code", "internal_code")
+        require(p8_calls["n"] == 0, "detector must not call P8")
+        require(runtime_calls["n"] == 0, "detector must not call runtime")
+
+        processed = ctrl.process_queue(limit=1)
+        require(len(processed) == 1, "controller processed")
+        final = ctrl.store.get(row["id"])
+        require(final["state"] == "HUMAN_REQUIRED", f"got {final['state']}")
+        ev_detail = " ".join(
+            (e.get("detail") or "") for e in ctrl.store.events(row["id"])
+        )
+        require(
+            "unsupported_tier1_runtime_reason=internal_code" in ev_detail,
+            f"events {ev_detail!r}",
+        )
+        require(final["meta"].get("p8_used") is False, "p8_used false")
+        require(final["meta"].get("hermes_code_repair") is False, "no repair")
+        require(p8_calls["n"] == 0, "hermes-code-repair / P8 count=0")
+        require(runtime_calls["n"] == 0, "runtime count=0 for unsupported tier1")
+
+
 def test_gateway_crash_never_hermes_code_repair() -> None:
     """Deterministic: gateway crash → hermes-code-repair invocation count = 0."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -1048,6 +1104,7 @@ def main() -> None:
     test_failed_dedup_no_storm()
     test_detector_timeout_preserves_cursor()
     test_systemd_bounds_present()
+    test_generic_typeerror_tier1_fail_closed_no_p8()
     test_gateway_crash_never_hermes_code_repair()
     print("PASS detector parse/sanitize/classify (clarify Tier3, ReadTimeout Tier2)")
     print("PASS detector cursor dedup + restart (no storm / no full replay)")
@@ -1065,6 +1122,7 @@ def main() -> None:
     print("PASS FAILED dedup reopen (no storm)")
     print("PASS detect timeout preserves cursor")
     print("PASS systemd RuntimeMaxSec/TimeoutStartSec bounds")
+    print("PASS generic TypeError Tier1 HUMAN_REQUIRED / P8=0")
     print("PASS gateway crash never hermes-code-repair")
 
 

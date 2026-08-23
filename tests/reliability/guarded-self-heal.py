@@ -304,10 +304,18 @@ def test_tier1_tier2_truthful() -> None:
             ),
             test_mode=True,
         )
-        # Tier 1 via TypeError without opencloud → tier 1
+        # Tier 1 via TypeError without opencloud → fail closed, no P8
         r1 = ctrl.ingest("TypeError", "foo() missing arg", module="x", auto_run=True)
         require(r1["state"] == "HUMAN_REQUIRED", f"tier1 {r1['state']}")
-        require(r1["meta"].get("p8_verified") is False, "not fake success")
+        ev_detail = " ".join(
+            (e.get("detail") or "") for e in ctrl.store.events(r1["id"])
+        )
+        require(
+            "unsupported_tier1_runtime_reason=internal_code" in ev_detail,
+            f"events {ev_detail!r}",
+        )
+        require(r1["meta"].get("p8_used") is False, "no P8")
+        require(r1["meta"].get("hermes_code_repair") is False, "no hermes repair")
 
         r2 = ctrl.ingest(
             "APITimeoutError", "ReadTimeout provider", module="fleet", auto_run=True

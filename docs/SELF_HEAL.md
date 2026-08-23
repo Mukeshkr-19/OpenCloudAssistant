@@ -58,8 +58,8 @@ Package: `integrations/self-repair/guarded_heal/`
 - **SQLite** incident store under `~/.opencloud/self-repair/` (override with
   `OPEN_CLOUD_SELF_HEAL_STATE`)
 - **Tiers**: `0` none → `1` **runtime** service recovery for gateway
-  crash/stuck turn (restart + verify; never `hermes-code-repair` / P8 for
-  those) → legacy P8 only for internal TypeError/AttributeError → `2`
+  crash/stuck turn/lifecycle only (restart + verify; never
+  `hermes-code-repair` / P8; other Tier-1 → `HUMAN_REQUIRED`) → `2`
   provider/Fleet (`NO_ACTION_TRANSIENT` unless verified; never source-edit
   quota/timeout; preserve `openrouter/free`; Gemini stays blocked) → `3`
   source repair
