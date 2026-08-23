@@ -72,11 +72,13 @@ def main() -> None:
             return False
         if re.fullmatch(
             r"(?i)(hi|hello|hey|yo|sup|howdy|hiya|good\s*(morning|afternoon|evening))"
-            r"([,.!]+\s*[A-Za-z]{0,24})?[.!]?",
+            r"([,.!]+\s*[A-Za-z]{0,24}|\s+(bro|man|dude|buddy|pal|mate|fam|there|hermes|assistant|friend))?[.!]?",
             raw,
         ):
             return True
-        if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\s+(there|hermes|assistant|friend)[.!]?", raw):
+        if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\s+(there|hermes|assistant|friend|bro|man|dude)[.!]?", raw):
+            return True
+        if re.fullmatch(r"(?i)(bro|dude|yo)[.!]?", raw):
             return True
         return False
 
@@ -86,6 +88,10 @@ def main() -> None:
     require(fn("Hey there") is True, "Hey there should match")
     require(fn("Good morning") is True, "Good morning should match")
     require(fn("Hi, Mukesh") is True, "Hi, name should match")
+    require(fn("Hi bro") is True, "Hi bro should match")
+    require(fn("Hi man") is True, "Hi man should match")
+    require(fn("Bro") is True, "Bro should match")
+    require(fn("Hi bro search for jobs") is False, "task-prefixed greeting must not match")
     require(fn("Hi, search for jobs") is False, "taskful greeting must not match")
     require(fn("browse https://example.com") is False, "URL task must not match")
     require(fn("find internships in NYC") is False, "search intent must not match")
