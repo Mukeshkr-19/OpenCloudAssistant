@@ -1097,25 +1097,40 @@ def test_gateway_crash_never_hermes_code_repair() -> None:
 
 
 def main() -> None:
-    test_parse_and_classify_fixture()
-    test_detector_cursor_no_dup_storm()
-    test_detector_restart_no_full_replay()
-    test_journalctl_argv_shell_false()
-    test_post_deploy_canary_greeting()
-    test_canary_kinds_and_e2e_paths()
-    test_rollback_failure_modes()
-    test_controller_rollback_failed_critical()
-    test_fixture_auto_detect_no_cli_ingest()
-    test_intentional_restart_zero_crash()
-    test_genuine_segv_tier1_runtime_no_p8()
-    test_unexpected_crash_already_active()
-    test_clarify_detector_queues_opencode_zero()
-    test_stale_recovering_lease_and_legacy()
-    test_failed_dedup_no_storm()
-    test_detector_timeout_preserves_cursor()
-    test_systemd_bounds_present()
-    test_generic_typeerror_tier1_fail_closed_no_p8()
-    test_gateway_crash_never_hermes_code_repair()
+    import gc
+
+    def run_isolated(test_fn):
+        try:
+            test_fn()
+        finally:
+            # Reliability tests intentionally create many temporary SQLite,
+            # subprocess, and filesystem resources. Force deterministic
+            # collection between tests so macOS low soft FD limits do not
+            # accumulate descriptors across the suite.
+            gc.collect()
+
+    for test_fn in (
+        test_parse_and_classify_fixture,
+        test_detector_cursor_no_dup_storm,
+        test_detector_restart_no_full_replay,
+        test_journalctl_argv_shell_false,
+        test_post_deploy_canary_greeting,
+        test_canary_kinds_and_e2e_paths,
+        test_rollback_failure_modes,
+        test_controller_rollback_failed_critical,
+        test_fixture_auto_detect_no_cli_ingest,
+        test_intentional_restart_zero_crash,
+        test_genuine_segv_tier1_runtime_no_p8,
+        test_unexpected_crash_already_active,
+        test_clarify_detector_queues_opencode_zero,
+        test_stale_recovering_lease_and_legacy,
+        test_failed_dedup_no_storm,
+        test_detector_timeout_preserves_cursor,
+        test_systemd_bounds_present,
+        test_generic_typeerror_tier1_fail_closed_no_p8,
+        test_gateway_crash_never_hermes_code_repair,
+    ):
+        run_isolated(test_fn)
     print("PASS detector parse/sanitize/classify (clarify Tier3, ReadTimeout Tier2)")
     print("PASS detector cursor dedup + restart (no storm / no full replay)")
     print("PASS journalctl argv shell=False")
