@@ -34,7 +34,8 @@ STATES = (
     "QUARANTINED",
     "ROLLBACK_REQUIRED",
     "ROLLED_BACK",
-    "CANARY",  # pre-promotion synthetic canary
+    "ROLLBACK_FAILED",
+    "CANARY",  # PRE_PROMOTION_CANARY phase
     "CANARY_FAILED",
     "VALIDATION_FAILED",
     "NO_ACTION_TRANSIENT",
@@ -53,6 +54,7 @@ OPEN_STATES = tuple(
     not in (
         "RECOVERED",
         "ROLLED_BACK",
+        "ROLLBACK_FAILED",
         "FAILED",
         "NO_ACTION_TRANSIENT",
         "DISABLED",

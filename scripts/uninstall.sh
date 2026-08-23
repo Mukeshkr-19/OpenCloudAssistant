@@ -18,6 +18,8 @@ UNITS=(
     opencloud-runtime-update.service
     opencloud-self-heal.timer
     opencloud-self-heal.service
+    opencloud-self-heal-detect.timer
+    opencloud-self-heal-detect.service
 )
 
 show_retained() {
@@ -135,9 +137,15 @@ remove_if_managed \
 
 remove_if_managed \
     "$ROOT/scripts/runtime-update.sh" \
-    "$HOME/.local/bin/opencloud-runtime-update" \
+    "$HOME/.local/bin/opencloud-runtime-update"
+
+remove_if_managed \
     "$ROOT/scripts/self-heal.sh" \
     "$HOME/.local/bin/opencloud-self-heal"
+
+remove_if_managed \
+    "$ROOT/scripts/self-heal-detect.sh" \
+    "$HOME/.local/bin/opencloud-self-heal-detect"
 
 show_retained
 

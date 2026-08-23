@@ -222,6 +222,39 @@ def classify_failure(
             reason="clarify_schema_greeting",
         )
 
+    if "same_tool_failure_halt" in low:
+        return Classification(
+            signature=sig,
+            severity="HIGH",
+            tier=3,
+            title="same_tool_failure_halt",
+            task=sanitize_for_opencode(
+                "Fix repeated tool failure halt in Hermes/OpenCloud path: "
+                + msg[:300]
+            ),
+            reason="same_tool_failure_halt",
+        )
+
+    if "gateway crash" in low or "main process exited" in low or "abnormal exit" in low:
+        return Classification(
+            signature=sig,
+            severity="CRITICAL",
+            tier=1,
+            title="hermes-gateway crash",
+            task=sanitize_for_opencode(f"Investigate gateway crash: {msg[:300]}"),
+            reason="gateway_crash",
+        )
+
+    if "stuck turn" in low:
+        return Classification(
+            signature=sig,
+            severity="HIGH",
+            tier=1,
+            title="stuck turn",
+            task=sanitize_for_opencode(f"Recover stuck turn: {msg[:300]}"),
+            reason="stuck_turn",
+        )
+
     if exc.lower() in ("typeerror", "attributeerror") or "_opencloud_" in low:
         return Classification(
             signature=sig,
@@ -505,6 +538,7 @@ class SelfHealController:
                 not in (
                     "RECOVERED",
                     "ROLLED_BACK",
+                    "ROLLBACK_FAILED",
                     "FAILED",
                     "NO_ACTION_TRANSIENT",
                     "DISABLED",
@@ -1113,36 +1147,64 @@ class SelfHealController:
         self.store.transition(
             incident_id, "ROLLBACK_REQUIRED", detail=reason, meta_update=meta
         )
+        # Quarantine failed repair SHA before/while rollback — never auto-redeploy.
+        self.store.quarantine_sha(failed_sha, reason)
+        meta = {**meta, "quarantined_sha": failed_sha}
         if self.store.circuit_count("rollbacks", 3600) >= MAX_ROLLBACKS_PER_HOUR:
-            self.store.quarantine_sha(failed_sha, reason)
             return self.store.transition(
                 incident_id,
-                "QUARANTINED",
+                "ROLLBACK_FAILED",
                 error="rollback circuit open; sha quarantined",
-                meta_update={**meta, "quarantined_sha": failed_sha},
+                meta_update={
+                    **meta,
+                    "severity_escalation": "CRITICAL",
+                    "human_required": True,
+                },
             )
         self.store.circuit_bump("rollbacks", 3600)
-        rb = self.deployer.rollback(previous_sha)
-        self.store.quarantine_sha(failed_sha, reason)
+        prev_tree = str(meta.get("previous_deployed_tree") or "")
+        try:
+            rb = self.deployer.rollback(
+                previous_sha,
+                previous_tree=prev_tree,
+                post_canary=lambda: self.canary.post_deploy(
+                    materialized_hint=previous_sha
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — never claim ROLLED_BACK
+            return self.store.transition(
+                incident_id,
+                "ROLLBACK_FAILED",
+                error=f"rollback exception: {exc}",
+                meta_update={
+                    **meta,
+                    "severity_escalation": "CRITICAL",
+                    "human_required": True,
+                },
+            )
         meta.update(
             {
                 "rollback_status": rb.status,
                 "rollback_detail": rb.detail,
-                "quarantined_sha": failed_sha,
+                "rollback_head": rb.deployed_head,
+                "rollback_tree": rb.deployed_tree,
             }
+        )
+        self.store.transition(
+            incident_id, "QUARANTINED", detail=f"quarantined {failed_sha[:12]}"
         )
         if rb.status != "ROLLED_BACK":
             return self.store.transition(
                 incident_id,
-                "QUARANTINED",
+                "ROLLBACK_FAILED",
                 error=f"rollback failed: {rb.detail}",
-                meta_update=meta,
+                meta_update={
+                    **meta,
+                    "severity_escalation": "CRITICAL",
+                    "human_required": True,
+                },
             )
-        # Prefer documenting revert-PR path (no force-push).
         meta["prefer_revert_pr"] = True
-        self.store.transition(
-            incident_id, "QUARANTINED", detail=f"quarantined {failed_sha[:12]}"
-        )
         return self.store.transition(
             incident_id,
             "ROLLED_BACK",

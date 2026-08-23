@@ -14,14 +14,17 @@ from .controller import (
     path_denied,
     sanitize_for_opencode,
 )
+from .detector import RuntimeDetector, parse_journal_line
 from .store import IncidentStore
 
 __all__ = [
     "SelfHealController",
     "IncidentStore",
+    "RuntimeDetector",
     "DEFAULT_STATE_ROOT",
     "classify_failure",
     "sanitize_for_opencode",
     "path_denied",
     "assert_safe_workdir",
+    "parse_journal_line",
 ]

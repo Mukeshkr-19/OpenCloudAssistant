@@ -561,22 +561,42 @@ class DeployAdapter:
         except (OSError, subprocess.TimeoutExpired) as exc:
             return DeployResult(status="FAILED", detail=str(exc))
 
-    def rollback(self, previous_sha: str) -> DeployResult:
+    def rollback(
+        self,
+        previous_sha: str,
+        *,
+        previous_tree: str = "",
+        post_canary: Optional[Callable[[], tuple[bool, str]]] = None,
+    ) -> DeployResult:
+        """Restore previous SHA only; ROLLED_BACK iff every gate is proven.
+
+        Gates: HEAD==previous, TREE==previous (when known), materialize rc=0,
+        restart rc=0, gateway active, post-rollback canary PASS.
+        Any miss → ROLLBACK_FAILED (never swallow as success).
+        """
         if self._dry is not None:
+            # Dry adapters may return ROLLED_BACK / ROLLBACK_FAILED / FAILED directly.
             result = self._dry(previous_sha, quarantined=False)
+            if result.status in ("ROLLED_BACK", "ROLLBACK_FAILED", "FAILED"):
+                return result
             if result.status == "DEPLOYED":
-                # Dry deploy adapter used for both paths — map to rollback.
                 return DeployResult(
                     status="ROLLED_BACK",
                     detail=f"dry rollback to {previous_sha}",
                     deployed_head=previous_sha,
+                    deployed_tree=previous_tree or result.deployed_tree,
                     previous_head=result.deployed_head,
                 )
-            if result.status == "ROLLED_BACK":
-                return result
-            return result
+            return DeployResult(
+                status="ROLLBACK_FAILED",
+                detail=f"dry rollback incomplete: {result.status} {result.detail}",
+                previous_head=result.previous_head,
+                previous_tree=result.previous_tree,
+                deployed_head=result.deployed_head,
+                deployed_tree=result.deployed_tree,
+            )
         if not previous_sha:
-            return DeployResult(status="FAILED", detail="missing previous_sha")
+            return DeployResult(status="ROLLBACK_FAILED", detail="missing previous_sha")
         try:
             cur_h, cur_t = self._rev_parse("HEAD")
             reset = _run(
@@ -584,31 +604,128 @@ class DeployAdapter:
                 runner=self._runner,
                 timeout=120,
             )
-            # Prefer revert PR in production docs; hard reset only for local
-            # checkout restore after a failed deploy of a known prior SHA.
             if reset.returncode != 0:
                 return DeployResult(
-                    status="FAILED",
+                    status="ROLLBACK_FAILED",
                     detail=f"rollback reset failed: {(reset.stderr or '')[:300]}",
                     previous_head=cur_h,
                     previous_tree=cur_t,
                 )
             new_h, new_t = self._rev_parse("HEAD")
+            if new_h != previous_sha:
+                return DeployResult(
+                    status="ROLLBACK_FAILED",
+                    detail=f"HEAD {new_h} != previous {previous_sha}",
+                    previous_head=cur_h,
+                    previous_tree=cur_t,
+                    deployed_head=new_h,
+                    deployed_tree=new_t,
+                )
+            if previous_tree and new_t and new_t != previous_tree:
+                return DeployResult(
+                    status="ROLLBACK_FAILED",
+                    detail=f"TREE {new_t} != previous {previous_tree}",
+                    previous_head=cur_h,
+                    previous_tree=cur_t,
+                    deployed_head=new_h,
+                    deployed_tree=new_t,
+                )
             if self.materialize_script.is_file():
-                _run(
+                mat = _run(
                     ["bash", str(self.materialize_script)],
                     runner=self._runner,
                     timeout=600,
                     cwd=str(self.repo_root),
                 )
+                if mat.returncode != 0:
+                    return DeployResult(
+                        status="ROLLBACK_FAILED",
+                        detail=f"materialize failed rc={mat.returncode}: "
+                        f"{(mat.stderr or mat.stdout)[:300]}",
+                        previous_head=cur_h,
+                        previous_tree=cur_t,
+                        deployed_head=new_h,
+                        deployed_tree=new_t,
+                    )
             try:
-                _run(
+                restart = _run(
                     ["systemctl", "--user", "restart", "hermes-gateway.service"],
                     runner=self._runner,
                     timeout=120,
                 )
-            except (OSError, subprocess.TimeoutExpired):
-                pass
+            except subprocess.TimeoutExpired:
+                return DeployResult(
+                    status="ROLLBACK_FAILED",
+                    detail="gateway restart timeout",
+                    previous_head=cur_h,
+                    previous_tree=cur_t,
+                    deployed_head=new_h,
+                    deployed_tree=new_t,
+                )
+            except OSError as exc:
+                return DeployResult(
+                    status="ROLLBACK_FAILED",
+                    detail=f"gateway restart unavailable: {exc}",
+                    previous_head=cur_h,
+                    previous_tree=cur_t,
+                    deployed_head=new_h,
+                    deployed_tree=new_t,
+                )
+            if restart.returncode != 0:
+                return DeployResult(
+                    status="ROLLBACK_FAILED",
+                    detail=f"gateway restart rc={restart.returncode}",
+                    previous_head=cur_h,
+                    previous_tree=cur_t,
+                    deployed_head=new_h,
+                    deployed_tree=new_t,
+                )
+            try:
+                active = _run(
+                    ["systemctl", "--user", "is-active", "hermes-gateway.service"],
+                    runner=self._runner,
+                    timeout=30,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return DeployResult(
+                    status="ROLLBACK_FAILED",
+                    detail=f"gateway active probe failed: {exc}",
+                    previous_head=cur_h,
+                    previous_tree=cur_t,
+                    deployed_head=new_h,
+                    deployed_tree=new_t,
+                )
+            if (active.stdout or "").strip() != "active":
+                return DeployResult(
+                    status="ROLLBACK_FAILED",
+                    detail=f"gateway not active after rollback: "
+                    f"{(active.stdout or '').strip()}",
+                    previous_head=cur_h,
+                    previous_tree=cur_t,
+                    deployed_head=new_h,
+                    deployed_tree=new_t,
+                )
+            if post_canary is not None:
+                try:
+                    ok, detail = post_canary()
+                except Exception as exc:  # noqa: BLE001 — fail closed
+                    return DeployResult(
+                        status="ROLLBACK_FAILED",
+                        detail=f"post-rollback canary exception: {exc}",
+                        previous_head=cur_h,
+                        previous_tree=cur_t,
+                        deployed_head=new_h,
+                        deployed_tree=new_t,
+                    )
+                if not ok:
+                    return DeployResult(
+                        status="ROLLBACK_FAILED",
+                        detail=f"post-rollback canary FAIL: {detail[:400]}",
+                        previous_head=cur_h,
+                        previous_tree=cur_t,
+                        deployed_head=new_h,
+                        deployed_tree=new_t,
+                    )
             return DeployResult(
                 status="ROLLED_BACK",
                 detail=f"restored {previous_sha}",
@@ -618,63 +735,191 @@ class DeployAdapter:
                 deployed_tree=new_t,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            return DeployResult(status="FAILED", detail=str(exc))
+            return DeployResult(status="ROLLBACK_FAILED", detail=str(exc))
+        except Exception as exc:  # noqa: BLE001 — never claim success
+            return DeployResult(status="ROLLBACK_FAILED", detail=f"exception: {exc}")
+
+
+# ── Canary helpers (materialized greeting probe) ─────────────────────────────
+
+_GREETING_PASS = ("Hi bro", "Hi man", "Bro")
+_GREETING_TASK = (
+    "Hi bro deploy the fleet",
+    "Bro switch to Muse",
+    "Hi what model are you using",
+    "Hi is it gonna rain",
+)
+
+
+def _extract_greeting_fn(source: str) -> Optional[Callable[[str], bool]]:
+    """Exec ``_opencloud_is_conversational_greeting`` from materialized source."""
+    marker = "def _opencloud_is_conversational_greeting"
+    start = source.find(marker)
+    if start < 0:
+        return None
+    # Capture through the function's final ``return False`` at def indent.
+    rest = source[start:]
+    lines = rest.splitlines(keepends=True)
+    body: list[str] = [lines[0]]
+    for line in lines[1:]:
+        if line.startswith("def ") or line.startswith("class "):
+            break
+        body.append(line)
+        if line.rstrip() == "    return False":
+            # Keep going in case more returns follow; stop at next top-level.
+            continue
+    code = "".join(body)
+    ns: dict[str, Any] = {"re": re}
+    try:
+        exec(code, ns)  # noqa: S102 — bounded snippet from our materialized tree
+    except Exception:
+        return None
+    fn = ns.get("_opencloud_is_conversational_greeting")
+    return fn if callable(fn) else None
+
+
+def probe_materialized_greeting(
+    hermes_root: Path,
+) -> tuple[bool, str]:
+    """Structural/runtime probe against ~/.hermes/hermes-agent (not repo patch alone)."""
+    root = Path(hermes_root)
+    loop = root / "agent" / "conversation_loop.py"
+    if not loop.is_file():
+        return False, "POST_DEPLOY_RUNTIME_CANARY: missing conversation_loop.py"
+    try:
+        text = loop.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return False, f"POST_DEPLOY_RUNTIME_CANARY: read failed: {exc}"
+    if "HERMES_OPENCLOUD_TOOL_INTENT_V1" not in text:
+        return False, "POST_DEPLOY_RUNTIME_CANARY: missing TOOL_INTENT marker"
+    if "bro|man|dude" not in text and "bro|man" not in text:
+        return False, "POST_DEPLOY_RUNTIME_CANARY: vocatives missing in materialized"
+    if "HERMES_OPENCLOUD_GREETING_TOOL_CHOICE_NONE_V1" not in text:
+        return False, "POST_DEPLOY_RUNTIME_CANARY: missing GREETING_TOOL_CHOICE_NONE marker"
+    fn = _extract_greeting_fn(text)
+    if fn is None:
+        return False, "POST_DEPLOY_RUNTIME_CANARY: could not load greeting classifier"
+    for sample in _GREETING_PASS:
+        try:
+            if fn(sample) is not True:
+                return False, f"POST_DEPLOY_RUNTIME_CANARY: expected greeting {sample!r}"
+        except Exception as exc:  # noqa: BLE001
+            return False, f"POST_DEPLOY_RUNTIME_CANARY: classifier error: {exc}"
+    for sample in _GREETING_TASK:
+        try:
+            if fn(sample) is not False:
+                return False, f"POST_DEPLOY_RUNTIME_CANARY: false positive {sample!r}"
+        except Exception as exc:  # noqa: BLE001
+            return False, f"POST_DEPLOY_RUNTIME_CANARY: classifier error: {exc}"
+    return True, "POST_DEPLOY_RUNTIME_CANARY: greeting+markers ok"
 
 
 class CanaryAdapter:
-    """Synthetic gateway canary — not user iMessage."""
+    """Synthetic gateway canary — not user iMessage.
+
+    Kinds: PRE_PROMOTION_CANARY (worktree/patch) vs POST_DEPLOY_RUNTIME_CANARY
+    (materialized ~/.hermes/hermes-agent + gateway + fleet).
+    UNKNOWN/TIMEOUT → FAIL.
+    """
 
     def __init__(
         self,
         *,
         dry_invoke: Optional[Callable[[str], tuple[bool, str]]] = None,
+        hermes_root: Optional[Path] = None,
+        opencloud_bin: Optional[str] = None,
+        runner: Optional[RunFn] = None,
     ):
         self._dry = dry_invoke
+        self.hermes_root = Path(
+            hermes_root
+            or os.environ.get(
+                "OPEN_CLOUD_HERMES_ROOT",
+                str(Path.home() / ".hermes" / "hermes-agent"),
+            )
+        ).expanduser()
+        self.opencloud_bin = opencloud_bin or os.environ.get(
+            "OPEN_CLOUD_BIN", "opencloud"
+        )
+        self._runner = runner
 
     def pre_promotion(self, wt: Path) -> tuple[bool, str]:
         if os.environ.get("OPEN_CLOUD_SELF_HEAL_FORCE_CANARY_FAIL") == "1":
-            return False, "forced pre-promotion canary fail"
+            return False, "PRE_PROMOTION_CANARY: forced fail"
         if self._dry is not None:
-            return self._dry("pre")
+            ok, detail = self._dry("pre")
+            return ok, f"PRE_PROMOTION_CANARY: {detail}"
         test = wt / "tests/reliability/product-reliability-ux.py"
         if test.is_file():
             try:
                 proc = _run(
                     ["python3", str(test)],
+                    runner=self._runner,
                     timeout=120,
                     cwd=str(wt),
                 )
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                return False, str(exc)
+            except subprocess.TimeoutExpired:
+                return False, "PRE_PROMOTION_CANARY: TIMEOUT"
+            except OSError as exc:
+                return False, f"PRE_PROMOTION_CANARY: UNKNOWN {exc}"
             if proc.returncode != 0:
-                return False, (proc.stderr or proc.stdout or "")[:400]
-            return True, "product-reliability-ux"
+                return False, (
+                    "PRE_PROMOTION_CANARY: FAIL "
+                    + (proc.stderr or proc.stdout or "")[:400]
+                )
+            return True, "PRE_PROMOTION_CANARY: product-reliability-ux"
         patch = wt / "integrations/hermes/hermes-product-reliability-ux.patch"
         if not patch.is_file():
-            return False, "missing greeting patch for canary"
+            return False, "PRE_PROMOTION_CANARY: missing greeting patch"
         text = patch.read_text(encoding="utf-8", errors="replace")
         if "bro|man|dude" not in text and "bro|man" not in text:
-            return False, "greeting classifier lacks colloquial vocatives"
-        return True, "patch-canary"
+            return False, "PRE_PROMOTION_CANARY: greeting classifier lacks vocatives"
+        return True, "PRE_PROMOTION_CANARY: patch-structure"
 
     def post_deploy(self, *, materialized_hint: str = "") -> tuple[bool, str]:
         if os.environ.get("OPEN_CLOUD_SELF_HEAL_FORCE_POST_CANARY_FAIL") == "1":
-            return False, "forced post-deploy canary fail"
+            return False, "POST_DEPLOY_RUNTIME_CANARY: forced fail"
         if self._dry is not None:
-            return self._dry("post")
-        # Route health: systemctl is-active + synthetic greeting structure check
-        # against materialized tree if available.
+            ok, detail = self._dry("post")
+            return ok, f"POST_DEPLOY_RUNTIME_CANARY: {detail}"
+        # 1) Gateway active
         try:
             active = _run(
                 ["systemctl", "--user", "is-active", "hermes-gateway.service"],
+                runner=self._runner,
                 timeout=30,
             )
-            if (active.stdout or "").strip() != "active":
-                return False, f"gateway not active: {(active.stdout or '').strip()}"
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            return False, f"gateway probe failed: {exc}"
-        # Greeting structure canary via product UX test when repo present.
-        return True, f"post-deploy-canary ok hint={materialized_hint[:80]}"
+        except subprocess.TimeoutExpired:
+            return False, "POST_DEPLOY_RUNTIME_CANARY: gateway is-active TIMEOUT"
+        except OSError as exc:
+            return False, f"POST_DEPLOY_RUNTIME_CANARY: gateway UNKNOWN {exc}"
+        if (active.stdout or "").strip() != "active":
+            return False, (
+                "POST_DEPLOY_RUNTIME_CANARY: gateway not active: "
+                + (active.stdout or "").strip()
+            )
+        # 2) Materialized greeting canary (not repo patch alone)
+        g_ok, g_detail = probe_materialized_greeting(self.hermes_root)
+        if not g_ok:
+            return False, g_detail
+        # 3) Fleet doctor / probe — TIMEOUT/UNKNOWN = FAIL
+        try:
+            fleet = _run(
+                [self.opencloud_bin, "fleet", "verify"],
+                runner=self._runner,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            return False, "POST_DEPLOY_RUNTIME_CANARY: fleet verify TIMEOUT"
+        except OSError as exc:
+            return False, f"POST_DEPLOY_RUNTIME_CANARY: fleet UNKNOWN {exc}"
+        if fleet.returncode != 0:
+            return False, (
+                "POST_DEPLOY_RUNTIME_CANARY: fleet verify FAIL "
+                + (fleet.stderr or fleet.stdout or "")[:300]
+            )
+        hint = materialized_hint[:80]
+        return True, f"POST_DEPLOY_RUNTIME_CANARY: pass hint={hint} ({g_detail})"
 
 
 def write_inbox_event(inbox: Path, payload: dict[str, Any]) -> Path:

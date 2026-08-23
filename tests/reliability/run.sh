@@ -20,6 +20,7 @@ test -f tests/reliability/cron-output-contract.py
 test -f tests/reliability/provider-metadata-guard.py
 test -f tests/reliability/opencloud-self-repair.py
 test -f tests/reliability/guarded-self-heal.py
+test -f tests/reliability/guarded-self-heal-detect.py
 test -x tests/reliability/guarded-self-heal-e2e.sh
 test -f tests/reliability/cron-duplicate-guard.py
 test -f tests/reliability/cron-workflow-identity.py
@@ -60,6 +61,7 @@ test -x "$HERMES_PYTHON"
 # Hermes checkout cannot block them behind live-tree-only checks.
 PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/product-reliability-ux.py
 PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/guarded-self-heal.py
+PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/guarded-self-heal-detect.py
 PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$OPEN_CLOUD_HERMES_ROOT" \
     python3 tests/reliability/imessage-model-control-turn-recovery.py
 

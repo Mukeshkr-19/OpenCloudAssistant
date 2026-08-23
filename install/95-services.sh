@@ -68,7 +68,9 @@ render_all() {
         opencloud-runtime-update.service \
         opencloud-runtime-update.timer \
         opencloud-self-heal.service \
-        opencloud-self-heal.timer
+        opencloud-self-heal.timer \
+        opencloud-self-heal-detect.service \
+        opencloud-self-heal-detect.timer
     do
         render_unit "$ROOT/services/systemd/$name" "$out/$name"
     done
@@ -78,6 +80,7 @@ materialize_runtime_updater() {
     mkdir -p "$TARGET_HOME/.local/bin"
     install -m 755 "$ROOT/scripts/runtime-update.sh" "$TARGET_HOME/.local/bin/opencloud-runtime-update"
     install -m 755 "$ROOT/scripts/self-heal.sh" "$TARGET_HOME/.local/bin/opencloud-self-heal"
+    install -m 755 "$ROOT/scripts/self-heal-detect.sh" "$TARGET_HOME/.local/bin/opencloud-self-heal-detect"
     # Expose repo root for the self-heal tick (canonical public checkout path).
     # Operators may override OPEN_CLOUD_ROOT in config.env.
 }
@@ -93,7 +96,9 @@ validate_rendered() {
         opencloud-runtime-update.service \
         opencloud-runtime-update.timer \
         opencloud-self-heal.service \
-        opencloud-self-heal.timer
+        opencloud-self-heal.timer \
+        opencloud-self-heal-detect.service \
+        opencloud-self-heal-detect.timer
     do
         test -s "$out/$name"
 
@@ -113,6 +118,8 @@ validate_rendered() {
             "$out/opencloud-runtime-update.timer" \
             "$out/opencloud-self-heal.service" \
             "$out/opencloud-self-heal.timer" \
+            "$out/opencloud-self-heal-detect.service" \
+            "$out/opencloud-self-heal-detect.timer" \
             >/dev/null
     fi
 }
@@ -123,6 +130,7 @@ plan() {
     echo "Fleet verifier timer: REQUIRED"
     echo "Guarded runtime update timer: REQUIRED"
     echo "Guarded self-heal timer: REQUIRED"
+    echo "Guarded self-heal detect timer: REQUIRED (1–2 min journal)"
 
     if gateway_required; then
         echo "Hermes gateway: REQUIRED"
@@ -183,6 +191,8 @@ case "$MODE" in
         install -m 644 "$TMP/opencloud-runtime-update.timer" "$SYSTEMD_DIR/opencloud-runtime-update.timer"
         install -m 644 "$TMP/opencloud-self-heal.service" "$SYSTEMD_DIR/opencloud-self-heal.service"
         install -m 644 "$TMP/opencloud-self-heal.timer" "$SYSTEMD_DIR/opencloud-self-heal.timer"
+        install -m 644 "$TMP/opencloud-self-heal-detect.service" "$SYSTEMD_DIR/opencloud-self-heal-detect.service"
+        install -m 644 "$TMP/opencloud-self-heal-detect.timer" "$SYSTEMD_DIR/opencloud-self-heal-detect.timer"
 
         rm -rf "$TMP"
 
@@ -191,12 +201,14 @@ case "$MODE" in
             hermes-fleet-registry.timer \
             hermes-fleet-verifier.timer \
             opencloud-runtime-update.timer \
-            opencloud-self-heal.timer
+            opencloud-self-heal.timer \
+            opencloud-self-heal-detect.timer
         systemctl --user restart \
             hermes-fleet-registry.timer \
             hermes-fleet-verifier.timer \
             opencloud-runtime-update.timer \
-            opencloud-self-heal.timer
+            opencloud-self-heal.timer \
+            opencloud-self-heal-detect.timer
 
         if gateway_required; then
             command -v hermes >/dev/null 2>&1 || {
