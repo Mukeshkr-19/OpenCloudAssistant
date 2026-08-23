@@ -183,6 +183,25 @@ case "$MODE" in
         render_all "$TMP"
         validate_rendered "$TMP"
 
+        # Preserve intentionally disabled self-heal timers (e.g. OCI ops hold).
+        # Fresh install still enables; known-disabled is not re-enabled by surprise.
+        heal_fresh=1
+        heal_detect_fresh=1
+        heal_was_enabled=0
+        heal_detect_was_enabled=0
+        if [ -f "$SYSTEMD_DIR/opencloud-self-heal.timer" ]; then
+            heal_fresh=0
+            if systemctl --user is-enabled opencloud-self-heal.timer >/dev/null 2>&1; then
+                heal_was_enabled=1
+            fi
+        fi
+        if [ -f "$SYSTEMD_DIR/opencloud-self-heal-detect.timer" ]; then
+            heal_detect_fresh=0
+            if systemctl --user is-enabled opencloud-self-heal-detect.timer >/dev/null 2>&1; then
+                heal_detect_was_enabled=1
+            fi
+        fi
+
         install -m 644 "$TMP/hermes-fleet-registry.service" "$SYSTEMD_DIR/hermes-fleet-registry.service"
         install -m 644 "$TMP/hermes-fleet-registry.timer" "$SYSTEMD_DIR/hermes-fleet-registry.timer"
         install -m 644 "$TMP/hermes-fleet-verifier.service" "$SYSTEMD_DIR/hermes-fleet-verifier.service"
@@ -197,18 +216,29 @@ case "$MODE" in
         rm -rf "$TMP"
 
         systemctl --user daemon-reload
+
         systemctl --user enable \
             hermes-fleet-registry.timer \
             hermes-fleet-verifier.timer \
-            opencloud-runtime-update.timer \
-            opencloud-self-heal.timer \
-            opencloud-self-heal-detect.timer
+            opencloud-runtime-update.timer
         systemctl --user restart \
             hermes-fleet-registry.timer \
             hermes-fleet-verifier.timer \
-            opencloud-runtime-update.timer \
-            opencloud-self-heal.timer \
-            opencloud-self-heal-detect.timer
+            opencloud-runtime-update.timer
+
+        # Self-heal: fresh install enables; known-disabled is not re-enabled.
+        if [ "$heal_fresh" -eq 1 ] || [ "$heal_was_enabled" -eq 1 ]; then
+            systemctl --user enable opencloud-self-heal.timer
+            systemctl --user restart opencloud-self-heal.timer
+        else
+            echo "Preserving disabled opencloud-self-heal.timer (not re-enabled)"
+        fi
+        if [ "$heal_detect_fresh" -eq 1 ] || [ "$heal_detect_was_enabled" -eq 1 ]; then
+            systemctl --user enable opencloud-self-heal-detect.timer
+            systemctl --user restart opencloud-self-heal-detect.timer
+        else
+            echo "Preserving disabled opencloud-self-heal-detect.timer (not re-enabled)"
+        fi
 
         if gateway_required; then
             command -v hermes >/dev/null 2>&1 || {

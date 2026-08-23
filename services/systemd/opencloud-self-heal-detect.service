@@ -8,6 +8,10 @@ Environment=OPEN_CLOUD_ROOT=__OPEN_CLOUD_HOME__/OpenCloudAssistant
 Environment=PATH=__OPEN_CLOUD_HOME__/.local/bin:__OPEN_CLOUD_HOME__/.opencode/bin:__OPEN_CLOUD_HOME__/.bun/bin:__OPEN_CLOUD_HOME__/bin:/usr/bin:/bin
 ExecStart=%h/.local/bin/opencloud-self-heal-detect
 Nice=10
+# Detector must finish in seconds — never hang in recovery / hermes-code-repair.
+# Timeout → fail tick; do not corrupt journal cursor; do not claim recovery.
+TimeoutStartSec=25
+RuntimeMaxSec=25
 
 [Install]
 WantedBy=default.target

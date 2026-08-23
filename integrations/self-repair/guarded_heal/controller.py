@@ -27,10 +27,10 @@ from .adapters import (
     FleetAdapter,
     GitHubPromoter,
     P8RuntimeAdapter,
+    RuntimeServiceAdapter,
     write_inbox_event,
 )
 from .store import IncidentStore, REOPENABLE
-
 DEFAULT_STATE_ROOT = Path(
     os.environ.get(
         "OPEN_CLOUD_SELF_HEAL_STATE",
@@ -66,7 +66,14 @@ REOPEN_WINDOW = int(os.environ.get("OPEN_CLOUD_SELF_HEAL_REOPEN_SECONDS", "86400
 MAX_OCCURRENCES_BEFORE_HUMAN = int(
     os.environ.get("OPEN_CLOUD_SELF_HEAL_MAX_OCCURRENCES", "3")
 )
-
+# Controller tick: bound incidents processed per run (detector does not wait).
+MAX_QUEUE_PER_TICK = int(os.environ.get("OPEN_CLOUD_SELF_HEAL_MAX_QUEUE_TICK", "2"))
+# RECOVERING lease TTL — timeout / killed worker → INTERRUPTED, not RECOVERED.
+LEASE_SECONDS = int(os.environ.get("OPEN_CLOUD_SELF_HEAL_LEASE_SECONDS", "1500"))
+# Reasons that must use runtime restart adapter — never P8 / hermes-code-repair.
+RUNTIME_TIER1_REASONS = frozenset(
+    {"gateway_crash", "stuck_turn", "gateway_lifecycle"}
+)
 # Explicit policy: MEDIUM never auto-merges unless env is set at runtime.
 # (checked in _source_repair — not cached at import)
 
@@ -499,10 +506,12 @@ class SelfHealController:
         promoter: Optional[GitHubPromoter] = None,
         deployer: Optional[DeployAdapter] = None,
         p8: Optional[P8RuntimeAdapter] = None,
+        runtime: Optional[RuntimeServiceAdapter] = None,
         fleet: Optional[FleetAdapter] = None,
         notify_fn: Optional[Callable[[str], None]] = None,
         now: Optional[Callable[[], float]] = None,
         test_mode: Optional[bool] = None,
+        worker_id: Optional[str] = None,
     ):
         self.repo_root = Path(repo_root).resolve()
         self.state_root = Path(state_root or DEFAULT_STATE_ROOT)
@@ -513,18 +522,19 @@ class SelfHealController:
         self.canary = canary or CanaryAdapter()
         self.promoter = promoter or GitHubPromoter()
         self.deployer = deployer or DeployAdapter(repo_root=self.repo_root)
-        self.p8 = p8 or P8RuntimeAdapter()
+        self.p8 = p8  # legacy/manual only — automatic queue never invokes P8
+        self.runtime = runtime or RuntimeServiceAdapter()
         self.fleet = fleet or FleetAdapter()
         self.notify_fn = notify_fn or (lambda _msg: None)
         self._now = now or time.time
         self.test_mode = TEST_MODE if test_mode is None else test_mode
+        self.worker_id = worker_id or f"worker-{os.getpid()}"
         self.worktrees = self.state_root / "worktrees"
         self.worktrees.mkdir(parents=True, exist_ok=True)
         self.artifacts = self.state_root / "artifacts"
         self.artifacts.mkdir(parents=True, exist_ok=True)
         self.inbox = self.state_root / "inbox"
         self.inbox.mkdir(parents=True, exist_ok=True)
-
     # ── public API ───────────────────────────────────────────────────────
 
     def status(self) -> dict[str, Any]:
@@ -575,11 +585,41 @@ class SelfHealController:
 
         existing = self.store.find_open_by_signature(classified.signature)
         if existing:
-            return self.store.bump_occurrence(existing["id"])
+            bumped = self.store.bump_occurrence(existing["id"])
+            # If already QUEUED/RETRY_PENDING, stay queued — no storm.
+            return bumped
 
         recent = self.store.find_recent_by_signature(
             classified.signature, REOPEN_WINDOW
         )
+        # Recent FAILED same signature → bump/reopen, not a storm of siblings.
+        if recent and recent["state"] == "FAILED":
+            occ = int(recent.get("occurrence_count") or 1) + 1
+            if occ >= MAX_OCCURRENCES_BEFORE_HUMAN:
+                return self.store.transition(
+                    recent["id"],
+                    "HUMAN_REQUIRED",
+                    detail=f"reoccurrence_count={occ}",
+                    meta_update={"occurrence_escalation": occ},
+                )
+            # Reopen same row into QUEUED (dedup).
+            with self.store._connect() as conn:  # noqa: SLF001
+                conn.execute(
+                    "UPDATE incidents SET occurrence_count=?, updated_at=? WHERE id=?",
+                    (occ, self._now(), recent["id"]),
+                )
+                conn.commit()
+            self.store.transition(
+                recent["id"],
+                "QUEUED",
+                detail=f"reopened_failed occ={occ}",
+                meta_update={"reopened_from_failed": True},
+            )
+            row = self.store.get(recent["id"])
+            if auto_run and row:
+                return self.process(row["id"])
+            return row
+
         if recent and recent["state"] in REOPENABLE:
             # Reopen: new incident, escalate if repeats.
             occ = int(recent.get("occurrence_count") or 1) + 1
@@ -654,6 +694,12 @@ class SelfHealController:
             tier=classified.tier,
             detail=classified.reason,
         )
+        # Detector / enqueue path: QUEUED ≠ RECOVERING.
+        self.store.transition(
+            incident["id"],
+            "QUEUED",
+            detail="awaiting controller worker",
+        )
         self.notify_fn(
             f"incident {incident['id']}: {classified.title} tier={classified.tier}"
         )
@@ -661,8 +707,8 @@ class SelfHealController:
             return self.process(incident["id"])
         return self.store.get(incident["id"])
 
-    def scan_inbox(self, *, auto_run: bool = True) -> list[dict[str, Any]]:
-        """Auto-ingest production-style error events from inbox/*.json."""
+    def scan_inbox(self, *, auto_run: bool = False) -> list[dict[str, Any]]:
+        """Auto-ingest production-style error events from inbox/*.json → QUEUED."""
         results: list[dict[str, Any]] = []
         if not self.inbox.is_dir():
             return results
@@ -687,6 +733,85 @@ class SelfHealController:
                 results.append(row)
         return results
 
+    def _lease_meta(self) -> dict[str, Any]:
+        started = self._now()
+        return {
+            "worker_id": self.worker_id,
+            "worker_started_at": started,
+            "lease_expires_at": started + LEASE_SECONDS,
+        }
+
+    def _lease_expired(self, incident: dict[str, Any]) -> bool:
+        meta = incident.get("meta") or {}
+        expires = meta.get("lease_expires_at")
+        # Legacy RECOVERING without lease (production stuck rows) → stale.
+        if expires is None and not meta.get("worker_id"):
+            return True
+        try:
+            return float(expires) <= self._now()
+        except (TypeError, ValueError):
+            return True
+
+    def reap_stale_leases(self) -> list[dict[str, Any]]:
+        """Expired / legacy RECOVERING → INTERRUPTED / RETRY_PENDING / HUMAN_REQUIRED."""
+        out: list[dict[str, Any]] = []
+        for row in self.store.list_by_states(("RECOVERING",), limit=50):
+            if not self._lease_expired(row):
+                continue
+            attempts = int(row.get("attempts") or 0)
+            clear_lease = {
+                "worker_id": None,
+                "worker_started_at": None,
+                "lease_expires_at": None,
+                "lease_interrupted": True,
+            }
+            if attempts >= MAX_ATTEMPTS:
+                out.append(
+                    self.store.transition(
+                        row["id"],
+                        "HUMAN_REQUIRED",
+                        detail="stale RECOVERING lease; max attempts",
+                        error="lease_expired",
+                        meta_update=clear_lease,
+                    )
+                )
+            else:
+                out.append(
+                    self.store.transition(
+                        row["id"],
+                        "RETRY_PENDING",
+                        detail="stale RECOVERING lease → retry",
+                        error="lease_expired",
+                        meta_update=clear_lease,
+                    )
+                )
+                self.store.transition(
+                    row["id"],
+                    "QUEUED",
+                    detail="requeued after interrupted lease",
+                )
+                out[-1] = self.store.get(row["id"])  # type: ignore[assignment]
+        return out
+
+    def process_queue(self, *, limit: Optional[int] = None) -> list[dict[str, Any]]:
+        """Controller worker: reap leases, then process up to N QUEUED/RETRY incidents."""
+        self.reap_stale_leases()
+        if not self.store.enabled():
+            return []
+        n = limit if limit is not None else MAX_QUEUE_PER_TICK
+        n = max(1, min(3, int(n)))
+        queued = self.store.list_by_states(
+            ("QUEUED", "RETRY_PENDING", "INTERRUPTED"), limit=n
+        )
+        results: list[dict[str, Any]] = []
+        for row in queued:
+            # Respect circuit before each recovery attempt.
+            if self.store.circuit_count("repair_attempts", 3600) >= MAX_REPAIRS_PER_HOUR:
+                self.notify_fn("self-heal repair circuit open; stopping queue tick")
+                break
+            results.append(self.process(row["id"]))
+        return results
+
     def process(self, incident_id: str) -> dict[str, Any]:
         incident = self.store.get(incident_id)
         if not incident:
@@ -708,7 +833,7 @@ class SelfHealController:
             )
 
         if tier == 1:
-            return self._tier1_p8(incident_id)
+            return self._tier1_runtime(incident_id)
 
         if tier == 2:
             return self._tier2_fleet(incident_id)
@@ -729,18 +854,78 @@ class SelfHealController:
                 detail="refusing retry of quarantined sha",
             )
         self.store.transition(
-            incident_id, "CLASSIFIED", detail="manual retry", bump_attempt=False
+            incident_id, "QUEUED", detail="manual retry", bump_attempt=False
         )
         return self.process(incident_id)
 
     # ── tiers 1 / 2 ──────────────────────────────────────────────────────
 
+    def _begin_recovering(self, incident_id: str, detail: str) -> dict[str, Any]:
+        return self.store.transition(
+            incident_id,
+            "RECOVERING",
+            detail=detail,
+            bump_attempt=True,
+            meta_update=self._lease_meta(),
+        )
+
+    def _tier1_runtime(self, incident_id: str) -> dict[str, Any]:
+        """Gateway crash / stuck turn / lifecycle → RuntimeServiceAdapter only.
+
+        Any other Tier-1 reason fails closed — never P8 / hermes-code-repair.
+        """
+        incident = self.store.get(incident_id)
+        assert incident
+        reason = str((incident.get("meta") or {}).get("reason") or "")
+        title_l = (incident.get("title") or "").lower()
+
+        if reason in RUNTIME_TIER1_REASONS or "crash" in title_l or "stuck" in title_l:
+            self._begin_recovering(incident_id, "tier1_runtime")
+            self.store.circuit_bump("repair_attempts", 3600)
+            if reason == "stuck_turn" or "stuck" in title_l:
+                result = self.runtime.recover_stuck_turn()
+            else:
+                result = self.runtime.recover_crash(reason=reason or "gateway_crash")
+            meta = {
+                "runtime_status": result.status,
+                "runtime_detail": result.detail,
+                "runtime_verified": result.verified,
+                "p8_used": False,
+                "hermes_code_repair": False,
+            }
+            if result.verified and result.status == "RECOVERED":
+                return self.store.transition(
+                    incident_id, "RECOVERED", detail=result.detail, meta_update=meta
+                )
+            if result.status == "NO_ACTION_TRANSIENT":
+                return self.store.transition(
+                    incident_id,
+                    "NO_ACTION_TRANSIENT",
+                    detail=result.detail,
+                    meta_update=meta,
+                )
+            if result.status == "FAILED":
+                return self.store.transition(
+                    incident_id, "FAILED", error=result.detail, meta_update=meta
+                )
+            return self.store.transition(
+                incident_id,
+                "HUMAN_REQUIRED",
+                detail=result.detail,
+                meta_update=meta,
+            )
+
+        return self.store.transition(
+            incident_id,
+            "HUMAN_REQUIRED",
+            detail=f"unsupported_tier1_runtime_reason={reason or 'unknown'}",
+            meta_update={"p8_used": False, "hermes_code_repair": False},
+        )
+
     def _tier1_p8(self, incident_id: str) -> dict[str, Any]:
         incident = self.store.get(incident_id)
         assert incident
-        self.store.transition(
-            incident_id, "RECOVERING", detail="tier1_p8", bump_attempt=True
-        )
+        self._begin_recovering(incident_id, "tier1_p8")
         self.store.circuit_bump("repair_attempts", 3600)
         result = self.p8.attempt(
             task=incident["sanitized_task"],
@@ -767,9 +952,7 @@ class SelfHealController:
         )
 
     def _tier2_fleet(self, incident_id: str) -> dict[str, Any]:
-        self.store.transition(
-            incident_id, "RECOVERING", detail="tier2_fleet", bump_attempt=True
-        )
+        self._begin_recovering(incident_id, "tier2_fleet")
         result = self.fleet.recover_transient()
         meta = {
             "fleet_status": result.status,
@@ -792,7 +975,6 @@ class SelfHealController:
             detail=result.detail,
             meta_update=meta,
         )
-
     # ── tier-3 source repair ─────────────────────────────────────────────
 
     def _source_repair(self, incident_id: str) -> dict[str, Any]:
@@ -807,7 +989,8 @@ class SelfHealController:
             )
 
         self.store.transition(
-            incident_id, "RECOVERING", detail="source repair", bump_attempt=True
+            incident_id, "RECOVERING", detail="source repair", bump_attempt=True,
+            meta_update=self._lease_meta(),
         )
         if self.store.circuit_count("repair_attempts", 3600) >= MAX_REPAIRS_PER_HOUR:
             return self.store.transition(

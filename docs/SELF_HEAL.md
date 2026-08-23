@@ -57,10 +57,22 @@ Package: `integrations/self-repair/guarded_heal/`
 
 - **SQLite** incident store under `~/.opencloud/self-repair/` (override with
   `OPEN_CLOUD_SELF_HEAL_STATE`)
-- **Tiers**: `0` none → `1` runtime/P8 (real invoke + verify, else
-  `HUMAN_REQUIRED`) → `2` provider/Fleet (`NO_ACTION_TRANSIENT` unless
-  verified; never source-edit quota/timeout; preserve `openrouter/free`;
-  Gemini stays blocked) → `3` source repair
+- **Tiers**: `0` none → `1` **runtime** service recovery for gateway
+  crash/stuck turn/lifecycle only (restart + verify; never
+  `hermes-code-repair` / P8; other Tier-1 → `HUMAN_REQUIRED`) → `2`
+  provider/Fleet (`NO_ACTION_TRANSIENT` unless verified; never source-edit
+  quota/timeout; preserve `openrouter/free`; Gemini stays blocked) → `3`
+  source repair
+- **Detector vs controller**: `opencloud self-heal detect` is **queue-only**
+  (journal → classify → sanitize → `QUEUED` → advance cursor). It never
+  calls `process()`, OpenCode, P8, Fleet, systemctl restart, deploy, or GH.
+  Intentional systemd restart sequences are filtered via
+  `gateway-lifecycle.json`. `opencloud self-heal run` reaps stale
+  `RECOVERING` leases and processes a bounded queue (1–3).
+- **`RECOVERING`** only when a controller worker holds a lease
+  (`worker_id`, `worker_started_at`, `lease_expires_at`). Detector queue ≠
+  `RECOVERING`. Expired / legacy lease-less `RECOVERING` →
+  `RETRY_PENDING`/`QUEUED` or `HUMAN_REQUIRED` — never claimed `RECOVERED`.
 - **OpenCode CLI** directly (`opencode run`), fixed argv, `shell=False`,
   nonzero ≠ success; models from `opencode models opencode`. **No fake model
   in production** — empty discovery → `REPAIR_ENGINE_UNAVAILABLE`. Fake only
@@ -118,16 +130,19 @@ opencloud self-heal retry <id>
 opencloud self-heal disable
 opencloud self-heal enable
 opencloud self-heal ingest --exc-type ValueError --message '...'
-opencloud self-heal detect  # journal → ingest (lightweight)
-opencloud self-heal run     # repair tick: inbox + status
+opencloud self-heal detect  # journal → QUEUED only (never recovers)
+opencloud self-heal run     # controller: inbox + process queue
 ```
 
 ## systemd
 
 User units:
 
-- `opencloud-self-heal-detect.timer` — frequent journal detection (≈2 min)
-- `opencloud-self-heal.timer` — bounded repair / inbox tick (15–30 min)
+- `opencloud-self-heal-detect.timer` — frequent journal detection (≈2 min);
+  service bounded `RuntimeMaxSec`/`TimeoutStartSec` ≈25s
+- `opencloud-self-heal.timer` — bounded repair / queue tick (15–30 min);
+  service bounded ≈25min for OpenCode. Installer does **not** re-enable
+  timers that operators already disabled.
 
 Installed alongside existing fleet/runtime-update timers; does not replace
 `opencloud-runtime-update` or Hermes gateway. Uninstaller removes both.

@@ -8,6 +8,10 @@ Environment=OPEN_CLOUD_ROOT=__OPEN_CLOUD_HOME__/OpenCloudAssistant
 Environment=PATH=__OPEN_CLOUD_HOME__/.local/bin:__OPEN_CLOUD_HOME__/.opencode/bin:__OPEN_CLOUD_HOME__/.bun/bin:__OPEN_CLOUD_HOME__/bin:/usr/bin:/bin
 ExecStart=%h/.local/bin/opencloud-self-heal
 Nice=10
+# Controller may run OpenCode / validation; longer than detector.
+# On timeout, RECOVERING lease expires → INTERRUPTED/RETRY (not RECOVERED).
+TimeoutStartSec=25min
+RuntimeMaxSec=25min
 
 [Install]
 WantedBy=default.target

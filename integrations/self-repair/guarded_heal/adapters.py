@@ -74,7 +74,7 @@ class ActionResult:
 
 
 class P8RuntimeAdapter:
-    """Tier-1: attempt existing hermes-code-repair / P8 path with verification."""
+    """Legacy P8 / hermes-code-repair path. Not used for gateway crash / stuck turn."""
 
     def __init__(
         self,
@@ -135,6 +135,138 @@ def shutil_which(cmd: str) -> Optional[str]:
 
     return which(cmd)
 
+
+class RuntimeServiceAdapter:
+    """Tier-1 RUNTIME recovery: inspect/restart/verify. Never source-repair.
+
+    ponytail: systemctl + is-active only — no hermes-code-repair, no live Hermes
+    scan, no py_compile of venv. Ceiling: user-session unit only; escalate to
+    HUMAN_REQUIRED when restart/verify cannot prove health.
+    """
+
+    UNIT = "hermes-gateway.service"
+
+    def __init__(
+        self,
+        *,
+        unit: str = UNIT,
+        runner: Optional[RunFn] = None,
+        dry_invoke: Optional[Callable[..., ActionResult]] = None,
+        health_probe: Optional[Callable[[], tuple[bool, str]]] = None,
+        wait_seconds: float = 2.0,
+    ):
+        self.unit = unit
+        self._runner = runner
+        self._dry = dry_invoke
+        self._health = health_probe
+        self.wait_seconds = wait_seconds
+
+    def _systemctl(self, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
+        return _run(
+            ["systemctl", "--user", *args],
+            runner=self._runner,
+            timeout=timeout,
+        )
+
+    def is_active(self) -> tuple[Optional[bool], str]:
+        try:
+            proc = self._systemctl("is-active", self.unit, timeout=30)
+        except subprocess.TimeoutExpired:
+            return None, "is-active TIMEOUT"
+        except OSError as exc:
+            return None, f"is-active UNKNOWN: {exc}"
+        state = (proc.stdout or "").strip()
+        if state == "active":
+            return True, state
+        if state in ("inactive", "failed", "deactivating", "activating"):
+            return False, state
+        return None, state or f"rc={proc.returncode}"
+
+    def _probe_health(self) -> tuple[bool, str]:
+        if self._health is not None:
+            return self._health()
+        # Default: is-active alone is the health gate for crash recovery.
+        active, detail = self.is_active()
+        if active is True:
+            return True, f"active:{detail}"
+        if active is False:
+            return False, f"not_active:{detail}"
+        return False, f"unknown:{detail}"
+
+    def recover_crash(self, *, reason: str = "gateway_crash") -> ActionResult:
+        """Inspect → if active verify → else restart → wait → is-active → health."""
+        if self._dry is not None:
+            return self._dry("crash", reason)
+        active, a_detail = self.is_active()
+        if active is True:
+            ok, h = self._probe_health()
+            if ok:
+                return ActionResult(
+                    status="NO_ACTION_TRANSIENT",
+                    detail=f"already_active_verified:{h}",
+                    verified=True,
+                )
+            return ActionResult(
+                status="HUMAN_REQUIRED",
+                detail=f"active_but_unhealthy:{h}",
+                verified=False,
+            )
+        if active is None:
+            return ActionResult(
+                status="HUMAN_REQUIRED",
+                detail=f"service_state_unknown:{a_detail}",
+                verified=False,
+            )
+        try:
+            restart = self._systemctl("restart", self.unit, timeout=120)
+        except subprocess.TimeoutExpired:
+            return ActionResult(
+                status="FAILED", detail="restart TIMEOUT", verified=False
+            )
+        except OSError as exc:
+            return ActionResult(
+                status="HUMAN_REQUIRED",
+                detail=f"restart unavailable: {exc}",
+                verified=False,
+            )
+        if restart.returncode != 0:
+            return ActionResult(
+                status="FAILED",
+                detail=f"restart rc={restart.returncode}",
+                verified=False,
+            )
+        if self.wait_seconds > 0:
+            time.sleep(self.wait_seconds)
+        active2, a2 = self.is_active()
+        if active2 is not True:
+            return ActionResult(
+                status="FAILED",
+                detail=f"post_restart_not_active:{a2}",
+                verified=False,
+            )
+        ok, h = self._probe_health()
+        if not ok:
+            return ActionResult(
+                status="FAILED",
+                detail=f"post_restart_health_fail:{h}",
+                verified=False,
+            )
+        return ActionResult(
+            status="RECOVERED",
+            detail=f"runtime_restart_verified:{h}",
+            verified=True,
+        )
+
+    def recover_stuck_turn(self) -> ActionResult:
+        """Supported runtime/session cleanup only; else HUMAN_REQUIRED. No source edit."""
+        if self._dry is not None:
+            return self._dry("stuck_turn", "stuck_turn")
+        # ponytail: no generic session cleaner shipped yet → fail closed.
+        return ActionResult(
+            status="HUMAN_REQUIRED",
+            detail="stuck_turn_no_supported_runtime_cleanup",
+            verified=False,
+        )
 
 class FleetAdapter:
     """Tier-2: provider/Fleet recovery — never source-edit quotas/timeouts."""
