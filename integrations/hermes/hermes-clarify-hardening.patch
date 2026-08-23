@@ -1,0 +1,96 @@
+diff --git a/acp_adapter/events.py b/acp_adapter/events.py
+index ab82c0e..fe9d1a7 100644
+--- a/acp_adapter/events.py
++++ b/acp_adapter/events.py
+@@ -270,9 +270,22 @@ def make_message_cb(
+ ) -> Callable:
+     """Create a callback that streams agent response text to the editor."""
+ 
+-    def _message(text: str) -> None:
++    # HERMES_OPENCLOUD_CLARIFY_HARDENING_V1
++def _message(text: str) -> None:
+         if not text:
+             return
++
++        # Prevent internal tool-call payloads from leaking into user-facing
++        # messaging channels. Tool calls are emitted separately through ACP
++        # tool updates.
++        stripped = text.strip()
++        if stripped.startswith("{") and (
++            '"name"' in stripped
++            or '"tool_calls"' in stripped
++            or '"function"' in stripped
++        ):
++            return
++
+         update = acp.update_agent_message_text(text)
+         _send_update(conn, session_id, loop, update)
+ 
+diff --git a/agent/agent_runtime_helpers.py b/agent/agent_runtime_helpers.py
+index 1bdce7a..c1ec6a4 100644
+--- a/agent/agent_runtime_helpers.py
++++ b/agent/agent_runtime_helpers.py
+@@ -2951,11 +2951,26 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
+             return _finish_agent_tool(agent._memory_manager.handle_tool_call(function_name, next_args), next_args)
+     elif function_name == "clarify":
+         def _execute(next_args: dict) -> Any:
++            # HERMES_OPENCLOUD_CLARIFY_HARDENING_V1
+             from tools.clarify_tool import clarify_tool as _clarify_tool
++            choices = next_args.get("choices")
++
++            # Normalize provider JSON-string arrays before clarify validation.
++            if isinstance(choices, str):
++                try:
++                    choices = json.loads(choices)
++                except Exception:
++                    choices = [choices]
++
++            if not isinstance(choices, list):
++                choices = [str(choices)]
++
++            next_args["choices"] = choices
++
+             return _finish_agent_tool(
+                 _clarify_tool(
+                     question=next_args.get("question", ""),
+-                    choices=next_args.get("choices"),
++                    choices=choices,
+                     multi_select=next_args.get("multi_select", False),
+                     callback=agent.clarify_callback,
+                 ),
+diff --git a/agent/tool_executor.py b/agent/tool_executor.py
+index 5c13d06..0f03e39 100644
+--- a/agent/tool_executor.py
++++ b/agent/tool_executor.py
+@@ -1564,10 +1564,29 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
+                 agent._vprint(f"  {_get_cute_tool_message_impl('memory', function_args, tool_duration, result=function_result)}")
+         elif function_name == "clarify":
+             def _execute(next_args: dict) -> Any:
+-                from tools.clarify_tool import clarify_tool as _clarify_tool
++                # HERMES_OPENCLOUD_CLARIFY_HARDENING_V1
++from tools.clarify_tool import clarify_tool as _clarify_tool
++                choices = next_args.get("choices")
++
++                # Normalize provider JSON-string arrays before validation.
++                # Some models return:
++                #   "[\"a\", \"b\"]"
++                # instead of:
++                #   ["a", "b"]
++                if isinstance(choices, str):
++                    try:
++                        choices = json.loads(choices)
++                    except Exception:
++                        choices = [choices]
++
++                if not isinstance(choices, list):
++                    choices = [str(choices)]
++
++                next_args["choices"] = choices
++
+                 return _clarify_tool(
+                     question=next_args.get("question", ""),
+-                    choices=next_args.get("choices"),
++                    choices=choices,
+                     multi_select=next_args.get("multi_select", False),
+                     callback=agent.clarify_callback,
+                 )
