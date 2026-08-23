@@ -20,7 +20,20 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 FAKE_HOME="$TMP/home"
 FLEET="$TMP/non-default-fleet"
-HOME="$FAKE_HOME" OPEN_CLOUD_FLEET_HOME="$FLEET" OPEN_CLOUD_HERMES_PYTHON="${OPEN_CLOUD_HERMES_PYTHON:-$(command -v python3)}" \
+# Resolve yaml-capable Python before faking HOME (install/70 defaults to
+# $HOME/.hermes/.../venv which would miss under FAKE_HOME). Prefer explicit
+# override, then system python3, then a real-home Hermes venv if present.
+SMOKE_PY="${OPEN_CLOUD_HERMES_PYTHON:-}"
+if [ -z "$SMOKE_PY" ] && python3 -c 'import yaml' 2>/dev/null; then
+    SMOKE_PY="$(command -v python3)"
+fi
+if [ -z "$SMOKE_PY" ] && [ -x "${HOME}/.hermes/hermes-agent/venv/bin/python" ]; then
+    SMOKE_PY="${HOME}/.hermes/hermes-agent/venv/bin/python"
+fi
+if [ -z "$SMOKE_PY" ]; then
+    SMOKE_PY="$(command -v python3)"
+fi
+HOME="$FAKE_HOME" OPEN_CLOUD_FLEET_HOME="$FLEET" OPEN_CLOUD_HERMES_PYTHON="$SMOKE_PY" \
     install/70-fleet-runtime.sh --install
 KEY="$FLEET/session-pin.key"
 test -f "$KEY"
@@ -28,7 +41,7 @@ test "$(wc -c < "$KEY")" -ge 32
 MODE="$(stat -c %a "$KEY" 2>/dev/null || stat -f %Lp "$KEY")"
 test "$MODE" = 600
 BEFORE="$(shasum -a 256 "$KEY")"
-HOME="$FAKE_HOME" OPEN_CLOUD_FLEET_HOME="$FLEET" OPEN_CLOUD_HERMES_PYTHON="${OPEN_CLOUD_HERMES_PYTHON:-$(command -v python3)}" \
+HOME="$FAKE_HOME" OPEN_CLOUD_FLEET_HOME="$FLEET" OPEN_CLOUD_HERMES_PYTHON="$SMOKE_PY" \
     install/70-fleet-runtime.sh --install
 test "$BEFORE" = "$(shasum -a 256 "$KEY")"
 echo "PASS Fleet session pin key is secure and idempotent"

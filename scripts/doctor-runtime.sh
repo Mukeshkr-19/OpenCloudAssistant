@@ -15,7 +15,9 @@ VELLUM_WORKER="$TARGET_HOME/.config/hermes-vellum/mcp/worker.py"
 REPAIR_HELPER="$TARGET_HOME/.local/bin/hermes-code-repair"
 
 FAIL=0
-PY="${OPEN_CLOUD_HERMES_PYTHON:-$TARGET_HOME/.hermes/hermes-agent/venv/bin/python}"
+# Interpreter is tooling, not managed-home state: keep $HOME even when
+# OPEN_CLOUD_HOME is overridden for isolated smoke/doctor runs.
+PY="${OPEN_CLOUD_HERMES_PYTHON:-$HOME/.hermes/hermes-agent/venv/bin/python}"
 if [ ! -x "$PY" ]; then PY="$(command -v python3)"; fi
 
 file_mode() {
