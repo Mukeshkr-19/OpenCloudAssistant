@@ -31,6 +31,27 @@ This is **not** unrestricted self-modification of production.
    `integrations/hermes/*.patch` in this repo.
 5. No incident lifecycle, GitHub promotion, or synthetic canary existed for
    OpenCloud **source** defects.
+6. Even when greeting tools were stripped, some providers still returned
+   serialized clarify JSON as **plain text** — no tool executor call, but the
+   user saw raw JSON. Fixed by `hermes-greeting-output-contract.patch`:
+   output contract + one bounded repair + local fallback + inbox event
+   `OpenCloudUserOutputContractViolation` / `greeting_tool_text` (Tier 3,
+   queue-only detector, no P8).
+
+## Greeting output contract signal
+
+Direct emission at contract rejection (not log tailing):
+
+| Field | Value |
+|-------|-------|
+| `type` / `exc_type` | `OpenCloudUserOutputContractViolation` |
+| `message` | `reason=greeting_tool_text` |
+| `module` | `agent.conversation_loop` |
+| `context` | sanitized `provider` / `model` / `platform` only |
+
+Self-heal classifies as **Tier 3** (`reason=greeting_output_contract`) —
+isolated source repair if policy-eligible; never Tier 1, never P8, never
+`hermes-code-repair` on detect.
 
 ## Truthful states
 

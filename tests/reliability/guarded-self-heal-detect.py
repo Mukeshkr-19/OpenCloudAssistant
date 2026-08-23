@@ -99,6 +99,16 @@ def test_parse_and_classify_fixture() -> None:
     c = classify_failure(ev.exc_type, ev.message, module=ev.module)
     require(c is not None and c.tier == 3 and c.severity == "MEDIUM", "clarify Tier3")
 
+    goc = classify_failure(
+        "OpenCloudUserOutputContractViolation",
+        "reason=greeting_tool_text",
+        module="agent.conversation_loop",
+        context="provider=nvidia model=llama-3.2-11b-vision",
+    )
+    require(goc is not None and goc.tier == 3, "greeting contract Tier3")
+    require(goc.reason == "greeting_output_contract", "greeting contract reason")
+    require(goc.severity == "MEDIUM", "greeting contract MEDIUM")
+
     to = parse_journal_line("httpx.ReadTimeout waiting for nvidia")
     require(to is not None, "timeout line")
     c2 = classify_failure(to.exc_type, to.message)
@@ -1087,25 +1097,40 @@ def test_gateway_crash_never_hermes_code_repair() -> None:
 
 
 def main() -> None:
-    test_parse_and_classify_fixture()
-    test_detector_cursor_no_dup_storm()
-    test_detector_restart_no_full_replay()
-    test_journalctl_argv_shell_false()
-    test_post_deploy_canary_greeting()
-    test_canary_kinds_and_e2e_paths()
-    test_rollback_failure_modes()
-    test_controller_rollback_failed_critical()
-    test_fixture_auto_detect_no_cli_ingest()
-    test_intentional_restart_zero_crash()
-    test_genuine_segv_tier1_runtime_no_p8()
-    test_unexpected_crash_already_active()
-    test_clarify_detector_queues_opencode_zero()
-    test_stale_recovering_lease_and_legacy()
-    test_failed_dedup_no_storm()
-    test_detector_timeout_preserves_cursor()
-    test_systemd_bounds_present()
-    test_generic_typeerror_tier1_fail_closed_no_p8()
-    test_gateway_crash_never_hermes_code_repair()
+    import gc
+
+    def run_isolated(test_fn):
+        try:
+            test_fn()
+        finally:
+            # Reliability tests intentionally create many temporary SQLite,
+            # subprocess, and filesystem resources. Force deterministic
+            # collection between tests so macOS low soft FD limits do not
+            # accumulate descriptors across the suite.
+            gc.collect()
+
+    for test_fn in (
+        test_parse_and_classify_fixture,
+        test_detector_cursor_no_dup_storm,
+        test_detector_restart_no_full_replay,
+        test_journalctl_argv_shell_false,
+        test_post_deploy_canary_greeting,
+        test_canary_kinds_and_e2e_paths,
+        test_rollback_failure_modes,
+        test_controller_rollback_failed_critical,
+        test_fixture_auto_detect_no_cli_ingest,
+        test_intentional_restart_zero_crash,
+        test_genuine_segv_tier1_runtime_no_p8,
+        test_unexpected_crash_already_active,
+        test_clarify_detector_queues_opencode_zero,
+        test_stale_recovering_lease_and_legacy,
+        test_failed_dedup_no_storm,
+        test_detector_timeout_preserves_cursor,
+        test_systemd_bounds_present,
+        test_generic_typeerror_tier1_fail_closed_no_p8,
+        test_gateway_crash_never_hermes_code_repair,
+    ):
+        run_isolated(test_fn)
     print("PASS detector parse/sanitize/classify (clarify Tier3, ReadTimeout Tier2)")
     print("PASS detector cursor dedup + restart (no storm / no full replay)")
     print("PASS journalctl argv shell=False")
