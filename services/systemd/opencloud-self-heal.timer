@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic guarded self-heal controller tick
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=30min
+RandomizedDelaySec=5min
+Unit=opencloud-self-heal.service
+
+[Install]
+WantedBy=timers.target

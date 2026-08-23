@@ -1,7 +1,7 @@
 diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 --- a/agent/conversation_loop.py
 +++ b/agent/conversation_loop.py
-@@ -1228,8 +1228,95 @@
+@@ -1228,8 +1228,100 @@
              getattr(agent, "session_id", None) or "-",
              exc_info=True,
          )
@@ -32,13 +32,18 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 +        return False
 +    if re.search(r"https?://|/\S|\b(search|find|browse|open|run|fix|deploy|cron)\b", raw, re.I):
 +        return False
++    # Colloquial vocatives ("Hi bro", "Hey man") and bare "Bro"/"Dude"/"Yo".
++    # Not an exact-string Hi-bro hack: shared vocative class. Task verbs still
++    # fail the early intent reject above ("Hi bro search for jobs").
 +    if re.fullmatch(
 +        r"(?i)(hi|hello|hey|yo|sup|howdy|hiya|good\s*(morning|afternoon|evening))"
-+        r"([,.!]+\s*[A-Za-z]{0,24})?[.!]?",
++        r"([,.!]+\s*[A-Za-z]{0,24}|\s+(bro|man|dude|buddy|pal|mate|fam|there|hermes|assistant|friend))?[.!]?",
 +        raw,
 +    ):
 +        return True
-+    if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\s+(there|hermes|assistant|friend)[.!]?", raw):
++    if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\s+(there|hermes|assistant|friend|bro|man|dude)[.!]?", raw):
++        return True
++    if re.fullmatch(r"(?i)(bro|dude|yo)[.!]?", raw):
 +        return True
 +    return False
 +
@@ -97,7 +102,7 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
  def run_conversation(
      agent,
      user_message: Any,
-@@ -1332,6 +1419,17 @@
+@@ -1332,6 +1424,17 @@
      _should_review_memory = _ctx.should_review_memory
      _plugin_user_context = _ctx.plugin_user_context
      _ext_prefetch_cache = _ctx.ext_prefetch_cache
@@ -115,7 +120,7 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
  
      # Commentary deduplication spans all provider continuations and tool calls
      # within one user turn, but must not suppress the same phrase next turn.
-@@ -7283,6 +7381,7 @@
+@@ -7283,6 +7386,7 @@
      # (god-file decomposition Phase 1 step 4). Behavior-neutral: the assembled
      # result dict is returned exactly as before.
      from agent.turn_finalizer import finalize_turn

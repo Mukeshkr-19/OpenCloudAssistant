@@ -49,6 +49,10 @@ case "$COMMAND" in
         shift || true
         exec "$ROOT/scripts/services.sh" "$@"
         ;;
+    self-heal)
+        shift || true
+        exec python3 "$ROOT/integrations/self-repair/guarded_heal/cli.py" "$@"
+        ;;
     uninstall)
         shift || true
         exec "$ROOT/scripts/uninstall.sh" "${@:-}"
@@ -100,6 +104,12 @@ case "$COMMAND" in
         echo "  opencloud services status"
         echo "  opencloud services plan"
         echo "  opencloud services install"
+        echo "  opencloud self-heal status"
+        echo "  opencloud self-heal incidents"
+        echo "  opencloud self-heal show ID"
+        echo "  opencloud self-heal retry ID"
+        echo "  opencloud self-heal enable"
+        echo "  opencloud self-heal disable"
         echo "  opencloud version"
         echo "  opencloud help"
         ;;

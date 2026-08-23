@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Deterministic fake OpenCode for CI / sandbox E2E.
+set -euo pipefail
+
+stage=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --dir) shift; stage="${1:-}" ;;
+        --model|--agent) shift ;;
+        run) ;;
+        *) ;;
+    esac
+    shift || true
+done
+
+[ -n "$stage" ] || { echo "fake-opencode: --dir required" >&2; exit 2; }
+if [ -e /tmp/SHOULD_NOT_EXIST ]; then
+    echo "fake-opencode: FAIL sentinel exists" >&2
+    exit 90
+fi
+
+PATCH="$stage/integrations/hermes/hermes-product-reliability-ux.patch"
+TEST="$stage/tests/reliability/product-reliability-ux.py"
+[ -f "$PATCH" ] || { echo "fake-opencode: missing patch" >&2; exit 1; }
+
+python3 - "$PATCH" "$TEST" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+PATCH_FN = """+def _opencloud_is_conversational_greeting(text: str) -> bool:
++    import re
++    raw = (text or "").strip()
++    if not raw or len(raw) > 80:
++        return False
++    if re.search(r"https?://|/\\S|\\b(search|find|browse|open|run|fix|deploy|cron)\\b", raw, re.I):
++        return False
++    # Colloquial vocatives ("Hi bro", "Hey man") and bare "Bro"/"Dude"/"Yo".
++    # Not an exact-string Hi-bro hack: shared vocative class. Task verbs still
++    # fail the early intent reject above ("Hi bro search for jobs").
++    if re.fullmatch(
++        r"(?i)(hi|hello|hey|yo|sup|howdy|hiya|good\\s*(morning|afternoon|evening))"
++        r"([,.!]+\\s*[A-Za-z]{0,24}|\\s+(bro|man|dude|buddy|pal|mate|fam|there|hermes|assistant|friend))?[.!]?",
++        raw,
++    ):
++        return True
++    if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\\s+(there|hermes|assistant|friend|bro|man|dude)[.!]?", raw):
++        return True
++    if re.fullmatch(r"(?i)(bro|dude|yo)[.!]?", raw):
++        return True
++    return False"""
+
+TEST_FN = """    def _opencloud_is_conversational_greeting(raw_text: str) -> bool:
+        raw = (raw_text or "").strip()
+        if not raw or len(raw) > 80:
+            return False
+        if re.search(r"https?://|/\\S|\\b(search|find|browse|open|run|fix|deploy|cron)\\b", raw, re.I):
+            return False
+        if re.fullmatch(
+            r"(?i)(hi|hello|hey|yo|sup|howdy|hiya|good\\s*(morning|afternoon|evening))"
+            r"([,.!]+\\s*[A-Za-z]{0,24}|\\s+(bro|man|dude|buddy|pal|mate|fam|there|hermes|assistant|friend))?[.!]?",
+            raw,
+        ):
+            return True
+        if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\\s+(there|hermes|assistant|friend|bro|man|dude)[.!]?", raw):
+            return True
+        if re.fullmatch(r"(?i)(bro|dude|yo)[.!]?", raw):
+            return True
+        return False"""
+
+TEST_ASSERT = """    fn = _opencloud_is_conversational_greeting
+    require(fn("Hi") is True, "Hi should match")
+    require(fn("hello!") is True, "hello! should match")
+    require(fn("Hey there") is True, "Hey there should match")
+    require(fn("Good morning") is True, "Good morning should match")
+    require(fn("Hi, Mukesh") is True, "Hi, name should match")
+    require(fn("Hi bro") is True, "Hi bro should match")
+    require(fn("Hi man") is True, "Hi man should match")
+    require(fn("Bro") is True, "Bro should match")
+    require(fn("Hi bro search for jobs") is False, "task-prefixed greeting must not match")
+    require(fn("Hi, search for jobs") is False, "taskful greeting must not match")
+    require(fn("browse https://example.com") is False, "URL task must not match")
+    require(fn("find internships in NYC") is False, "search intent must not match")
+    require(fn("x" * 100) is False, "long text must not match")"""
+
+
+def swap_fn(text: str, start_pat: str, end_pat: str, body: str) -> str:
+    m_start = re.search(start_pat, text)
+    if not m_start:
+        raise SystemExit(f"missing start {start_pat}")
+    m_end = re.search(end_pat, text[m_start.start():])
+    if not m_end:
+        raise SystemExit(f"missing end {end_pat}")
+    abs_end = m_start.start() + m_end.start()
+    return text[: m_start.start()] + body + text[abs_end:]
+
+
+patch = Path(sys.argv[1])
+test = Path(sys.argv[2])
+p = patch.read_text(encoding="utf-8")
+p = swap_fn(
+    p,
+    r"\+def _opencloud_is_conversational_greeting\(text: str\) -> bool:",
+    r"\n\+def _opencloud_restore_tools\(agent\) -> None:",
+    PATCH_FN,
+)
+if "SELF_HEAL_FAKE_TOUCH" not in p:
+    p = p.replace(
+        "# HERMES_OPENCLOUD_TOOL_INTENT_V1",
+        "# HERMES_OPENCLOUD_TOOL_INTENT_V1\n+# SELF_HEAL_FAKE_TOUCH",
+        1,
+    )
+else:
+    # Ensure a fresh byte change even when re-run on an already-touched tree.
+    p = p + "\n+# SELF_HEAL_FAKE_TOUCH_RUN\n"
+patch.write_text(p, encoding="utf-8")
+
+if test.is_file():
+    t = test.read_text(encoding="utf-8")
+    t = swap_fn(
+        t,
+        r"    def _opencloud_is_conversational_greeting\(raw_text: str\) -> bool:",
+        r"\n\n    fn = _opencloud_is_conversational_greeting",
+        TEST_FN,
+    )
+    start = t.find("    fn = _opencloud_is_conversational_greeting")
+    end = t.find("    # Installer wiring")
+    if start < 0 or end < 0:
+        raise SystemExit("test assertion block missing")
+    t = t[:start] + TEST_ASSERT + "\n\n" + t[end:]
+    test.write_text(t, encoding="utf-8")
+
+print("fake-opencode: ok")
+PY
+exit 0

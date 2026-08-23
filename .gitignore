@@ -69,3 +69,5 @@ override.tf.json
 .terraformrc
 terraform.rc
 .tmp-photon-*
+.tmp-self-heal-e2e-*
+.tmp-review-*

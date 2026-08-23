@@ -1,0 +1,13 @@
+[Unit]
+Description=Open Cloud Assistant guarded self-heal tick
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=OPEN_CLOUD_ROOT=__OPEN_CLOUD_HOME__/OpenCloudAssistant
+Environment=PATH=__OPEN_CLOUD_HOME__/.local/bin:__OPEN_CLOUD_HOME__/.opencode/bin:__OPEN_CLOUD_HOME__/.bun/bin:__OPEN_CLOUD_HOME__/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/opencloud-self-heal
+Nice=10
+
+[Install]
+WantedBy=default.target
