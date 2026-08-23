@@ -1,0 +1,256 @@
+--- a/agent/conversation_loop.py	2026-08-23 13:53:16
++++ b/agent/conversation_loop.py	2026-08-23 13:53:34
+@@ -1272,6 +1272,7 @@
+ 
+ 
+ def _opencloud_restore_tools(agent) -> None:
++    _opencloud_restore_greeting_turn(agent)
+     restore = getattr(agent, "_opencloud_tool_restore", None)
+     if not callable(restore):
+         return
+@@ -1289,6 +1290,7 @@
+     _opencloud_restore_tools(agent)
+     if not _opencloud_is_conversational_greeting(user_text):
+         return
++    agent._opencloud_conversational_greeting_turn = True
+     # HERMES_OPENCLOUD_GREETING_TOOL_CHOICE_NONE_V1 — leftover non-side-effect
+     # tool schemas still put some providers into tool mode; greeting replies
+     # become "There is no function to call with the given prompt." Clear tools
+@@ -1312,10 +1314,169 @@
+         if prev_max is not None:
+             agent.max_iterations = prev_max
+         agent._opencloud_tool_choice = prev_choice
++        _opencloud_restore_greeting_turn(agent)
+ 
+     agent._opencloud_tool_restore = _restore
++
++
++# HERMES_OPENCLOUD_GREETING_OUTPUT_CONTRACT_V1 — reject serialized tool JSON on
++# conversational greeting turns; one bounded repair then deterministic fallback.
++_OPENCLOUD_GREETING_TOOL_TEXT_RES = (
++    re.compile(r'(?i)\{\s*"name"\s*:\s*"clarify"'),
++    re.compile(r'(?i)\{\s*"tool"\s*:'),
++    re.compile(r'(?i)\{\s*"function"\s*:'),
++    re.compile(r'(?i)"tool_calls"\s*:'),
++    re.compile(r"(?i)there is no function to call"),
++    re.compile(r'(?i)"choices"\s*:\s*\['),
++)
++_OPENCLOUD_GREETING_CONTEXT_MAX = 6
++
++
++def _opencloud_greeting_output_contract_valid(text: str) -> bool:
++    raw = (text or "").strip()
++    if not raw:
++        return False
++    for pat in _OPENCLOUD_GREETING_TOOL_TEXT_RES:
++        if pat.search(raw):
++            return False
++    if raw.startswith("{") and raw.endswith("}"):
++        try:
++            obj = json.loads(raw)
++        except Exception:
++            pass
++        else:
++            if isinstance(obj, dict) and any(
++                k in obj for k in ("name", "tool", "function", "tool_calls", "arguments")
++            ):
++                return False
++    return True
++
++
++def _opencloud_isolate_greeting_api_messages(api_messages, user_greeting: str):
++    """Request-only minimal context for greeting turns; durable history untouched."""
++
++    def _plain_text(content) -> str:
++        if isinstance(content, str):
++            return content.strip()
++        if isinstance(content, list):
++            bits = []
++            for part in content:
++                if isinstance(part, dict) and part.get("type") == "text":
++                    bits.append(str(part.get("text") or ""))
++            return " ".join(bits).strip()
++        return ""
++
++    out = []
++    for m in api_messages or []:
++        if isinstance(m, dict) and m.get("role") == "system":
++            out.append(dict(m))
++            break
++    greeting = (user_greeting or "").strip()
++    if greeting:
++        out.append({"role": "user", "content": greeting})
++    recent = []
++    for m in reversed(api_messages or []):
++        if not isinstance(m, dict):
++            continue
++        role = m.get("role")
++        if role == "tool":
++            continue
++        if role == "assistant" and m.get("tool_calls"):
++            continue
++        if m.get("_dropped_toolcall_nudge") or m.get("_empty_recovery_synthetic"):
++            continue
++        if m.get("_cron_synthetic") or m.get("_pre_verify_synthetic"):
++            continue
++        text = _plain_text(m.get("content"))
++        if not text:
++            continue
++        if role not in ("user", "assistant"):
++            continue
++        if '"name"' in text and '"clarify"' in text:
++            continue
++        try:
++            obj = json.loads(text)
++            if isinstance(obj, dict) and "name" in obj:
++                continue
++        except Exception:
++            pass
++        recent.append({"role": role, "content": text[:400]})
++        if len(recent) >= _OPENCLOUD_GREETING_CONTEXT_MAX:
++            break
++    for m in reversed(recent):
++        if m.get("role") == "user" and m.get("content", "").strip() == greeting:
++            continue
++        out.append(m)
++    return out
++
++
++def _opencloud_greeting_conversational_fallback(user_text: str) -> str:
++    raw = (user_text or "").strip()
++    m = re.search(
++        r"(?i)\b(bro|man|dude|buddy|pal|mate|fam|friend|there|hermes|assistant)\b",
++        raw,
++    )
++    if m and m.group(1).lower() in {
++        "bro", "man", "dude", "buddy", "pal", "mate", "fam", "friend",
++    }:
++        return f"Hey {m.group(1).capitalize()}! What's up?"
++    if re.search(r"(?i)good\s*(morning|afternoon|evening)", raw):
++        return "Hey! Good to hear from you — what can I help with?"
++    return "Hey! What's up?"
+ 
+ 
++def _opencloud_write_self_heal_inbox_event(payload: dict) -> None:
++    """Drop sanitized events for OpenCloud guarded self-heal auto-ingest."""
++    from pathlib import Path
++
++    state_root = Path(
++        os.environ.get(
++            "OPEN_CLOUD_SELF_HEAL_STATE",
++            str(Path.home() / ".opencloud" / "self-repair"),
++        )
++    ).expanduser()
++    inbox = state_root / "inbox"
++    inbox.mkdir(parents=True, exist_ok=True)
++    path = inbox / f"evt-{int(time.time() * 1000)}-{os.getpid()}.json"
++    tmp = path.with_suffix(".tmp")
++    tmp.write_text(json.dumps(payload), encoding="utf-8")
++    tmp.replace(path)
++
++
++def _opencloud_emit_greeting_contract_violation(agent, *, reason: str) -> None:
++    try:
++        _opencloud_write_self_heal_inbox_event(
++            {
++                "type": "OpenCloudUserOutputContractViolation",
++                "exc_type": "OpenCloudUserOutputContractViolation",
++                "message": f"reason={reason}",
++                "module": "agent.conversation_loop",
++                "context": " ".join(
++                    filter(
++                        None,
++                        [
++                            f"provider={getattr(agent, 'provider', '') or '-'}",
++                            f"model={getattr(agent, 'model', '') or '-'}",
++                            f"platform={getattr(agent, 'platform', '') or '-'}",
++                        ],
++                    )
++                ),
++            }
++        )
++    except Exception:
++        logger.warning(
++            "greeting output contract event emit failed",
++            exc_info=True,
++        )
++
++
++def _opencloud_restore_greeting_turn(agent) -> None:
++    try:
++        agent._opencloud_conversational_greeting_turn = False
++    except Exception:
++        pass
++
++
+ def run_conversation(
+     agent,
+     user_message: Any,
+@@ -1449,6 +1610,7 @@
+     # Cron-only bounded repair when a deterministic output contract rejects
+     # an attempted final answer (HERMES_CRON_OUTPUT_CONTRACT_V1).
+     cron_output_repair_attempts = 0
++    greeting_output_repair_attempts = 0
+     length_continue_retries = 0
+     truncated_tool_call_retries = 0
+     truncated_response_parts: List[str] = []
+@@ -1903,6 +2065,14 @@
+                 type(_fleet_exc).__name__,
+             )
+ 
++        # HERMES_OPENCLOUD_GREETING_OUTPUT_CONTRACT_V1
++        if getattr(agent, "_opencloud_conversational_greeting_turn", False):
++            _greet_src = persist_user_message if isinstance(persist_user_message, str) else user_message
++            if isinstance(_greet_src, str):
++                api_messages = _opencloud_isolate_greeting_api_messages(
++                    api_messages, _greet_src
++                )
++
+         # Drop thinking-only assistant turns (reasoning but no visible
+         # output and no tool_calls) and merge any adjacent user messages
+         # left behind. Prevents Anthropic 400s ("The final block in an
+@@ -7217,6 +7387,44 @@
+                         final_response = None
+                         continue
+ 
++                # HERMES_OPENCLOUD_GREETING_OUTPUT_CONTRACT_V1
++                if getattr(agent, "_opencloud_conversational_greeting_turn", False):
++                    if not _opencloud_greeting_output_contract_valid(final_response):
++                        _opencloud_emit_greeting_contract_violation(
++                            agent, reason="greeting_tool_text"
++                        )
++                        if greeting_output_repair_attempts < 1:
++                            greeting_output_repair_attempts += 1
++                            logger.warning(
++                                "greeting output contract invalid; repair attempt %d/1",
++                                greeting_output_repair_attempts,
++                            )
++                            final_msg["_dropped_toolcall_nudge"] = True
++                            messages.append(final_msg)
++                            messages.append({
++                                "role": "user",
++                                "content": (
++                                    "[System: Reply with one short natural plain-text "
++                                    "greeting only. Do NOT output JSON, tool syntax, "
++                                    "function calls, clarify payloads, or code blocks.]"
++                                ),
++                                "_dropped_toolcall_nudge": True,
++                            })
++                            agent._session_messages = messages
++                            final_response = None
++                            continue
++                        _greet_fb_src = (
++                            persist_user_message
++                            if isinstance(persist_user_message, str)
++                            else user_message
++                        )
++                        final_response = _opencloud_greeting_conversational_fallback(
++                            _greet_fb_src if isinstance(_greet_fb_src, str) else ""
++                        )
++                        final_msg = dict(final_msg)
++                        final_msg["content"] = final_response
++                        final_msg["finish_reason"] = "greeting_output_failsafe"
++
+                 # HERMES_CRON_SEARCH_WAVES_V1
+                 # Career-only code-owned wave orchestration.  Runs only
+                 # after the output contract is satisfied; blocks

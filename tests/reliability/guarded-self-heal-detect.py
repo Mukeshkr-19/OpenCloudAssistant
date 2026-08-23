@@ -99,6 +99,16 @@ def test_parse_and_classify_fixture() -> None:
     c = classify_failure(ev.exc_type, ev.message, module=ev.module)
     require(c is not None and c.tier == 3 and c.severity == "MEDIUM", "clarify Tier3")
 
+    goc = classify_failure(
+        "OpenCloudUserOutputContractViolation",
+        "reason=greeting_tool_text",
+        module="agent.conversation_loop",
+        context="provider=nvidia model=llama-3.2-11b-vision",
+    )
+    require(goc is not None and goc.tier == 3, "greeting contract Tier3")
+    require(goc.reason == "greeting_output_contract", "greeting contract reason")
+    require(goc.severity == "MEDIUM", "greeting contract MEDIUM")
+
     to = parse_journal_line("httpx.ReadTimeout waiting for nvidia")
     require(to is not None, "timeout line")
     c2 = classify_failure(to.exc_type, to.message)

@@ -33,6 +33,7 @@ test -f tests/reliability/cron-career-candidate-rejection.py
 test -f tests/reliability/cron-search-reliability.py
 test -f tests/reliability/provider-cron-survival.py
 test -f tests/reliability/cron-baseline-fetch.py
+test -f tests/reliability/greeting-output-contract.py
 test -f tests/reliability/product-reliability-ux.py
 test -f tests/reliability/imessage-model-control-turn-recovery.py
 test -x tests/reliability/cron-routing-v1.py
@@ -60,6 +61,7 @@ test -x "$HERMES_PYTHON"
 # Materialize-backed product UX / iMessage control tests first so a stale live
 # Hermes checkout cannot block them behind live-tree-only checks.
 PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/product-reliability-ux.py
+PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/greeting-output-contract.py
 PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/guarded-self-heal.py
 PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/guarded-self-heal-detect.py
 PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$OPEN_CLOUD_HERMES_ROOT" \

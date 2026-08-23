@@ -33,6 +33,7 @@ PATCH_PRODUCT_UX="$ROOT/integrations/hermes/hermes-product-reliability-ux.patch"
 PATCH_PHOTON_HTTP="$ROOT/integrations/hermes/hermes-photon-http-events.patch"
 PATCH_GREETING_TOOL_CHOICE="$ROOT/integrations/hermes/hermes-greeting-tool-choice-none.patch"
 PATCH_IMESSAGE_MODEL_CONTROL="$ROOT/integrations/hermes/hermes-imessage-model-control-turn-recovery.patch"
+PATCH_GREETING_OUTPUT="$ROOT/integrations/hermes/hermes-greeting-output-contract.patch"
 
 usage() {
     echo "Usage:"
@@ -91,6 +92,7 @@ materialize() {
     local patch23="$rendered/hermes-photon-http-events.patch"
     local patch24="$rendered/hermes-greeting-tool-choice-none.patch"
     local patch25="$rendered/hermes-imessage-model-control-turn-recovery.patch"
+    local patch26="$rendered/hermes-greeting-output-contract.patch"
 
     require_file "$PATCH_FLEET"
     require_file "$PATCH_LIVE"
@@ -117,6 +119,7 @@ materialize() {
     require_file "$PATCH_PHOTON_HTTP"
     require_file "$PATCH_GREETING_TOOL_CHOICE"
     require_file "$PATCH_IMESSAGE_MODEL_CONTROL"
+    require_file "$PATCH_GREETING_OUTPUT"
 
     if [ ! -d "$HERMES_ROOT/.git" ]; then
         echo "ERROR: Hermes Git source not found at: $HERMES_ROOT" >&2
@@ -160,6 +163,7 @@ materialize() {
     render_patch "$PATCH_PHOTON_HTTP" "$patch23"
     render_patch "$PATCH_GREETING_TOOL_CHOICE" "$patch24"
     render_patch "$PATCH_IMESSAGE_MODEL_CONTROL" "$patch25"
+    render_patch "$PATCH_GREETING_OUTPUT" "$patch26"
 
     # The exported archive is intentionally not a Git checkout.  Create a
     # temporary local index so git apply validates and applies patches to the
@@ -275,6 +279,10 @@ materialize() {
     git -C "$out" apply --check "$patch25"
     git -C "$out" apply "$patch25"
 
+    echo "MATERIALIZE: checking greeting output-contract patch"
+    git -C "$out" apply --check "$patch26"
+    git -C "$out" apply "$patch26"
+
 
     for ux_marker in \
         HERMES_OPENCLOUD_MODEL_ALIAS_V1 \
@@ -285,6 +293,7 @@ materialize() {
         HERMES_OPENCLOUD_TOOL_INTENT_V1 \
         HERMES_OPENCLOUD_PHOTON_HTTP_EVENTS_V1 \
         HERMES_OPENCLOUD_GREETING_TOOL_CHOICE_NONE_V1 \
+        HERMES_OPENCLOUD_GREETING_OUTPUT_CONTRACT_V1 \
         HERMES_OPENCLOUD_MODEL_CONTROL_FAST_PATH_V1 \
         HERMES_OPENCLOUD_CLARIFY_RELEASE_V1 \
         HERMES_OPENCLOUD_STOP_RECOVERY_V1 \

@@ -229,6 +229,26 @@ def classify_failure(
             reason="clarify_schema_greeting",
         )
 
+    if (exc or "").strip().lower() == "openclouduseroutputcontractviolation" or (
+        "greeting_tool_text" in low
+        and "agent.conversation_loop" in mod
+    ):
+        return Classification(
+            signature=sig,
+            severity="MEDIUM",
+            tier=3,
+            title="greeting output contract violation (tool JSON as text)",
+            task=(
+                "OpenCloud conversational greeting turns returned serialized tool "
+                "or clarify JSON as plain text to the user. Fix "
+                "integrations/hermes/hermes-greeting-output-contract.patch "
+                "and related greeting patches: preserve tool_choice=none, enforce "
+                "the greeting output contract, bounded repair, and local fallback. "
+                "Do not reintroduce clarify for greetings."
+            ),
+            reason="greeting_output_contract",
+        )
+
     if "same_tool_failure_halt" in low:
         return Classification(
             signature=sig,

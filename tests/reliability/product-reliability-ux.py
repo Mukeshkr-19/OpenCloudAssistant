@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PATCH = ROOT / "integrations/hermes/hermes-product-reliability-ux.patch"
 PHOTON_PATCH = ROOT / "integrations/hermes/hermes-photon-http-events.patch"
 GREETING_TOOL_CHOICE_PATCH = ROOT / "integrations/hermes/hermes-greeting-tool-choice-none.patch"
+GREETING_OUTPUT_PATCH = ROOT / "integrations/hermes/hermes-greeting-output-contract.patch"
 
 
 def require(cond: bool, msg: str) -> None:
@@ -63,7 +64,11 @@ def main() -> None:
     require('api_kwargs["tool_choice"] = "none"' in greeting_tc or "api_kwargs['tool_choice'] = 'none'" in greeting_tc, "api_kwargs tool_choice none missing")
     require("agent.tools = []" in greeting_tc, "greeting must clear tools list")
 
-    # Mirror of patched helper (kept in sync with HERMES_OPENCLOUD_TOOL_INTENT_V1).
+    greeting_out = GREETING_OUTPUT_PATCH.read_text()
+    require("HERMES_OPENCLOUD_GREETING_OUTPUT_CONTRACT_V1" in greeting_out, "greeting output marker")
+    require("_opencloud_greeting_output_contract_valid" in greeting_out, "contract validator")
+
+    # Mirror of patched helper
     def _opencloud_is_conversational_greeting(raw_text: str) -> bool:
         raw = (raw_text or "").strip()
         if not raw or len(raw) > 80:
@@ -103,6 +108,7 @@ def main() -> None:
         require("hermes-product-reliability-ux.patch" in s, f"{rel} missing patch wire")
         require("HERMES_OPENCLOUD_TOOL_INTENT_V1" in s or "PATCH22" in s or "PATCH_PRODUCT_UX" in s, f"{rel} incomplete")
         require("hermes-greeting-tool-choice-none.patch" in s, f"{rel} missing greeting tool_choice patch")
+        require("hermes-greeting-output-contract.patch" in s, f"{rel} missing greeting output patch")
         require("GREETING_TOOL_CHOICE_NONE" in s or "PATCH24" in s or "PATCH_GREETING_TOOL_CHOICE" in s, f"{rel} incomplete greeting tool_choice wire")
 
     print("PASS product reliability UX markers present")
@@ -110,6 +116,7 @@ def main() -> None:
     print("PASS greeting intent matches short greetings only")
     print("PASS installers wire product UX patch")
     print("PASS greeting tool_choice none patch wired")
+    print("PASS greeting output-contract patch wired")
 
 
 if __name__ == "__main__":
