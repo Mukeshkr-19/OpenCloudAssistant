@@ -154,6 +154,16 @@ def test_contract_and_helpers(cl) -> None:
     require(fn("Hi what model are you using") is False, "model query excluded")
     require(fn("Hi search for jobs") is False, "search task excluded")
 
+    # Regression: colloquial vocatives / group greetings must classify as
+    # conversational so the tool_choice=none path removes clarify (no
+    # "choices must be a list of strings" leak). Shape-based, not a single
+    # hardcoded phrase.
+    for g in (
+        "Hey guys", "Hi everyone", "Hey y'all", "Hey team", "Hey folks",
+        "Hey all", "bruh", "homie", "boss", "chief", "What's up", "wassup",
+    ):
+        require(fn(g) is True, f"regression greeting {g!r} classified")
+
 
 def test_inbox_event_sanitized(cl) -> None:
     with tempfile.TemporaryDirectory() as tmp:

@@ -1,7 +1,7 @@
 diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 --- a/agent/conversation_loop.py
 +++ b/agent/conversation_loop.py
-@@ -1228,8 +1228,100 @@
+@@ -1228,8 +1228,114 @@
              getattr(agent, "session_id", None) or "-",
              exc_info=True,
          )
@@ -30,21 +30,35 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 +    raw = (text or "").strip()
 +    if not raw or len(raw) > 80:
 +        return False
-+    if re.search(r"https?://|/\S|\b(search|find|browse|open|run|fix|deploy|cron)\b", raw, re.I):
++    # Block anything that looks like a task, URL, or code: never a pure
++    # conversational greeting, so tools (incl. clarify) must stay available.
++    if re.search(
++        r"https?://|/\S|\b(?:search|find|browse|open|run|fix|deploy|cron|install|"
++        r"write|create|send|schedule|book|order|build|make|update|delete|remove|"
++        r"switch|config|set|show|list|add|summarize|explain|tell|reply|check|"
++        r"start|stop|enable|disable|turn|do|get)\b",
++        raw,
++        re.I,
++    ):
 +        return False
-+    # Colloquial vocatives ("Hi bro", "Hey man") and bare "Bro"/"Dude"/"Yo".
-+    # Not an exact-string Hi-bro hack: shared vocative class. Task verbs still
-+    # fail the early intent reject above ("Hi bro search for jobs").
++    # Vocative matched by SHAPE (any short word), not a hardcoded phrase list,
++    # so colloquial forms ("guys","y'all","folks","team","everyone","bro",
++    # "bruh","homie","boss","chief") all classify. A greeting opener plus at
++    # most one trailing light token; extra sentence content is left to the
++    # task guard and is NOT forced into greeting-only mode.
 +    if re.fullmatch(
-+        r"(?i)(hi|hello|hey|yo|sup|howdy|hiya|good\s*(morning|afternoon|evening))"
-+        r"([,.!]+\s*[A-Za-z]{0,24}|\s+(bro|man|dude|buddy|pal|mate|fam|there|hermes|assistant|friend))?[.!]?",
++        r"(?i)(?:hi|hello|hey|yo|sup|wassup|what'?s\s*up|howdy|hiya|greetings|"
++        r"hola|bonjour|good\s*(?:morning|afternoon|evening)|hey\s*there|cheers|"
++        r"gg|oi|aye)\b(?:[\s,:.!?-]+[A-Za-z][\w'-]{0,20})?[\s,:.!?-]*",
 +        raw,
 +    ):
 +        return True
-+    if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\s+(there|hermes|assistant|friend|bro|man|dude)[.!]?", raw):
-+        return True
-+    if re.fullmatch(r"(?i)(bro|dude|yo)[.!]?", raw):
-+        return True
++    # Bare short interjection / vocative ("Bro","Bruh","Homie","Boss","Chief",
++    # "Yo"). Shape-based; interrogatives and task verbs are excluded above.
++    if re.fullmatch(r"(?i)[A-Za-z][\w'-]{0,11}[\s,:.!?]*", raw):
++        tok = raw.strip(" ,.!?").lower()
++        if tok and not re.fullmatch(r"(?i)(what|how|who|why|when|where|which|whom)", tok):
++            return True
 +    return False
 +
 +
