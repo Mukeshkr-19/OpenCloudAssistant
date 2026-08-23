@@ -15,11 +15,15 @@ from typing import Any, Optional
 
 
 # Terminal / truthful lifecycle. CLOSED is not used for incomplete work.
+# QUEUED = detector/controller enqueue; RECOVERING only when a worker holds a lease.
 STATES = (
     "DETECTED",
     "CAPTURED",
     "CLASSIFIED",
+    "QUEUED",
     "RECOVERING",
+    "INTERRUPTED",
+    "RETRY_PENDING",
     "VALIDATING",
     "REVIEWING",
     "REPAIR_VALIDATED",
@@ -65,6 +69,8 @@ OPEN_STATES = tuple(
 # Recently closed signatures may reopen if the same failure reappears.
 REOPENABLE = ("RECOVERED", "NO_ACTION_TRANSIENT", "ROLLED_BACK", "FAILED")
 
+# Worker-owned recovery only; detector must never leave RECOVERING.
+LEASE_META_KEYS = ("worker_id", "worker_started_at", "lease_expires_at")
 
 class IncidentStore:
     def __init__(self, db_path: Path):
@@ -293,6 +299,23 @@ class IncidentStore:
             rows = conn.execute(
                 "SELECT * FROM incidents ORDER BY created_at DESC LIMIT ?",
                 (limit,),
+            ).fetchall()
+            return [self._row(r) for r in rows]
+
+    def list_by_states(
+        self, states: tuple[str, ...], *, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if not states:
+            return []
+        placeholders = ",".join("?" * len(states))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM incidents
+                WHERE state IN ({placeholders})
+                ORDER BY created_at ASC LIMIT ?
+                """,
+                (*states, limit),
             ).fetchall()
             return [self._row(r) for r in rows]
 

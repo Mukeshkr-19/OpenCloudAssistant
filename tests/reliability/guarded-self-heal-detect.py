@@ -19,7 +19,9 @@ from guarded_heal.adapters import (  # noqa: E402
     DeployResult,
     FleetAdapter,
     GitHubPromoter,
+    P8RuntimeAdapter,
     PromoteResult,
+    RuntimeServiceAdapter,
     probe_materialized_greeting,
 )
 from guarded_heal.controller import (  # noqa: E402
@@ -28,11 +30,11 @@ from guarded_heal.controller import (  # noqa: E402
     classify_failure,
 )
 from guarded_heal.detector import (  # noqa: E402
+    GatewayLifecycle,
     JournalctlAdapter,
     RuntimeDetector,
     parse_journal_line,
 )
-
 
 def require(cond: bool, msg: str) -> None:
     if not cond:
@@ -664,14 +666,368 @@ def test_fixture_auto_detect_no_cli_ingest() -> None:
         det = RuntimeDetector(
             state_root=state, ingest_fn=ctrl.ingest, journal=journal
         )
-        # auto_run=False: prove detection alone creates CLASSIFIED/CAPTURED incident
-        # without CLI ingest.
+        # Detector is always queue-only: QUEUED, never RECOVERING / process.
         r = det.detect(auto_run=False)
         require(r["ingested"] == 1, "auto-detected")
+        require(r.get("auto_run") is False, "detector never recovers")
         row = ctrl.store.list_incidents()[0]
         require(row["tier"] == 3, "Tier 3")
         require(row["severity"] == "MEDIUM", "MEDIUM")
+        require(row["state"] == "QUEUED", f"queued not recovering: {row['state']}")
         require("clarify" in row["title"].lower(), "title")
+        # CRITICAL: detector must not invoke OpenCode (count stays 0 until controller).
+        require(row["state"] != "RECOVERING", "detector ≠ RECOVERING")
+
+
+# Exact intentional systemd restart journal from production OCI pattern.
+INTENTIONAL_RESTART_JOURNAL = [
+    "Aug 23 02:10:01 Stopping hermes-gateway.service - Hermes Gateway...",
+    "Aug 23 02:10:01 hermes-gateway.service: Sending SIGTERM to main process pid=1234.",
+    "Aug 23 02:10:01 hermes-gateway.service: Main process exited, code=exited, status=1/FAILURE",
+    "Aug 23 02:10:01 hermes-gateway.service: Failed with result 'exit-code'.",
+    "Aug 23 02:10:01 Stopped hermes-gateway.service - Hermes Gateway.",
+    "Aug 23 02:10:02 Started hermes-gateway.service - Hermes Gateway.",
+]
+
+GENUINE_SEGV_JOURNAL = [
+    "Aug 23 03:00:01 hermes-gateway.service: Main process exited, code=dumped, status=11/SEGV",
+    "Aug 23 03:00:01 hermes-gateway.service: Failed with result 'core-dump'.",
+    "Aug 23 03:00:01 segfault at 0 ip ... sp ... error 4 in hermes",
+]
+
+
+def test_intentional_restart_zero_crash() -> None:
+    """Fixture 16: exact intentional restart → crash=0, no Tier1, no repair."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        p8_calls = {"n": 0}
+
+        def p8_dry(task, fp):
+            p8_calls["n"] += 1
+            return ActionResult(status="RECOVERED", detail="should_not_run", verified=True)
+
+        runtime_calls = {"n": 0}
+
+        def runtime_dry(kind, reason):
+            runtime_calls["n"] += 1
+            return ActionResult(status="RECOVERED", detail="should_not_run", verified=True)
+
+        ctrl = SelfHealController(
+            repo_root=repo,
+            state_root=state,
+            p8=P8RuntimeAdapter(dry_invoke=p8_dry),
+            runtime=RuntimeServiceAdapter(dry_invoke=runtime_dry),
+            test_mode=True,
+        )
+        journal = FakeJournal([(INTENTIONAL_RESTART_JOURNAL, "c-restart")])
+        det = RuntimeDetector(
+            state_root=state, ingest_fn=ctrl.ingest, journal=journal
+        )
+        r = det.detect()
+        require(r["matched"] == 0, f"matched crash={r['matched']}")
+        require(r["ingested"] == 0, "no incidents")
+        require(len(ctrl.store.list_incidents()) == 0, "no Tier1")
+        require(p8_calls["n"] == 0, "no hermes-code-repair / P8")
+        require(runtime_calls["n"] == 0, "no runtime restart")
+        # Lifecycle file persisted then cleared after Started.
+        lc = GatewayLifecycle(state / "gateway-lifecycle.json")
+        require(lc.controlled is False, "lifecycle cleared after Started")
+
+
+def test_genuine_segv_tier1_runtime_no_p8() -> None:
+    """Fixture 17: SEGV → Tier1 queued; controller runtime restart → RECOVERED; no P8."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        p8_calls = {"n": 0}
+        runtime_calls = {"n": 0}
+
+        def p8_dry(task, fp):
+            p8_calls["n"] += 1
+            return ActionResult(status="RECOVERED", detail="p8", verified=True)
+
+        def runtime_dry(kind, reason):
+            runtime_calls["n"] += 1
+            require(kind == "crash", f"kind={kind}")
+            return ActionResult(
+                status="RECOVERED", detail="runtime_restart_verified", verified=True
+            )
+
+        ctrl = SelfHealController(
+            repo_root=repo,
+            state_root=state,
+            p8=P8RuntimeAdapter(dry_invoke=p8_dry),
+            runtime=RuntimeServiceAdapter(dry_invoke=runtime_dry),
+            test_mode=True,
+        )
+        journal = FakeJournal([(GENUINE_SEGV_JOURNAL, "c-segv")])
+        det = RuntimeDetector(
+            state_root=state, ingest_fn=ctrl.ingest, journal=journal
+        )
+        r = det.detect()
+        require(r["matched"] >= 1, f"matched={r}")
+        require(r["ingested"] >= 1, "queued")
+        row = ctrl.store.list_incidents()[0]
+        require(row["tier"] == 1, f"tier {row['tier']}")
+        require(row["state"] == "QUEUED", f"state {row['state']}")
+        require(p8_calls["n"] == 0, "detector must not call P8")
+
+        processed = ctrl.process_queue(limit=1)
+        require(len(processed) == 1, "controller processed")
+        final = ctrl.store.get(row["id"])
+        require(final["state"] == "RECOVERED", f"got {final['state']}")
+        require(final["meta"].get("p8_used") is False, "no P8")
+        require(final["meta"].get("hermes_code_repair") is False, "no repair")
+        require(runtime_calls["n"] == 1, "runtime adapter once")
+        require(p8_calls["n"] == 0, "still no P8 after controller")
+
+
+def test_unexpected_crash_already_active() -> None:
+    """Fixture 18: unexpected crash but service active → NO_ACTION_TRANSIENT, no restart."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        restarts = {"n": 0}
+
+        def runner(argv, **kwargs):
+            class R:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            if argv[:2] == ["systemctl", "--user"] and "is-active" in argv:
+                R.stdout = "active\n"
+                return R()
+            if argv[:2] == ["systemctl", "--user"] and "restart" in argv:
+                restarts["n"] += 1
+                return R()
+            return R()
+
+        ctrl = SelfHealController(
+            repo_root=repo,
+            state_root=state,
+            runtime=RuntimeServiceAdapter(runner=runner, wait_seconds=0),
+            p8=P8RuntimeAdapter(
+                dry_invoke=lambda *_a: ActionResult(
+                    status="FAILED", detail="must_not_use_p8", verified=False
+                )
+            ),
+            test_mode=True,
+        )
+        row = ctrl.ingest(
+            "RuntimeError",
+            "hermes-gateway crash or abnormal exit",
+            module="hermes-gateway",
+            auto_run=True,
+        )
+        require(
+            row["state"] == "NO_ACTION_TRANSIENT",
+            f"got {row['state']}",
+        )
+        require(restarts["n"] == 0, "no unnecessary restart")
+        require(row["meta"].get("hermes_code_repair") is False, "no repair")
+
+
+def test_clarify_detector_queues_opencode_zero() -> None:
+    """Fixture 19: Tier3 clarify — detector queues only; OpenCode count=0."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        oc_calls = {"n": 0}
+
+        def oc_runner(argv, **kwargs):
+            oc_calls["n"] += 1
+
+            class R:
+                returncode = 0
+                stdout = "ok"
+                stderr = ""
+
+            return R()
+
+        ctrl = SelfHealController(
+            repo_root=repo,
+            state_root=state,
+            opencode=OpenCodeRunner(
+                opencode_bin="/bin/echo", runner=oc_runner
+            ),
+            test_mode=True,
+        )
+        journal = FakeJournal(
+            [
+                (
+                    [
+                        "ValueError: clarify tool: choices must be a list of strings"
+                    ],
+                    "c-clarify",
+                )
+            ]
+        )
+        det = RuntimeDetector(
+            state_root=state, ingest_fn=ctrl.ingest, journal=journal
+        )
+        det.detect()
+        require(oc_calls["n"] == 0, "OpenCode count=0 on detect")
+        row = ctrl.store.list_incidents()[0]
+        require(row["state"] == "QUEUED", "queued")
+        require(row["tier"] == 3, "tier3")
+        # Controller later may OpenCode — that is not this test's claim.
+
+
+def test_stale_recovering_lease_and_legacy() -> None:
+    """Stale lease + legacy RECOVERING without lease → not RECOVERED."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        ctrl = SelfHealController(
+            repo_root=repo, state_root=state, test_mode=True, worker_id="w1"
+        )
+        # Legacy production-style RECOVERING (no lease meta).
+        legacy = ctrl.store.create(
+            signature="sig-legacy",
+            title="stuck",
+            sanitized_task="x",
+            severity="HIGH",
+            tier=1,
+            meta={"reason": "gateway_crash"},
+        )
+        ctrl.store.transition(legacy["id"], "RECOVERING", detail="legacy no lease")
+        # Expired lease
+        leased = ctrl.store.create(
+            signature="sig-lease",
+            title="stuck2",
+            sanitized_task="x",
+            severity="HIGH",
+            tier=1,
+            meta={"reason": "gateway_crash"},
+        )
+        ctrl.store.transition(
+            leased["id"],
+            "RECOVERING",
+            detail="expired",
+            meta_update={
+                "worker_id": "old",
+                "worker_started_at": 1.0,
+                "lease_expires_at": 2.0,  # long expired
+            },
+        )
+        reaped = ctrl.reap_stale_leases()
+        require(len(reaped) >= 2, f"reaped {len(reaped)}")
+        for iid in (legacy["id"], leased["id"]):
+            row = ctrl.store.get(iid)
+            require(row["state"] != "RECOVERED", f"{iid} not false recovered")
+            require(
+                row["state"] in ("QUEUED", "RETRY_PENDING", "HUMAN_REQUIRED", "INTERRUPTED"),
+                f"{iid} → {row['state']}",
+            )
+
+
+def test_failed_dedup_no_storm() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        ctrl = SelfHealController(
+            repo_root=repo,
+            state_root=state,
+            runtime=RuntimeServiceAdapter(
+                dry_invoke=lambda *_a: ActionResult(
+                    status="FAILED", detail="boom", verified=False
+                )
+            ),
+            test_mode=True,
+        )
+        r1 = ctrl.ingest(
+            "RuntimeError",
+            "hermes-gateway crash or abnormal exit",
+            module="hermes-gateway",
+            auto_run=True,
+        )
+        require(r1["state"] == "FAILED", r1["state"])
+        r2 = ctrl.ingest(
+            "RuntimeError",
+            "hermes-gateway crash or abnormal exit",
+            module="hermes-gateway",
+            auto_run=False,
+        )
+        require(len(ctrl.store.list_incidents()) == 1, "no storm")
+        require(int(r2["occurrence_count"]) >= 2, "occurrence bumped")
+        require(r2["state"] == "QUEUED", f"reopened {r2['state']}")
+
+
+def test_detector_timeout_preserves_cursor() -> None:
+    """Timeout → no recovery; cursor unchanged when journal returns None cursor."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        ctrl = SelfHealController(repo_root=repo, state_root=state, test_mode=True)
+        det = RuntimeDetector(
+            state_root=state, ingest_fn=ctrl.ingest, journal=FakeJournal([])
+        )
+        det.save_cursor("keep-me")
+        # Empty batches with no new cursor simulation:
+        class TimeoutJournal:
+            def read(self, *, cursor, since, units):
+                return [], None  # timeout / fail → do not advance
+
+        det.journal = TimeoutJournal()
+        r = det.detect()
+        require(r["cursor_advanced"] is False, "no advance")
+        require(det.load_cursor() == "keep-me", "cursor preserved")
+        require(len(ctrl.store.list_incidents()) == 0, "no recovery invent")
+
+
+def test_systemd_bounds_present() -> None:
+    detect = (ROOT / "services/systemd/opencloud-self-heal-detect.service").read_text(
+        encoding="utf-8"
+    )
+    ctrl = (ROOT / "services/systemd/opencloud-self-heal.service").read_text(
+        encoding="utf-8"
+    )
+    require("RuntimeMaxSec=25" in detect, "detect RuntimeMaxSec")
+    require("TimeoutStartSec=25" in detect, "detect TimeoutStartSec")
+    require("RuntimeMaxSec=25min" in ctrl, "controller RuntimeMaxSec")
+    require("TimeoutStartSec=25min" in ctrl, "controller TimeoutStartSec")
+
+
+def test_gateway_crash_never_hermes_code_repair() -> None:
+    """Deterministic: gateway crash → hermes-code-repair invocation count = 0."""
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        repair_calls = {"n": 0}
+
+        def fake_p8(task, fp):
+            repair_calls["n"] += 1
+            return ActionResult(status="RECOVERED", detail="bad", verified=True)
+
+        ctrl = SelfHealController(
+            repo_root=repo,
+            state_root=state,
+            p8=P8RuntimeAdapter(dry_invoke=fake_p8),
+            runtime=RuntimeServiceAdapter(
+                dry_invoke=lambda *_a: ActionResult(
+                    status="RECOVERED", detail="ok", verified=True
+                )
+            ),
+            test_mode=True,
+        )
+        row = ctrl.ingest(
+            "RuntimeError",
+            "hermes-gateway crash or abnormal exit",
+            auto_run=True,
+        )
+        require(row["state"] == "RECOVERED", row["state"])
+        require(repair_calls["n"] == 0, "hermes-code-repair must not run")
+        require(row["meta"].get("p8_used") is False, "p8_used false")
 
 
 def main() -> None:
@@ -684,6 +1040,15 @@ def main() -> None:
     test_rollback_failure_modes()
     test_controller_rollback_failed_critical()
     test_fixture_auto_detect_no_cli_ingest()
+    test_intentional_restart_zero_crash()
+    test_genuine_segv_tier1_runtime_no_p8()
+    test_unexpected_crash_already_active()
+    test_clarify_detector_queues_opencode_zero()
+    test_stale_recovering_lease_and_legacy()
+    test_failed_dedup_no_storm()
+    test_detector_timeout_preserves_cursor()
+    test_systemd_bounds_present()
+    test_gateway_crash_never_hermes_code_repair()
     print("PASS detector parse/sanitize/classify (clarify Tier3, ReadTimeout Tier2)")
     print("PASS detector cursor dedup + restart (no storm / no full replay)")
     print("PASS journalctl argv shell=False")
@@ -691,7 +1056,16 @@ def main() -> None:
     print("PASS post-deploy E2E RECOVERED + greeting-fail rollback")
     print("PASS rollback failure modes ≠ ROLLED_BACK")
     print("PASS controller ROLLBACK_FAILED+CRITICAL+QUARANTINED")
-    print("PASS fixture clarify auto-detect without CLI ingest")
+    print("PASS fixture clarify auto-detect QUEUED (no CLI ingest)")
+    print("PASS intentional restart → 0 crash / no Tier1 / no repair")
+    print("PASS genuine SEGV → Tier1 runtime RECOVERED / no P8")
+    print("PASS already-active crash → NO_ACTION_TRANSIENT")
+    print("PASS clarify detect OpenCode=0 (queue only)")
+    print("PASS stale/legacy RECOVERING lease reap")
+    print("PASS FAILED dedup reopen (no storm)")
+    print("PASS detect timeout preserves cursor")
+    print("PASS systemd RuntimeMaxSec/TimeoutStartSec bounds")
+    print("PASS gateway crash never hermes-code-repair")
 
 
 if __name__ == "__main__":

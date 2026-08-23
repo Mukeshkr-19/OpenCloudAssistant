@@ -39,6 +39,10 @@ grep -qF 'ExecStart=%h/.local/bin/opencloud-self-heal-detect' \
     services/systemd/opencloud-self-heal-detect.service
 grep -qF 'OnUnitActiveSec=2min' \
     services/systemd/opencloud-self-heal-detect.timer
+grep -qE 'RuntimeMaxSec=25' services/systemd/opencloud-self-heal-detect.service
+grep -qE 'TimeoutStartSec=25' services/systemd/opencloud-self-heal-detect.service
+grep -qE 'RuntimeMaxSec=25min' services/systemd/opencloud-self-heal.service
+grep -qE 'TimeoutStartSec=25min' services/systemd/opencloud-self-heal.service
 
 HOME="$TMP_HOME" OPEN_CLOUD_HOME="$TMP_HOME" install/95-services.sh --check
 cmp -s scripts/runtime-update.sh "$UPDATER"

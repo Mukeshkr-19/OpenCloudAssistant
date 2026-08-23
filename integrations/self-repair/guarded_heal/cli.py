@@ -84,18 +84,23 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 
 def cmd_detect(args: argparse.Namespace) -> int:
-    """Lightweight journal → ingest. Separate from expensive repair tick."""
+    """Lightweight journal → queue. Never auto-processes / recovers."""
     ctrl = _controller()
     det = RuntimeDetector(state_root=ctrl.state_root, ingest_fn=ctrl.ingest)
-    result = det.detect(auto_run=not args.no_run)
+    # Detector is always queue-only; --no-run kept for CLI compat.
+    result = det.detect(auto_run=False)
     print(json.dumps(result, indent=2))
     return 0
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    """Repair timer entry: drain inbox, then report status."""
+    """Controller tick: drain inbox → process queued incidents (bounded)."""
     ctrl = _controller()
-    ingested = ctrl.scan_inbox(auto_run=not getattr(args, "no_run", False))
+    no_run = bool(getattr(args, "no_run", False))
+    ingested = ctrl.scan_inbox(auto_run=False)
+    processed: list = []
+    if not no_run:
+        processed = ctrl.process_queue()
     st = ctrl.status()
     print(
         json.dumps(
@@ -103,6 +108,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 "event": "self-heal-tick",
                 "ingested": len(ingested),
                 "ingested_ids": [r.get("id") for r in ingested],
+                "processed": len(processed),
+                "processed_ids": [r.get("id") for r in processed],
                 **st,
             },
             indent=2,
@@ -144,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     p_det.add_argument(
         "--no-run",
         action="store_true",
-        help="ingest detections only; do not auto-process",
+        help="compat: detect is always queue-only (never recovers)",
     )
     p_det.set_defaults(func=cmd_detect)
 
@@ -152,10 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument(
         "--no-run",
         action="store_true",
-        help="ingest inbox only; do not auto-process",
+        help="ingest inbox to QUEUED only; do not process queue",
     )
     p_run.set_defaults(func=cmd_run)
-
     args = parser.parse_args(argv)
     return int(args.func(args) or 0)
 
