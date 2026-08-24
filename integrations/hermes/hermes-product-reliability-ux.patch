@@ -1,7 +1,7 @@
 diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 --- a/agent/conversation_loop.py
 +++ b/agent/conversation_loop.py
-@@ -1228,8 +1228,100 @@
+@@ -1228,8 +1228,109 @@
              getattr(agent, "session_id", None) or "-",
              exc_info=True,
          )
@@ -44,6 +44,15 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 +    if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\s+(there|hermes|assistant|friend|bro|man|dude)[.!]?", raw):
 +        return True
 +    if re.fullmatch(r"(?i)(bro|dude|yo)[.!]?", raw):
++        return True
++    # Colloquial presence check-ins ("you there?", regional vocative pings).
++    # Early intent reject still blocks task verbs (search/deploy/open/...).
++    if re.fullmatch(
++        r"(?i)((macha|anna|bro|dude|man|buddy|pal|mate|fam|hey|hi|hello|yo)\s+)?"
++        r"(you\s+there|u\s+there|there\s*\?|you\s+around|you\s+up|are\s+you\s+(there|around|up|awake|online))"
++        r"(\s+(da|daa|bro|man|dude|aa|aaa))?[.!?\s]*",
++        raw,
++    ):
 +        return True
 +    return False
 +
@@ -102,7 +111,7 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
  def run_conversation(
      agent,
      user_message: Any,
-@@ -1332,6 +1424,17 @@
+@@ -1332,6 +1433,17 @@
      _should_review_memory = _ctx.should_review_memory
      _plugin_user_context = _ctx.plugin_user_context
      _ext_prefetch_cache = _ctx.ext_prefetch_cache
@@ -120,7 +129,7 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
  
      # Commentary deduplication spans all provider continuations and tool calls
      # within one user turn, but must not suppress the same phrase next turn.
-@@ -7283,6 +7386,7 @@
+@@ -7283,6 +7395,7 @@
      # (god-file decomposition Phase 1 step 4). Behavior-neutral: the assembled
      # result dict is returned exactly as before.
      from agent.turn_finalizer import finalize_turn

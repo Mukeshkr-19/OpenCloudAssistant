@@ -147,6 +147,9 @@ def test_contract_and_helpers(cl) -> None:
 
     fn = cl._opencloud_is_conversational_greeting
     require(fn("Hi bro") is True, "Hi bro classified")
+    require(fn("you there?") is True, "you there? classified")
+    require(fn("macha you there daa?") is True, "regional check-in classified")
+    require(fn("are you there?") is True, "are you there? classified")
     require(fn("Hey bro! What's up?") is False, "extended casual turn not greeting-only")
     require(valid("Hey bro! What's up?") is True, "natural response passes contract")
     require(fn("Hi bro deploy the fleet") is False, "deploy task excluded")

@@ -41,7 +41,7 @@ def require(cond: bool, msg: str) -> None:
         raise AssertionError(msg)
 
 
-GREETING_FN_SRC = '''
+GREETING_FN_SRC = r'''
 # HERMES_OPENCLOUD_TOOL_INTENT_V1
 # HERMES_OPENCLOUD_GREETING_TOOL_CHOICE_NONE_V1
 def _opencloud_is_conversational_greeting(text: str) -> bool:
@@ -60,6 +60,13 @@ def _opencloud_is_conversational_greeting(text: str) -> bool:
     if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\\s+(there|hermes|assistant|friend|bro|man|dude)[.!]?", raw):
         return True
     if re.fullmatch(r"(?i)(bro|dude|yo)[.!]?", raw):
+        return True
+    if re.fullmatch(
+        r"(?i)((macha|anna|bro|dude|man|buddy|pal|mate|fam|hey|hi|hello|yo)\s+)?"
+        r"(you\s+there|u\s+there|there\s*\?|you\s+around|you\s+up|are\s+you\s+(there|around|up|awake|online))"
+        r"(\s+(da|daa|bro|man|dude|aa|aaa))?[.!?\s]*",
+        raw,
+    ):
         return True
     return False
 '''
