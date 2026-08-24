@@ -87,7 +87,7 @@ def main() -> None:
             return True
         if re.fullmatch(
             r"(?i)((macha|anna|bro|dude|man|buddy|pal|mate|fam|hey|hi|hello|yo)\s+)?"
-            r"(you\s+there|u\s+there|there\s*\?|you\s+around|you\s+up|are\s+you\s+(there|around|up|awake|online))"
+            r"(you\s+there|u\s+there|there\s*\?|you\s+around|you\s+up|are\s+(?:you|u)\s+(there|around|up|awake|online))"
             r"(\s+(da|daa|bro|man|dude|aa|aaa))?[.!?\s]*",
             raw,
         ):
@@ -106,6 +106,8 @@ def main() -> None:
     require(fn("you there?") is True, "you there? should match")
     require(fn("macha you there daa?") is True, "regional check-in should match")
     require(fn("are you there?") is True, "are you there? should match")
+    require(fn("are u there?") is True, "are u there? should match")
+    require(fn("macha are u there daa ?") is True, "screenshot check-in should match")
     require(fn("u there?") is True, "u there? should match")
     require(fn("Hi bro search for jobs") is False, "task-prefixed greeting must not match")
     require(fn("you there deploy the fleet") is False, "check-in with deploy task must not match")

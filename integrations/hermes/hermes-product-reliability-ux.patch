@@ -49,7 +49,7 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 +    # Early intent reject still blocks task verbs (search/deploy/open/...).
 +    if re.fullmatch(
 +        r"(?i)((macha|anna|bro|dude|man|buddy|pal|mate|fam|hey|hi|hello|yo)\s+)?"
-+        r"(you\s+there|u\s+there|there\s*\?|you\s+around|you\s+up|are\s+you\s+(there|around|up|awake|online))"
++        r"(you\s+there|u\s+there|there\s*\?|you\s+around|you\s+up|are\s+(?:you|u)\s+(there|around|up|awake|online))"
 +        r"(\s+(da|daa|bro|man|dude|aa|aaa))?[.!?\s]*",
 +        raw,
 +    ):

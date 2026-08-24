@@ -64,7 +64,7 @@ def _opencloud_is_conversational_greeting(text: str) -> bool:
         return True
     if re.fullmatch(
         r"(?i)((macha|anna|bro|dude|man|buddy|pal|mate|fam|hey|hi|hello|yo)\s+)?"
-        r"(you\s+there|u\s+there|there\s*\?|you\s+around|you\s+up|are\s+you\s+(there|around|up|awake|online))"
+        r"(you\s+there|u\s+there|there\s*\?|you\s+around|you\s+up|are\s+(?:you|u)\s+(there|around|up|awake|online))"
         r"(\s+(da|daa|bro|man|dude|aa|aaa))?[.!?\s]*",
         raw,
     ):
