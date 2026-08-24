@@ -85,6 +85,13 @@ def main() -> None:
             return True
         if re.fullmatch(r"(?i)(bro|dude|yo)[.!]?", raw):
             return True
+        if re.fullmatch(
+            r"(?i)((macha|anna|bro|dude|man|buddy|pal|mate|fam|hey|hi|hello|yo)\s+)?"
+            r"(you\s+there|u\s+there|there\s*\?|you\s+around|you\s+up|are\s+you\s+(there|around|up|awake|online))"
+            r"(\s+(da|daa|bro|man|dude|aa|aaa))?[.!?\s]*",
+            raw,
+        ):
+            return True
         return False
 
     fn = _opencloud_is_conversational_greeting
@@ -96,7 +103,12 @@ def main() -> None:
     require(fn("Hi bro") is True, "Hi bro should match")
     require(fn("Hi man") is True, "Hi man should match")
     require(fn("Bro") is True, "Bro should match")
+    require(fn("you there?") is True, "you there? should match")
+    require(fn("macha you there daa?") is True, "regional check-in should match")
+    require(fn("are you there?") is True, "are you there? should match")
+    require(fn("u there?") is True, "u there? should match")
     require(fn("Hi bro search for jobs") is False, "task-prefixed greeting must not match")
+    require(fn("you there deploy the fleet") is False, "check-in with deploy task must not match")
     require(fn("Hi, search for jobs") is False, "taskful greeting must not match")
     require(fn("browse https://example.com") is False, "URL task must not match")
     require(fn("find internships in NYC") is False, "search intent must not match")

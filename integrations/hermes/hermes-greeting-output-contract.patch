@@ -119,11 +119,11 @@
 +def _opencloud_greeting_conversational_fallback(user_text: str) -> str:
 +    raw = (user_text or "").strip()
 +    m = re.search(
-+        r"(?i)\b(bro|man|dude|buddy|pal|mate|fam|friend|there|hermes|assistant)\b",
++        r"(?i)\b(bro|man|dude|buddy|pal|mate|fam|friend|macha|anna|there|hermes|assistant)\b",
 +        raw,
 +    )
 +    if m and m.group(1).lower() in {
-+        "bro", "man", "dude", "buddy", "pal", "mate", "fam", "friend",
++        "bro", "man", "dude", "buddy", "pal", "mate", "fam", "friend", "macha", "anna",
 +    }:
 +        return f"Hey {m.group(1).capitalize()}! What's up?"
 +    if re.search(r"(?i)good\s*(morning|afternoon|evening)", raw):

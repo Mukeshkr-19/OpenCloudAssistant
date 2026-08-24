@@ -874,7 +874,7 @@ class DeployAdapter:
 
 # ── Canary helpers (materialized greeting probe) ─────────────────────────────
 
-_GREETING_PASS = ("Hi bro", "Hi man", "Bro")
+_GREETING_PASS = ("Hi bro", "Hi man", "Bro", "you there?", "macha you there daa?")
 _GREETING_TASK = (
     "Hi bro deploy the fleet",
     "Bro switch to Muse",

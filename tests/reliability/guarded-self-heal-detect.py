@@ -41,7 +41,8 @@ def require(cond: bool, msg: str) -> None:
         raise AssertionError(msg)
 
 
-GREETING_FN_SRC = '''
+# ponytail: raw string so regex \s/\b match the live patch; do not double-escape.
+GREETING_FN_SRC = r'''
 # HERMES_OPENCLOUD_TOOL_INTENT_V1
 # HERMES_OPENCLOUD_GREETING_TOOL_CHOICE_NONE_V1
 def _opencloud_is_conversational_greeting(text: str) -> bool:
@@ -49,17 +50,24 @@ def _opencloud_is_conversational_greeting(text: str) -> bool:
     raw = (text or "").strip()
     if not raw or len(raw) > 80:
         return False
-    if re.search(r"https?://|/\\S|\\b(search|find|browse|open|run|fix|deploy|cron)\\b", raw, re.I):
+    if re.search(r"https?://|/\S|\b(search|find|browse|open|run|fix|deploy|cron)\b", raw, re.I):
         return False
     if re.fullmatch(
-        r"(?i)(hi|hello|hey|yo|sup|howdy|hiya|good\\s*(morning|afternoon|evening))"
-        r"([,.!]+\\s*[A-Za-z]{0,24}|\\s+(bro|man|dude|buddy|pal|mate|fam|there|hermes|assistant|friend))?[.!]?",
+        r"(?i)(hi|hello|hey|yo|sup|howdy|hiya|good\s*(morning|afternoon|evening))"
+        r"([,.!]+\s*[A-Za-z]{0,24}|\s+(bro|man|dude|buddy|pal|mate|fam|there|hermes|assistant|friend))?[.!]?",
         raw,
     ):
         return True
-    if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\\s+(there|hermes|assistant|friend|bro|man|dude)[.!]?", raw):
+    if re.fullmatch(r"(?i)(hi|hello|hey)[.!]?\s+(there|hermes|assistant|friend|bro|man|dude)[.!]?", raw):
         return True
     if re.fullmatch(r"(?i)(bro|dude|yo)[.!]?", raw):
+        return True
+    if re.fullmatch(
+        r"(?i)((macha|anna|bro|dude|man|buddy|pal|mate|fam|hey|hi|hello|yo)\s+)?"
+        r"(you\s+there|u\s+there|there\s*\?|you\s+around|you\s+up|are\s+you\s+(there|around|up|awake|online))"
+        r"(\s+(da|daa|bro|man|dude|aa|aaa))?[.!?\s]*",
+        raw,
+    ):
         return True
     return False
 '''
