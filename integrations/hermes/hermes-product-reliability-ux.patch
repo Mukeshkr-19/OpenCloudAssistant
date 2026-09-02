@@ -140,7 +140,7 @@ diff --git a/agent/conversation_loop.py b/agent/conversation_loop.py
 diff --git a/gateway/slash_commands.py b/gateway/slash_commands.py
 --- a/gateway/slash_commands.py
 +++ b/gateway/slash_commands.py
-@@ -1668,6 +1668,58 @@
+@@ -1668,6 +1668,60 @@
              getattr(getattr(event, "source", None), "platform", None),
          )
  
@@ -177,15 +177,17 @@ diff --git a/gateway/slash_commands.py b/gateway/slash_commands.py
 +
 +    def _opencloud_describe_model_state(self, session_key: str, current_model: str, current_provider: str) -> str:
 +        """Distinguish bootstrap vs Fleet pin vs session override vs fallback."""
-+        bits = [f"Active: {current_provider}/{current_model}"]
++        bits = []
 +        try:
 +            override = self._session_model_overrides.get(session_key) or {}
 +            if override.get("model"):
++                bits.append(f"Active session override: {current_provider}/{current_model}")
 +                bits.append("source=MANUAL_SESSION")
 +            else:
++                bits.append(f"Configured candidate: {current_provider}/{current_model}")
 +                bits.append("source=AUTO_OR_BOOTSTRAP")
 +        except Exception:
-+            pass
++            bits.append(f"Configured candidate: {current_provider}/{current_model}")
 +        try:
 +            from agent.hermes_fleet_bridge import session_is_pinned, enabled
 +            if enabled() and session_is_pinned(session_key, "main"):
@@ -199,7 +201,7 @@ diff --git a/gateway/slash_commands.py b/gateway/slash_commands.py
      async def _handle_model_command(self, event: MessageEvent) -> Optional[str]:
          """Handle /model command — switch model.
  
-@@ -1690,6 +1742,17 @@
+@@ -1690,6 +1744,17 @@
          from hermes_cli.providers import get_label
  
          raw_args = event.get_command_args().strip()
@@ -217,7 +219,7 @@ diff --git a/gateway/slash_commands.py b/gateway/slash_commands.py
          source = event.source
          _command_profile_home = None
          if getattr(getattr(self, "config", None), "multiplex_profiles", False):
-@@ -1769,6 +1832,31 @@
+@@ -1769,6 +1834,39 @@
              current_provider = override.get("provider", current_provider)
              current_base_url = override.get("base_url", current_base_url)
              current_api_key = override.get("api_key", current_api_key)
@@ -239,6 +241,14 @@ diff --git a/gateway/slash_commands.py b/gateway/slash_commands.py
 +            except Exception:
 +                pass
 +            return "✅ Returned to AUTO (Fleet routing). Session manual override cleared."
++
++        if _want_catalog and not model_input and not explicit_provider:
++            from gateway.model_control_fast_path import (
++                format_fleet_catalog,
++                read_fleet_catalog_readonly,
++            )
++            rows = await asyncio.to_thread(read_fleet_catalog_readonly)
++            return format_fleet_catalog(rows)
 +
 +        # No args: Fleet-aware summary first (usable verified), unless --catalog
 +        if not model_input and not explicit_provider and not _want_catalog:

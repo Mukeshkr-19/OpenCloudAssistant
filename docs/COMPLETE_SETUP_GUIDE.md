@@ -241,7 +241,9 @@ Doctor uses three states:
 - `FAIL` — a selected/required component is broken;
 - `SKIP` — an optional component was not selected or is intentionally disabled.
 
-A `SKIP` for Discord or iMessage is normal when you did not select them. `Gemini lane` is intentionally `SKIP` in this release because the public Fleet guard keeps Gemini blocked until independently verified.
+A `SKIP` for Discord or iMessage is normal when you did not select them. A
+`Gemini lane` SKIP means the dynamic lane lacks a configured key or fresh
+verification; it is not enabled by a hardcoded model ID.
 
 If you selected Browser, the service doctor intentionally reports the Browser runtime release gate as a failure because current release has only the protected localhost configuration, not a release-validated browser service.
 

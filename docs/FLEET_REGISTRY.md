@@ -51,11 +51,11 @@ NVIDIA uses dynamically discovered and verified production capacity.
 
 OpenCode Zen is optional and uses dynamically discovered verified free capacity.
 
-OpenRouter retains the stable policy route:
+OpenRouter discovers explicitly free models and retains the stable policy route:
 
     openrouter/free
 
-Gemini remains blocked until independently verified.
+Gemini is eligible only after fresh independent registry verification.
 
 ## Credentials
 
@@ -65,5 +65,5 @@ Provider credentials are stored locally at:
 
 The file is mode 600.
 
-Only NVIDIA_API_KEY and OPENROUTER_API_KEY are exported by the Fleet refresh wrapper.
-Gemini is intentionally not enabled by this workflow.
+Configured provider credentials are exported by the Fleet refresh wrapper;
+credentials and discovered model IDs remain runtime-only.

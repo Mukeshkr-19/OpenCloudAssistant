@@ -406,12 +406,14 @@ def test_rollback_failure_modes() -> None:
         mat = Path(tmp) / "mat.sh"
         mat.write_text("#!/bin/bash\nexit 1\n", encoding="utf-8")
         mat.chmod(0o755)
+        mat_calls: list[list[str]] = []
 
         # Materialize fail → NOT ROLLED_BACK
         deployer = DeployAdapter(repo_root=repo, materialize_script=mat)
 
         def runner_mat(argv, **kwargs):
             if argv[:1] == ["bash"] and str(mat) in argv:
+                mat_calls.append(argv)
                 class R:
                     returncode = 1
                     stdout = ""
@@ -428,6 +430,10 @@ def test_rollback_failure_modes() -> None:
         rb = deployer.rollback(base, previous_tree=base_tree, post_canary=lambda: (True, "ok"))
         require(rb.status == "ROLLBACK_FAILED", f"mat → {rb.status}")
         require(rb.status != "ROLLED_BACK", "not false success")
+        require(
+            mat_calls == [["bash", str(mat), "--install"]],
+            f"rollback live install invocation: {mat_calls}",
+        )
 
         # Restart exit 1
         mat_ok = Path(tmp) / "mat_ok.sh"
@@ -555,6 +561,39 @@ def test_rollback_failure_modes() -> None:
         d5 = DeployAdapter(repo_root=repo, materialize_script=mat_ok, runner=runner_ok)
         rb5 = d5.rollback(base, previous_tree="deadbeef" * 5)
         require(rb5.status == "ROLLBACK_FAILED", f"tree → {rb5.status}")
+
+
+def test_deploy_installs_live_hermes() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        live = repo / "install" / "35-hermes-live.sh"
+        live.parent.mkdir()
+        live.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        calls: list[list[str]] = []
+        merged = "b" * 40
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def runner(argv, **_kwargs):
+            calls.append(argv)
+            result = Result()
+            if argv[-2:] == ["rev-parse", "HEAD"]:
+                result.stdout = f"{merged}\n"
+            elif argv[-2:] == ["rev-parse", f"{merged}^{{tree}}"]:
+                result.stdout = f"{'c' * 40}\n"
+            return result
+
+        deployed = DeployAdapter(repo_root=repo, runner=runner).deploy(
+            merged, quarantined=False
+        )
+        require(deployed.status == "DEPLOYED", deployed.detail)
+        require(
+            ["bash", str(live), "--install"] in calls,
+            f"live install not invoked: {calls}",
+        )
 
 
 def test_controller_rollback_failed_critical() -> None:
@@ -1125,6 +1164,7 @@ def main() -> None:
         test_post_deploy_canary_greeting,
         test_canary_kinds_and_e2e_paths,
         test_rollback_failure_modes,
+        test_deploy_installs_live_hermes,
         test_controller_rollback_failed_critical,
         test_fixture_auto_detect_no_cli_ingest,
         test_intentional_restart_zero_crash,
@@ -1145,6 +1185,7 @@ def main() -> None:
     print("PASS materialized greeting canary probe")
     print("PASS post-deploy E2E RECOVERED + greeting-fail rollback")
     print("PASS rollback failure modes ≠ ROLLED_BACK")
+    print("PASS deploy invokes Hermes live installer")
     print("PASS controller ROLLBACK_FAILED+CRITICAL+QUARANTINED")
     print("PASS fixture clarify auto-detect QUEUED (no CLI ingest)")
     print("PASS intentional restart → 0 crash / no Tier1 / no repair")

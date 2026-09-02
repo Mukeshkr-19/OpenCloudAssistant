@@ -186,4 +186,4 @@ Current explicit limitations remain:
 - real x86_64 machine acceptance is deferred;
 - Telegram and Discord public end-to-end acceptance is pending;
 - Browser/Open WebUI remains preview;
-- Gemini remains blocked until independently verified.
+- Gemini remains ineligible until dynamically discovered and freshly verified.

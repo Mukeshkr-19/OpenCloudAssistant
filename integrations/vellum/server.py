@@ -89,8 +89,6 @@ def sanitize_thread(thread: str) -> str:
     return cleaned or "main"
 
 
-@mcp.tool()
-
 # HERMES_VELLUM_CONTEXT_V1_BEGIN
 
 def _hermes_vellum_context_lookup(query: str, max_results: int = 8):
@@ -861,6 +859,7 @@ def get_vellum_task(task_id: str) -> str:
             "last_event",
             "partial_response",
             "response",
+            "result",
             "approval_request",
             "error",
             "provider_error",

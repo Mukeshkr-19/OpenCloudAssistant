@@ -25,7 +25,7 @@ Freebuff: 0.0.142
 
 ## Safety
 
-Gemini unverified lane: blocked
+Gemini dynamic lane: fresh verification required; automatic quota conservation
 OpenRouter stable free lane: required
 Runtime model discovery: enabled
 Private memory included: no

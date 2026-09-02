@@ -159,7 +159,7 @@ else
     skip "Zen provider" "optional client not installed"
 fi
 
-skip "Gemini lane" "blocked until independently verified"
+skip "Gemini lane" "dynamic registry lane; requires configured key and fresh verification"
 
 if [ "$FAILURES" -ne 0 ]; then
     exit 1

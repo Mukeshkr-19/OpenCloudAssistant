@@ -513,21 +513,58 @@ def test_routing_v1_profile_selection() -> None:
     with FleetCase() as case:
 
         #
-        # Add a third synthetic model so FAST / BALANCED / DEEP can each
-        # select a distinct candidate.
+        # A registry pool with three fixture models carrying MEASURED
+        # evidence only: verification age and probe latency. Profiles
+        # contain generic weighting rules — never model IDs. The
+        # dispatcher clock is pinned at 1_000_000.0 s by FleetCase,
+        # so now_ms == 1_000_000_000 and all ages are deterministic.
         #
-        case.fleet.config["pools"]["fault-fixture-c"] = {
-            "type": "stable-route",
+        case.fleet.config["pools"]["fixture-registry"] = {
+            "type": "registry",
             "providerGroup": "nvidia",
             "provider": "nvidia",
-            "route": "fixture/c",
+            "discoveryAliases": ["nvidia"],
+            "freeOnly": False,
         }
 
         case.fleet.config["roles"]["main"] = [
-            "fault-fixture-a",
-            "fault-fixture-b",
-            "fault-fixture-c",
+            "fixture-registry",
             "openrouter-free",
+        ]
+
+        ttl_ms = 86_400_000  # fleet_runtime DEFAULT_TTL_SECONDS
+
+        now_ms = 1_000_000_000
+
+        def evidence_row(
+            model: str,
+            age_ms: int,
+            latency_ms: int,
+        ) -> dict:
+            return {
+                "provider": "nvidia",
+                "providerGroup": "nvidia",
+                "id": model,
+                "verification": "verified",
+                "verifiedAtMs": now_ms - age_ms,
+                "lastProbeLatencyMs": latency_ms,
+            }
+
+        case.fleet.registry["productionModels"] = {
+            "nvidia": [
+                "fixture/a",
+                "fixture/b",
+                "fixture/c",
+            ],
+        }
+
+        case.fleet.registry["models"] = [
+            # Freshest verification, slowest measured probe.
+            evidence_row("fixture/a", int(0.05 * ttl_ms), 25_000),
+            # Middle of the road on both axes.
+            evidence_row("fixture/b", int(0.50 * ttl_ms), 10_000),
+            # Stalest (but still fresh) verification, fastest probe.
+            evidence_row("fixture/c", int(0.95 * ttl_ms), 500),
         ]
 
         case.fleet.config["routingV1"] = {
@@ -542,30 +579,27 @@ def test_routing_v1_profile_selection() -> None:
 
             "profiles": {
                 "fast": {
-                    "preferredModels": [
-                        {
-                            "providerGroup": "nvidia",
-                            "model": "fixture/a",
-                        },
-                    ],
+                    "weights": {
+                        "health": 2.0,
+                        "freshness": 1.0,
+                        "latency": 4.0,
+                    },
                 },
 
                 "balanced": {
-                    "preferredModels": [
-                        {
-                            "providerGroup": "nvidia",
-                            "model": "fixture/b",
-                        },
-                    ],
+                    "weights": {
+                        "health": 2.0,
+                        "freshness": 2.0,
+                        "latency": 2.0,
+                    },
                 },
 
                 "deep": {
-                    "preferredModels": [
-                        {
-                            "providerGroup": "nvidia",
-                            "model": "fixture/c",
-                        },
-                    ],
+                    "weights": {
+                        "health": 3.0,
+                        "freshness": 3.0,
+                        "latency": 1.0,
+                    },
                 },
             },
 
@@ -621,7 +655,7 @@ def test_routing_v1_profile_selection() -> None:
 
         assert_model(
             fast,
-            "fixture/a",
+            "fixture/c",
         )
 
         assert_model(
@@ -631,7 +665,7 @@ def test_routing_v1_profile_selection() -> None:
 
         assert_model(
             deep,
-            "fixture/c",
+            "fixture/a",
         )
 
         assert_model(
@@ -639,8 +673,20 @@ def test_routing_v1_profile_selection() -> None:
             "fixture/b",
         )
 
+        for candidate in (
+            fast,
+            balanced,
+            deep,
+            default,
+        ):
+
+            require(
+                candidate["model"] != "openrouter/free",
+                "final escape ranked before measured evidence",
+            )
+
     print(
-        "PASS Routing V1 FAST/BALANCED/DEEP selection"
+        "PASS Routing V1 evidence-weighted FAST/BALANCED/DEEP selection"
     )
 
 
@@ -661,15 +707,15 @@ def test_routing_v1_discovered_fallback_and_final_escape() -> None:
             "profiles": {
                 "fast": {
                     #
-                    # Deliberately absent preferred model. Fleet must still use
-                    # another discovered/eligible model before OpenRouter.
+                    # Generic weights only. With equal evidence the pool
+                    # order is a tie-breaker: Fleet must still use a
+                    # discovered/eligible model before OpenRouter.
                     #
-                    "preferredModels": [
-                        {
-                            "providerGroup": "nvidia",
-                            "model": "not-present",
-                        },
-                    ],
+                    "weights": {
+                        "health": 1.0,
+                        "freshness": 1.0,
+                        "latency": 1.0,
+                    },
                 },
             },
 
@@ -770,57 +816,53 @@ def test_production_routing_v1_contract() -> None:
         "profiles"
     ) or {}
 
-    configured = {
-        (
-            item.get("providerGroup"),
-            item.get("model"),
-        )
-        for profile in profiles.values()
-        for item in (
-            profile.get("preferredModels")
-            or []
-        )
-        if isinstance(item, dict)
-    }
+    require(
+        set(profiles.keys()) == {"fast", "balanced", "deep"},
+        "production Routing V1 profiles changed",
+    )
 
-    expected = {
-        (
-            "nvidia",
-            "nvidia/nemotron-3-super-120b-a12b",
-        ),
-        (
-            "nvidia",
-            "nvidia/nemotron-3-ultra-550b-a55b",
-        ),
-        (
-            "nvidia",
-            "thinkingmachines/inkling",
-        ),
-        (
-            "nvidia",
-            "deepseek-ai/deepseek-v4-flash-0731",
-        ),
-        (
-            "zen",
-            "mimo-v2.5-free",
-        ),
-        (
-            "zen",
-            "nemotron-3-ultra-free",
-        ),
-        (
-            "zen",
-            "nemotron-3.5-lightning-free",
-        ),
-    }
+    #
+    # Profiles must carry generic weighting rules ONLY — never exact
+    # model preferences or any concrete model IDs.
+    #
+    for name, profile in profiles.items():
+
+        require(
+            "preferredModels" not in profile,
+            f"profile {name} still carries exact model preferences",
+        )
+
+        weights = profile.get("weights") or {}
+
+        for key in ("health", "freshness", "latency"):
+
+            value = weights.get(key)
+
+            require(
+                isinstance(value, (int, float))
+                and float(value) >= 0.0,
+                f"profile {name} missing generic weight {key}",
+            )
+
+    def profile_models(value):
+        found = []
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key == "model" and isinstance(item, str):
+                    found.append(item.strip())
+                found.extend(profile_models(item))
+        elif isinstance(value, list):
+            for item in value:
+                found.extend(profile_models(item))
+        return found
 
     require(
-        expected.issubset(configured),
-        "production Routing V1 lost benchmarked model routes",
+        profile_models(profiles) == [],
+        "production Routing V1 profiles contain concrete model IDs",
     )
 
     print(
-        "PASS production Routing V1 contract"
+        "PASS production Routing V1 contract (evidence-based, model-free profiles)"
     )
 
 

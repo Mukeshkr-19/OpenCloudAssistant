@@ -57,7 +57,7 @@ index ac6051c..e7c14a9 100644
 +MAX_FAILOVER_TIME_SECONDS = 180
 +
 +
-@@ -768,0 +778,3 @@ def _chain(
+@@ -767,0 +777,3 @@ def _chain(
 +    final_escape = None
 +    provider_attempts = {_group(primary): 1}
 +

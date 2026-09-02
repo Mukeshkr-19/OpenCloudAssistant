@@ -65,9 +65,10 @@ PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/greeting-output-contract.py
 PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/guarded-self-heal.py
 PYTHONDONTWRITEBYTECODE=1 python3 tests/reliability/guarded-self-heal-detect.py
 PYTHONDONTWRITEBYTECODE=1 OPEN_CLOUD_HERMES_ROOT="$OPEN_CLOUD_HERMES_ROOT" \
-    python3 tests/reliability/imessage-model-control-turn-recovery.py
+    "$HERMES_PYTHON" tests/reliability/imessage-model-control-turn-recovery.py
 
 "$HERMES_PYTHON" tests/reliability/fleet-failover.py
+PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/fleet-dynamic-routing.py
 PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/routing-v1-workload.py
 PYTHONDONTWRITEBYTECODE=1 "$HERMES_PYTHON" tests/reliability/hermes-routing-v1-compat.py
 

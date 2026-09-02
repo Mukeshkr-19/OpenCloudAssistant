@@ -1,7 +1,7 @@
 diff --git a/agent/hermes_fleet_bridge.py b/agent/hermes_fleet_bridge.py
 --- a/agent/hermes_fleet_bridge.py
 +++ b/agent/hermes_fleet_bridge.py
-@@ -775,0 +776,23 @@
+@@ -773,0 +774,23 @@
 +    # HERMES_FLEET_CONTEXT_ELIGIBILITY_V1
 +    # Fleet's synthetic tool probe alone is insufficient: Hermes refuses to
 +    # initialize models whose effective context window is below its runtime

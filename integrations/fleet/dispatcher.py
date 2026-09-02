@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import sys
@@ -13,7 +14,7 @@ from typing import Any
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from fleet_runtime import fleet_root
+from fleet_runtime import fleet_root, verification_ttl_ms
 
 
 HOME = Path.home()
@@ -195,6 +196,49 @@ class HermesFleet:
         ).fetchone()
 
 
+    def _load_candidate_health(
+        self,
+    ) -> dict:
+
+        """Load every candidate health row exactly once per selection pass.
+
+        The audit measured ~4 SELECTs per candidate (4,003 total for 1,000
+        candidates). Selection now issues two bulk reads (candidate +
+        provider health) and reuses the in-memory index through filtering
+        and ranking, so the query count is constant regardless of how many
+        candidates the registry exposes.
+        """
+
+        rows = self.db.execute(
+            """
+            SELECT *
+            FROM candidate_health
+            """
+        ).fetchall()
+
+        return {
+            row["candidate_key"]: row
+            for row in rows
+        }
+
+
+    def _load_provider_health(
+        self,
+    ) -> dict:
+
+        rows = self.db.execute(
+            """
+            SELECT *
+            FROM provider_health
+            """
+        ).fetchall()
+
+        return {
+            row["provider_group"]: row
+            for row in rows
+        }
+
+
     def _candidate_row(
         self,
         key: str,
@@ -213,11 +257,17 @@ class HermesFleet:
     def _provider_cooling(
         self,
         group: str,
+        provider_health: dict | None = None,
     ) -> bool:
 
-        row = self._provider_row(
-            group
-        )
+        if provider_health is None:
+            row = self._provider_row(
+                group
+            )
+        else:
+            row = provider_health.get(
+                group
+            )
 
         return bool(
             row
@@ -231,11 +281,17 @@ class HermesFleet:
     def _candidate_cooling(
         self,
         key: str,
+        candidate_health: dict | None = None,
     ) -> bool:
 
-        row = self._candidate_row(
-            key
-        )
+        if candidate_health is None:
+            row = self._candidate_row(
+                key
+            )
+        else:
+            row = candidate_health.get(
+                key
+            )
 
         return bool(
             row
@@ -249,11 +305,17 @@ class HermesFleet:
     def _last_used(
         self,
         key: str,
+        candidate_health: dict | None = None,
     ) -> float:
 
-        row = self._candidate_row(
-            key
-        )
+        if candidate_health is None:
+            row = self._candidate_row(
+                key
+            )
+        else:
+            row = candidate_health.get(
+                key
+            )
 
         if not row:
             return 0.0
@@ -394,17 +456,29 @@ class HermesFleet:
             )
 
 
-            provider = {
-                "nvidia":
-                    "nvidia",
-
-                "zen":
-                    "opencode-zen",
-            }.get(group)
-
+            #
+            # The provider for a registry pool comes exclusively from
+            # validated Fleet policy (fleet.json) — e.g. "nvidia",
+            # "opencode-zen" or any protocol-backed provider configured
+            # there. There is deliberately NO hardcoded Zen/NVIDIA
+            # provider fallback map: enabling and aggregating providers
+            # is configuration-only, and a registry pool that omits its
+            # provider fails closed with a clear reason instead of
+            # silently guessing a runtime provider from the group name.
+            #
+            provider = str(
+                pool.get(
+                    "provider"
+                )
+                or ""
+            ).strip()
 
             if not provider:
-                return []
+                raise ValueError(
+                    f"registry pool {pool_name!r} must declare its "
+                    "provider in fleet.json (fail closed: no provider "
+                    "mapping exists in routing code)"
+                )
 
 
             result = []
@@ -436,6 +510,15 @@ class HermesFleet:
 
                     "model":
                         model,
+
+                    "providerAliases": [
+                        str(alias).strip().lower()
+                        for alias in (
+                            pool.get("discoveryAliases")
+                            or []
+                        )
+                        if str(alias).strip()
+                    ],
                 })
 
 
@@ -600,14 +683,16 @@ class HermesFleet:
         return None
 
 
-    def _routing_preferred_rank(
+    # FLEET_DYNAMIC_EVIDENCE_ROUTING_V2
+    #
+    # Profiles carry generic weighting rules only — never model IDs.
+    # Ranking uses measured evidence: runtime health, verification
+    # freshness, and probe latency when actually recorded.
+    #
+    def _routing_weights(
         self,
-        candidate: dict,
         profile: str | None,
-    ) -> int | None:
-
-        if not profile:
-            return None
+    ) -> dict:
 
         routing = (
             self._routing_v1()
@@ -620,63 +705,542 @@ class HermesFleet:
                 )
                 or {}
             ).get(
-                profile
+                profile or ""
             )
             or {}
         )
 
-        preferred = (
+        weights = (
             profile_data.get(
-                "preferredModels"
+                "weights"
             )
-            or []
+            or {}
         )
 
-        group = str(
-            candidate.get(
-                "providerGroup"
-            )
-            or ""
-        ).strip().lower()
+        result = {}
 
-        model = str(
-            candidate.get(
-                "model"
-            )
-            or ""
-        ).strip()
-
-        for index, item in enumerate(
-            preferred
+        for key in (
+            "capability",
+            "health",
+            "freshness",
+            "latency",
         ):
 
+            value = weights.get(
+                key,
+                1.0,
+            )
+
+            try:
+                value = float(
+                    value
+                )
+            except Exception:
+                value = 1.0
+
+            result[key] = max(
+                0.0,
+                value,
+            )
+
+        return result
+
+
+    def _registry_model_rows(
+        self,
+    ) -> dict:
+
+        rows = {}
+
+        models = (
+            self.registry.get(
+                "models"
+            )
+        )
+
+        if not isinstance(
+            models,
+            list,
+        ):
+            return rows
+
+        for row in models:
+
             if not isinstance(
-                item,
+                row,
                 dict,
             ):
                 continue
 
-            expected_group = str(
-                item.get(
-                    "providerGroup"
-                )
-                or ""
-            ).strip().lower()
-
-            expected_model = str(
-                item.get(
-                    "model"
+            provider = str(
+                row.get(
+                    "provider"
                 )
                 or ""
             ).strip()
 
-            if (
-                group == expected_group
-                and model == expected_model
-            ):
-                return index
+            model_id = str(
+                row.get(
+                    "id"
+                )
+                or ""
+            ).strip()
 
-        return None
+            if provider and model_id:
+
+                rows[
+                    (provider, model_id)
+                ] = row
+
+        return rows
+
+
+    def _verification_evidence(
+        self,
+        row: dict,
+    ) -> tuple:
+
+        """Return (fresh, age_ratio 0..1) for a registry row.
+
+        Uses the dispatcher clock (now()) so tests can advance time
+        deterministically; verification must be fresh at select time,
+        not only at the last registry refresh.
+        """
+
+        if (
+            row.get(
+                "verification"
+            )
+            != "verified"
+        ):
+            return (
+                False,
+                1.0,
+            )
+
+        verified_at = (
+            row.get(
+                "verifiedAtMs"
+            )
+            or row.get(
+                "lastProbeMs"
+            )
+        )
+
+        if not verified_at:
+            return (
+                False,
+                1.0,
+            )
+
+        ttl = verification_ttl_ms()
+
+        #
+        # TTL 0 means "no freshness cache" (fleet_runtime): cached
+        # verification evidence is deterministically rejected rather
+        # than trusted, and never divides by zero.
+        #
+        if ttl <= 0:
+            return (
+                False,
+                1.0,
+            )
+
+        now_ms = int(
+            now() * 1000
+        )
+
+        try:
+            age = max(
+                0,
+                now_ms
+                - int(
+                    verified_at
+                ),
+            )
+        except (TypeError, ValueError, OverflowError):
+            return (
+                False,
+                1.0,
+            )
+
+        return (
+            age < ttl,
+            min(
+                1.0,
+                age / ttl,
+            ),
+        )
+
+
+    def _candidate_eligibility(
+        self,
+        candidate: dict,
+        registry_rows: dict | None = None,
+    ) -> tuple:
+
+        """Mandatory eligibility gates before ranking.
+
+        Returns (eligible, reason, evidence). Evidence carries the
+        registry row (when present) for the ranking stage.
+
+        Registry-pool candidates require per-model verification
+        evidence that is fresh at select time. A legacy
+        productionModels snapshot alone never satisfies the gate, and
+        rows not confirmed by the current discovery cycle
+        (discoveryStale) are strictly excluded.
+        """
+
+        pools = (
+            self.config.get("pools")
+            or {}
+        )
+
+        pool = (
+            pools.get(
+                candidate.get("pool") or ""
+            )
+            or {}
+        )
+
+        pool_type = str(
+            pool.get("type") or ""
+        ).strip().lower()
+
+        if registry_rows is None:
+            registry_rows = (
+                self._registry_model_rows()
+            )
+
+        row = registry_rows.get(
+            (
+                str(
+                    candidate.get(
+                        "provider"
+                    )
+                    or ""
+                ).strip(),
+                str(
+                    candidate.get("model") or ""
+                ).strip(),
+            )
+        )
+
+        if pool_type == "registry":
+
+            if row is None:
+                return (
+                    False,
+                    "no_fresh_verification_evidence",
+                    {},
+                )
+
+            if row.get("excludedReason"):
+                return (
+                    False,
+                    "specialist_model",
+                    {},
+                )
+
+            if row.get("discoveryStale"):
+                return (
+                    False,
+                    "discovery_stale",
+                    {},
+                )
+
+            if (
+                row.get("verification")
+                != "verified"
+            ):
+                return (
+                    False,
+                    "not_verified",
+                    {},
+                )
+
+            fresh, age_ratio = (
+                self._verification_evidence(
+                    row
+                )
+            )
+
+            if not fresh:
+                return (
+                    False,
+                    "verification_expired",
+                    {},
+                )
+
+            return (
+                True,
+                "verified",
+                {
+                    "row": row,
+                    "age_ratio": age_ratio,
+                },
+            )
+
+        if pool_type == "stable-route":
+
+            #
+            # Provider-managed route (e.g. the openrouter/free final
+            # escape). Eligible by policy, not catalog verification.
+            #
+            return (
+                True,
+                "provider_managed",
+                {},
+            )
+
+        if (
+            pool_type
+            == "hermes-runtime-config"
+        ):
+
+            #
+            # Runtime-config candidates require an independently verified,
+            # fresh registry row for the exact runtime model.
+            #
+            if row is None:
+                return (
+                    False,
+                    "not_independently_verified",
+                    {},
+                )
+
+            if row.get("discoveryStale"):
+                return (
+                    False,
+                    "discovery_stale",
+                    {},
+                )
+
+            fresh, age_ratio = (
+                self._verification_evidence(
+                    row
+                )
+            )
+
+            if not fresh:
+                return (
+                    False,
+                    "verification_expired",
+                    {},
+                )
+
+            return (
+                True,
+                "independently_verified",
+                {
+                    "row": row,
+                    "age_ratio": age_ratio,
+                },
+            )
+
+        return (
+            False,
+            "unknown_pool_type",
+            {},
+        )
+
+
+    def _capability_evidence(
+        self,
+        row,
+    ) -> float:
+
+        """Provider-neutral measured capability evidence in [0, 1].
+
+        Ranking never uses model IDs, names or provider reputation.
+        Capability is derived only from verification-time measurements:
+
+          capability = reliability * (0.6 + 0.4 * context_capacity)
+
+          reliability     — probe success history: 1.0 with zero measured
+                            probe failures, minus 0.25 per failure.
+          context_capacity— log-scaled measured context length:
+                            8k → 0.0, 32k → 0.5, 128k → 1.0 (capped).
+
+        Context length is a bounded measured signal, not model intelligence.
+        lastProbeMs is freshness evidence only and never counts here.
+
+        Unknown capability is exactly neutral (0.5) — never best, never
+        artificially advantaged over measured evidence.
+        """
+
+        if row is None:
+            return 0.5
+
+        context_length = row.get(
+            "contextLength"
+        )
+
+        has_context = isinstance(
+            context_length,
+            (int, float),
+        ) and float(context_length) > 0
+
+        try:
+            probe_failures = int(
+                row.get(
+                    "probeFailureCount",
+                    0,
+                )
+                or 0
+            )
+        except Exception:
+            probe_failures = 0
+
+        measured = bool(
+            has_context
+            or probe_failures > 0
+        )
+
+        if not measured:
+            return 0.5
+
+        if has_context:
+            context_capacity = min(
+                1.0,
+                math.log2(
+                    max(
+                        float(context_length),
+                        8192,
+                    )
+                    / 8192
+                )
+                / 4.0,
+            )
+        else:
+            context_capacity = 0.0
+
+        reliability = max(
+            0.0,
+            1.0
+            - probe_failures * 0.25,
+        )
+
+        return round(
+            reliability
+            * (0.6 + 0.4 * context_capacity),
+            6,
+        )
+
+
+    def _evidence_penalty(
+        self,
+        candidate: dict,
+        evidence: dict,
+        weights: dict,
+        candidate_health: dict | None = None,
+    ) -> float:
+
+        """Deterministic evidence score (lower is better).
+
+        Components, all normalized to 0..1:
+          capability — provider-neutral measured verification evidence
+                       (probe reliability + measured context capacity);
+                       unknown is neutral (0.5).
+          health     — failures / (successes + failures + 1) when the
+                       candidate has at least one measured outcome;
+                       zero-history (or unknown) is neutral (0.5).
+          freshness  — verification age / TTL; unknown is worst (1.0).
+          latency    — measured probe latency when actually recorded
+                       (min(1, ms / 30000)); unrecorded is neutral (0.5).
+        Stale discovery is handled by eligibility exclusion, not here.
+
+        candidate_health is the per-pass in-memory index (candidate_key →
+        row) so selection performs exactly two SELECT statements total,
+        never one per candidate.
+        """
+
+        row = evidence.get("row")
+
+        if candidate_health is None:
+            candidate_health = {}
+
+        health = candidate_health.get(
+            candidate["candidateKey"]
+        )
+
+        #
+        # Health is observed only when there is at least one measured
+        # outcome. A merely-touched candidate (select(touch=True))
+        # creates a zero-success / zero-failure row that must stay
+        # neutral — it must never read as artificially perfect.
+        #
+        if health is not None and (
+            int(health["successes"] or 0)
+            + int(health["failures"] or 0)
+        ) > 0:
+
+            successes = int(
+                health["successes"] or 0
+            )
+
+            failures = int(
+                health["failures"] or 0
+            )
+
+            health_penalty = (
+                failures
+                / (
+                    successes
+                    + failures
+                    + 1.0
+                )
+            )
+
+        else:
+
+            health_penalty = 0.5
+
+        capability_penalty = (
+            1.0
+            - self._capability_evidence(row)
+        )
+
+        if row is not None:
+
+            freshness_penalty = (
+                evidence.get(
+                    "age_ratio",
+                    1.0,
+                )
+            )
+
+            latency_ms = row.get(
+                "lastProbeLatencyMs"
+            )
+
+            if (
+                latency_ms is None
+                or float(latency_ms) <= 0
+            ):
+                latency_penalty = 0.5
+            else:
+                latency_penalty = min(
+                    1.0,
+                    float(latency_ms)
+                    / 30000.0,
+                )
+
+        else:
+
+            freshness_penalty = 1.0
+            latency_penalty = 0.5
+
+        return (
+            weights["capability"]
+            * capability_penalty
+            + weights["health"]
+            * health_penalty
+            + weights["freshness"]
+            * freshness_penalty
+            + weights["latency"]
+            * latency_penalty
+        )
 
 
     def _routing_is_final_escape(
@@ -754,32 +1318,13 @@ class HermesFleet:
         self,
         candidate: dict,
         profile: str,
+        registry_rows: dict | None = None,
+        candidate_health: dict | None = None,
     ):
 
-        preferred_rank = (
-            self._routing_preferred_rank(
-                candidate,
-                profile,
-            )
-        )
-
-        if preferred_rank is not None:
-
-            return (
-                0,
-                preferred_rank,
-                self._last_used(
-                    candidate[
-                        "candidateKey"
-                    ]
-                ),
-                candidate[
-                    "candidateKey"
-                ],
-            )
-
         #
-        # openrouter/free is the explicit FINAL escape route.
+        # openrouter/free is the explicit FINAL escape route and must
+        # stay last; every discovered eligible candidate outranks it.
         #
         if self._routing_is_final_escape(
             candidate
@@ -787,23 +1332,91 @@ class HermesFleet:
 
             return (
                 2,
-                0,
+                0.0,
+                int(
+                    candidate.get(
+                        "poolPriority",
+                        999,
+                    )
+                ),
                 self._last_used(
                     candidate[
                         "candidateKey"
-                    ]
+                    ],
+                    candidate_health,
                 ),
                 candidate[
                     "candidateKey"
                 ],
             )
 
+        weights = self._routing_weights(
+            profile
+        )
+
+        eligible, _reason, evidence = (
+            self._candidate_eligibility(
+                candidate,
+                registry_rows,
+            )
+        )
+
         #
-        # Every other verified/discovered candidate remains available.
-        # Pool priority only orders this generic fallback population.
+        # Defensive: _select filters ineligible candidates before
+        # ranking. An unexpected ineligible candidate must never win.
+        #
+        if not eligible:
+
+            return (
+                3,
+                0.0,
+                int(
+                    candidate.get(
+                        "poolPriority",
+                        999,
+                    )
+                ),
+                self._last_used(
+                    candidate[
+                        "candidateKey"
+                    ],
+                    candidate_health,
+                ),
+                candidate[
+                    "candidateKey"
+                ],
+            )
+
+        score = self._evidence_penalty(
+            candidate,
+            evidence,
+            weights,
+            candidate_health,
+        )
+
+        pool = (
+            (self.config.get("pools") or {}).get(candidate.get("pool") or "")
+            or {}
+        )
+        try:
+            score += max(0.0, float(pool.get("automaticPenalty") or 0.0))
+        except (TypeError, ValueError):
+            pass
+
+        #
+        # Dynamic evidence ranking: measured capability, runtime health,
+        # verification freshness and measured probe latency under profile
+        # weights to pick the best verified route for the selected profile.
+        # Pool priority, LRU recency and the candidate key are deterministic
+        # tie-breakers only; no production model ID or provider name ever
+        # enters the score.
         #
         return (
             1,
+            round(
+                score,
+                9,
+            ),
             int(
                 candidate.get(
                     "poolPriority",
@@ -813,7 +1426,8 @@ class HermesFleet:
             self._last_used(
                 candidate[
                     "candidateKey"
-                ]
+                ],
+                candidate_health,
             ),
             candidate[
                 "candidateKey"
@@ -940,6 +1554,28 @@ class HermesFleet:
             )
         )
 
+        #
+        # Build the registry row index once per selection pass; both
+        # the eligibility filter and the ranking sort reuse it.
+        #
+        registry_rows = (
+            self._registry_model_rows()
+        )
+
+        #
+        # Load candidate + provider health exactly once per selection
+        # pass. Filtering (cooldown), ranking evidence and LRU recency
+        # all reuse these in-memory indexes — never per-candidate
+        # SELECTs.
+        #
+        candidate_health = (
+            self._load_candidate_health()
+        )
+
+        provider_health = (
+            self._load_provider_health()
+        )
+
 
         by_pool: dict[
             int,
@@ -959,15 +1595,32 @@ class HermesFleet:
 
 
             if self._provider_cooling(
-                group
+                group,
+                provider_health,
             ):
 
                 continue
 
 
             if self._candidate_cooling(
-                key
+                key,
+                candidate_health,
             ):
+
+                continue
+
+
+            # FLEET_DYNAMIC_EVIDENCE_ROUTING_V2 — mandatory
+            # eligibility before ranking: catalog presence,
+            # fresh verification, non-specialist, and pool policy.
+            eligible, _reason, _evidence = (
+                self._candidate_eligibility(
+                    candidate,
+                    registry_rows,
+                )
+            )
+
+            if not eligible:
 
                 continue
 
@@ -1008,7 +1661,8 @@ class HermesFleet:
                         - self._last_used(
                             candidate[
                                 "candidateKey"
-                            ]
+                            ],
+                            candidate_health,
                         )
                         >= reuse_delay
                     )
@@ -1022,6 +1676,8 @@ class HermesFleet:
                     self._routing_sort_key(
                         candidate,
                         routing_profile,
+                        registry_rows,
+                        candidate_health,
                     )
             )
 
@@ -1076,7 +1732,10 @@ class HermesFleet:
                 priority: [
                     candidate
                     for candidate in pool
-                    if now() - self._last_used(candidate["candidateKey"]) >= reuse_delay
+                    if now() - self._last_used(
+                        candidate["candidateKey"],
+                        candidate_health,
+                    ) >= reuse_delay
                 ]
                 for priority, pool in by_pool.items()
             }
@@ -1106,7 +1765,8 @@ class HermesFleet:
                 self._last_used(
                     c[
                         "candidateKey"
-                    ]
+                    ],
+                    candidate_health
                 ),
 
                 c[

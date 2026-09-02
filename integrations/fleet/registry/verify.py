@@ -25,18 +25,101 @@ HOME = Path.home()
 REGISTRY = fleet_root() / "registry" / "models.json"
 
 
-TARGET = {
-    "zen": 3,
-    "nvidia": 2,
-}
+def policy_registry_groups() -> list:
+    """Enabled registry provider groups from validated Fleet policy.
+
+    Verification aggregates per provider group; which groups exist is a
+    configuration fact (registry pools in fleet.json), never a hardcoded
+    collection. Missing/unreadable policy fails closed to an empty set.
+    """
+
+    policy_path = fleet_root() / "fleet.json"
+
+    if not policy_path.is_file():
+        return []
+
+    try:
+        policy = json.loads(
+            policy_path.read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception:
+        return []
+
+    groups = []
+
+    for pool in (
+        policy.get("pools")
+        or {}
+    ).values():
+
+        if not isinstance(pool, dict):
+            continue
+
+        if (
+            str(
+                pool.get("type")
+                or ""
+            ).strip().lower()
+            != "registry"
+        ):
+            continue
+
+        group = str(
+            pool.get("providerGroup")
+            or ""
+        ).strip()
+
+        if group and group not in groups:
+            groups.append(group)
+
+    return sorted(groups)
 
 
-MAX_ATTEMPTS = {
-    "zen": 10,
-    "nvidia": 8,
-}
+def verification_policy_int(
+    key: str,
+    default: int,
+) -> int:
+
+    policy_path = fleet_root() / "fleet.json"
+
+    if not policy_path.is_file():
+        return default
+
+    try:
+        policy = json.loads(
+            policy_path.read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception:
+        return default
+
+    try:
+        return int(
+            (
+                policy.get("verificationV1")
+                or {}
+            ).get(
+                key,
+                default,
+            )
+        )
+    except Exception:
+        return default
+
 
 VERIFICATION_TTL_MS = verification_ttl_ms()
+
+
+# FLEET_PROBE_EVIDENCE_V1 — measured evidence captured by the most
+# recent probe() call. Reset by main() before each probe so stubbed
+# probes (tests) never inherit stale measurements.
+_LAST_PROBE_EVIDENCE = {
+    "latencyMs": None,
+    "contextLength": None,
+}
 
 
 def hermes_context_compatible(provider, model, runtime=None):
@@ -109,26 +192,6 @@ SPECIALIST = re.compile(
     re.I | re.X,
 )
 
-
-AGENT_FAMILY = re.compile(
-    r"""
-    deepseek
-    | glm
-    | nemotron
-    | kimi
-    | minimax
-    | qwen
-    | mimo
-    | llama
-    | gemma
-    | mistral
-    | instruct
-    | chat
-    | coder
-    | code
-    """,
-    re.I | re.X,
-)
 
 
 ###############################################################################
@@ -569,11 +632,18 @@ def probe(
             None,
         )
 
-    context_ok, _ = hermes_context_compatible(
+    context_ok, context_length = hermes_context_compatible(
         provider,
         model,
         runtime,
     )
+
+    _LAST_PROBE_EVIDENCE["contextLength"] = (
+        int(context_length)
+        if context_length
+        else None
+    )
+
     if not context_ok:
         return (
             False,
@@ -668,6 +738,8 @@ def probe(
     )
 
 
+    started = time.monotonic()
+
     try:
 
         with urllib.request.urlopen(
@@ -677,8 +749,15 @@ def probe(
 
             raw = response.read()
 
+        _LAST_PROBE_EVIDENCE["latencyMs"] = int(
+            (time.monotonic() - started) * 1000
+        )
 
     except urllib.error.HTTPError as exc:
+
+        _LAST_PROBE_EVIDENCE["latencyMs"] = int(
+            (time.monotonic() - started) * 1000
+        )
 
         try:
 
@@ -707,6 +786,10 @@ def probe(
 
 
     except Exception as exc:
+
+        _LAST_PROBE_EVIDENCE["latencyMs"] = int(
+            (time.monotonic() - started) * 1000
+        )
 
         reason, stop = classify(
             None,
@@ -837,11 +920,15 @@ def candidate_score(
     row,
 ):
 
-    model = str(
-        row.get("id")
-        or ""
-    )
+    """Evidence-based probe-priority score.
 
+    Uses only policy anchors and measured verification evidence —
+    never model names or assumed model quality:
+
+      configuredSeed    — operator-declared anchor (+1000)
+      verified          — measured synthetic probe evidence (+500)
+      probeFailureCount — measured probe failures (−5 each)
+    """
 
     score = 0
 
@@ -852,32 +939,10 @@ def candidate_score(
 
         score += 1000
 
-    if row.get("verification") == "verified":
+    if row.get(
+        "verification"
+    ) == "verified":
         score += 500
-
-
-    if AGENT_FAMILY.search(
-        model
-    ):
-
-        score += 100
-
-
-    #
-    # Slight preference for explicitly free
-    # Zen IDs carrying the free marker.
-    #
-
-    if (
-        row.get(
-            "providerGroup"
-        )
-        == "zen"
-        and "free"
-        in model.lower()
-    ):
-
-        score += 50
 
 
     score -= int(
@@ -925,12 +990,27 @@ def main():
     )
 
 
+    groups = (
+        policy_registry_groups()
+    )
+
+    target = (
+        verification_policy_int(
+            "targetVerifiedPerGroup",
+            2,
+        )
+    )
+
+    max_attempts = (
+        verification_policy_int(
+            "maxAttemptsPerGroup",
+            10,
+        )
+    )
+
     now_ms = int(time.time() * 1000)
 
-    for group in (
-        "zen",
-        "nvidia",
-    ):
+    for group in groups:
 
         print()
         print(
@@ -1021,7 +1101,7 @@ def main():
             if (
                 len(verified)
                 >=
-                TARGET[group]
+                target
                 and row.get("verification") != "verified"
             ):
 
@@ -1031,9 +1111,7 @@ def main():
             if (
                 attempts
                 >=
-                MAX_ATTEMPTS[
-                    group
-                ]
+                max_attempts
             ):
 
                 break
@@ -1054,10 +1132,38 @@ def main():
             )
 
 
+            _LAST_PROBE_EVIDENCE["latencyMs"] = None
+            _LAST_PROBE_EVIDENCE["contextLength"] = None
+
             ok, reason, stop, endpoint = probe(
                 row["provider"],
                 model,
             )
+
+            #
+            # Record measured probe evidence (latency, context length)
+            # when actually captured. Stubbed probes in tests leave
+            # these unset, so rows stay deterministic there.
+            #
+            measured_latency = (
+                _LAST_PROBE_EVIDENCE.get("latencyMs")
+            )
+
+            if measured_latency is not None:
+
+                row["lastProbeLatencyMs"] = int(
+                    measured_latency
+                )
+
+            measured_context = (
+                _LAST_PROBE_EVIDENCE.get("contextLength")
+            )
+
+            if measured_context is not None:
+
+                row["contextLength"] = int(
+                    measured_context
+                )
 
 
             #
@@ -1186,14 +1292,14 @@ def main():
 
 
     production = {
-        "zen": [],
-        "nvidia": [],
+        group: []
+        for group in groups
     }
 
 
     quarantine = {
-        "zen": [],
-        "nvidia": [],
+        group: []
+        for group in groups
     }
 
 
@@ -1300,23 +1406,16 @@ def main():
         "FINAL VERIFIED CAPACITY"
     )
 
-    print(
-        "Zen free:",
-        len(
-            production[
-                "zen"
-            ]
-        ),
-    )
+    for group in groups:
 
-    print(
-        "NVIDIA:",
-        len(
-            production[
-                "nvidia"
-            ]
-        ),
-    )
+        print(
+            f"{group} group:",
+            len(
+                production[
+                    group
+                ]
+            ),
+        )
 
     print(
         "========================================"

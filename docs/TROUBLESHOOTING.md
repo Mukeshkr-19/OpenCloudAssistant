@@ -114,7 +114,7 @@ The core assistant should not fail merely because Zen is unavailable.
 Expected current behavior:
 
 ```text
-SKIP  Gemini lane  blocked until independently verified
+SKIP  Gemini lane  dynamic registry lane; requires configured key and fresh verification
 ```
 
 Do not remove the guard just to make every line say PASS.

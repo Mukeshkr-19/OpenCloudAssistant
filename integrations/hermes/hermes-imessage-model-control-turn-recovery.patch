@@ -1,9 +1,222 @@
+diff --git a/agent/hermes_fleet_bridge.py b/agent/hermes_fleet_bridge.py
+index 23c535c..b478c00 100644
+--- a/agent/hermes_fleet_bridge.py
++++ b/agent/hermes_fleet_bridge.py
+@@ -629,6 +629,208 @@ def clear_session_pin(
+         fleet.close()
+ 
+ 
++def _readonly_fleet_candidate(
++    role,
++    candidate_key,
++):
++    """Resolve a Fleet pin key from fleet.json (+ registry when needed)."""
++
++    if not CONFIG.is_file() or not candidate_key:
++        return None
++
++    try:
++        cfg = json.loads(
++            CONFIG.read_text(
++                encoding="utf-8",
++            )
++        )
++    except Exception:
++        return None
++
++    parts = str(candidate_key).split(":", 2)
++
++    pool_names = (
++        (cfg.get("roles") or {}).get(role)
++        or []
++    )
++    pools = cfg.get("pools") or {}
++    registry = None
++
++    for pool_name in pool_names:
++        pool = pools.get(pool_name) or {}
++        pool_type = str(pool.get("type") or "")
++        group = str(pool.get("providerGroup") or "").strip()
++        if not group:
++            continue
++
++        if pool_type == "stable-route":
++            provider = str(pool.get("provider") or "").strip()
++            model = str(pool.get("route") or "").strip()
++            if not provider or not model:
++                continue
++            key = f"{group}:{provider}:{model}"
++            if key == candidate_key:
++                return {
++                    "providerGroup": group,
++                    "provider": provider,
++                    "model": model,
++                    "candidateKey": key,
++                }
++            continue
++
++        if pool_type != "registry":
++            continue
++
++        if registry is None:
++            registry_path = ROOT / "registry" / "models.json"
++            if not registry_path.is_file():
++                registry = {}
++            else:
++                try:
++                    registry = json.loads(
++                        registry_path.read_text(
++                            encoding="utf-8",
++                        )
++                    )
++                except Exception:
++                    registry = {}
++
++        provider = str(pool.get("provider") or "").strip()
++        if not provider and len(parts) == 3 and parts[0] == group:
++            provider = parts[1]
++        if not provider:
++            continue
++
++        models = (
++            (registry.get("productionModels") or {}).get(group)
++            or []
++        )
++        for model in models:
++            if not isinstance(model, str):
++                continue
++            model = model.strip()
++            if not model:
++                continue
++            key = f"{group}:{provider}:{model}"
++            if key == candidate_key:
++                return {
++                    "providerGroup": group,
++                    "provider": provider,
++                    "model": model,
++                    "candidateKey": key,
++                }
++
++    return None
++
++
++def resolve_session_pin_readonly(
++    session_key,
++    role="main",
++):
++    """Read-only Fleet pin lookup — no dirs, schema migration, or commits."""
++
++    if not session_key or not enabled():
++        return None
++
++    db_path = Path(
++        os.environ.get(
++            "HERMES_FLEET_HEALTH_DB",
++            str(ROOT / "health.sqlite"),
++        )
++    )
++    if not db_path.is_file():
++        return None
++
++    try:
++        if not PIN_KEY.is_file():
++            return {
++                "provider": "",
++                "model": "",
++                "candidate_key": "",
++                "fleet_pin": False,
++                "resolved": False,
++                "error": True,
++            }
++        digest = _session_digest(session_key)
++    except Exception:
++        return {
++            "provider": "",
++            "model": "",
++            "candidate_key": "",
++            "fleet_pin": False,
++            "resolved": False,
++            "error": True,
++        }
++
++    try:
++        import sqlite3
++
++        conn = sqlite3.connect(
++            f"file:{db_path}?mode=ro",
++            uri=True,
++            timeout=5,
++        )
++        try:
++            if not conn.execute(
++                """
++                SELECT 1
++                FROM sqlite_master
++                WHERE type = 'table'
++                  AND name = 'fleet_session_pins'
++                """
++            ).fetchone():
++                return None
++            row = conn.execute(
++                """
++                SELECT candidate_key, routing_profile
++                FROM fleet_session_pins
++                WHERE session_digest = ?
++                  AND role = ?
++                """,
++                (
++                    digest,
++                    role,
++                ),
++            ).fetchone()
++        finally:
++            conn.close()
++    except Exception:
++        return {
++            "provider": "",
++            "model": "",
++            "candidate_key": "",
++            "fleet_pin": False,
++            "resolved": False,
++            "error": True,
++        }
++
++    if not row:
++        return None
++
++    pin = str(row[0] or "") or None
++    pin_profile = str(row[1] or "") if len(row) > 1 else ""
++    if not pin:
++        return None
++
++    candidate = _readonly_fleet_candidate(role, pin)
++    if not candidate:
++        return {
++            "provider": "",
++            "model": "",
++            "candidate_key": pin,
++            "fleet_pin": True,
++            "resolved": False,
++            "routing_profile": pin_profile,
++        }
++
++    return {
++        "provider": _provider(candidate),
++        "model": _model(candidate),
++        "candidate_key": pin,
++        "fleet_pin": True,
++        "resolved": True,
++        "routing_profile": pin_profile,
++    }
+ def _configured_default():
+ 
+     try:
 diff --git a/gateway/model_control_fast_path.py b/gateway/model_control_fast_path.py
 new file mode 100644
-index 0000000..d69760d
+index 0000000..0000000
 --- /dev/null
 +++ b/gateway/model_control_fast_path.py
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,681 @@
 +"""Deterministic model-control + channel-capability fast path.
 +
 +# HERMES_OPENCLOUD_MODEL_CONTROL_FAST_PATH_V1
@@ -11,7 +224,7 @@ index 0000000..d69760d
 +Handles high-confidence messaging intents *before* the conversational LLM /
 +tools run:
 +
-+  * "what model are you using?" → real runtime routing state
++  * "what model are you using?" → read-only routing snapshot
 +  * "switch to <model> in <provider>" → Fleet-resolved session pin/override
 +  * "can I use voice chat on iMessage?" → channel capability metadata
 +
@@ -21,9 +234,11 @@ index 0000000..d69760d
 +
 +from __future__ import annotations
 +
++import json
 +import re
++import time
 +from dataclasses import dataclass
-+from typing import Any, Dict, List, Optional, Sequence, Tuple
++from typing import Any, List, Optional, Sequence, Tuple
 +
 +# HERMES_OPENCLOUD_MODEL_CONTROL_FAST_PATH_V1
 +
@@ -40,18 +255,43 @@ index 0000000..d69760d
 +    r"[?.!]?\s*$"
 +)
 +
++_CATALOG_RE = re.compile(
++    r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?(?:please\s+)?"
++    r"(?:list|show|display|what(?:'s|\s+is))\s+(?:me\s+)?"
++    r"(?:(?:the|my)\s+)?(?:available\s+|current\s+|fleet\s+)?"
++    r"(?:model\s+catalog|models\s+catalog|models?)\s*[?.!]?\s*$"
++)
++
++_PROVIDER_CATALOG_RE = re.compile(
++    r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?(?:please\s+)?"
++    r"(?:list|show|display)\s+(?:me\s+)?(?:all\s+)?(?P<prov>[\w.-]+)\s+models?\s*[?.!]?\s*$"
++)
++
++_STRUCTURED_SWITCH_RES = (
++    re.compile(
++        r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?"
++        r"(?:please\s+)?use\s+provider\s+(?P<prov>[\w./-]+)\s+model\s+(?P<model>.+?)\s*$"
++    ),
++    re.compile(
++        r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?"
++        r"(?:please\s+)?change\s+the\s+model\s+to\s+(?P<model>.+?)\s+using\s+(?P<prov>[\w./-]+)\s*$"
++    ),
++    re.compile(
++        r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?"
++        r"(?:please\s+)?(?:switch|change|use)\s+(?:to\s+)?(?P<model>.+?)\s+and\s+provider\s+(?P<prov>[\w./-]+)\s*$"
++    ),
++    re.compile(
++        r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?"
++        r"(?:please\s+)?(?:switch|change|use)\s+(?:to\s+)?(?P<model>.+?)\s+(?:on|via|with|using|in)\s+(?P<prov>[\w./-]+)\s*$"
++    ),
++)
++
 +_SWITCH_RE = re.compile(
 +    r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?"
 +    r"(?:please\s+)?"
-+    r"(?:switch|change|use|set)\s+(?:to\s+|over\s+to\s+)?"
++    r"(?:switch|change|use)\s+(?:to\s+|over\s+to\s+)?"
 +    r"(?P<body>.+?)"
 +    r"\s*$"
-+)
-+
-+_PROVIDER_HINT_RE = re.compile(
-+    r"(?i)\b(?:in|via|on|with|using)\s+"
-+    r"(?P<prov>opencode(?:-zen)?|zen|openrouter|nvidia|openai|anthropic|"
-+    r"gemini|google)\b"
 +)
 +
 +_VOICE_CAP_RE = re.compile(
@@ -63,23 +303,10 @@ index 0000000..d69760d
 +
 +_SLASH_RE = re.compile(r"^\s*/")
 +
-+# Friendly provider aliases → Hermes/Fleet provider ids.
-+_PROVIDER_ALIASES = {
-+    "opencode": "opencode-zen",
-+    "opencode-zen": "opencode-zen",
-+    "zen": "opencode-zen",
-+    "openrouter": "openrouter",
-+    "nvidia": "nvidia",
-+    "openai": "openai",
-+    "anthropic": "anthropic",
-+    "gemini": "gemini",
-+    "google": "gemini",
-+}
-+
 +
 +@dataclass(frozen=True)
 +class ModelControlIntent:
-+    kind: str  # status | switch | capability
++    kind: str  # status | catalog | switch | capability
 +    model_query: str = ""
 +    provider_hint: str = ""
 +    capability: str = ""  # voice_chat
@@ -91,6 +318,24 @@ index 0000000..d69760d
 +    model: str
 +    group: str = ""
 +    candidate: Any = None
++
++
++def _normalize_provider_hint(hint: str) -> str:
++    return (hint or "").strip().lower()
++
++
++def _provider_hint_matches(
++    hint: str, provider: str, group: str, aliases: Sequence[str] = ()
++) -> bool:
++    hint = _normalize_provider_hint(hint)
++    if not hint:
++        return True
++    prov = (provider or "").strip().lower()
++    grp = (group or "").strip().lower()
++    # Exact normalized match only — no substring/prefix collision (acme ≠ acme-plus).
++    accepted = {prov, grp}
++    accepted.update(_normalize_provider_hint(alias) for alias in aliases)
++    return hint in accepted
 +
 +
 +def detect_model_control_intent(text: Optional[str]) -> Optional[ModelControlIntent]:
@@ -106,8 +351,31 @@ index 0000000..d69760d
 +    if _VOICE_CAP_RE.search(raw):
 +        return ModelControlIntent(kind="capability", capability="voice_chat")
 +
++    provider_catalog = _PROVIDER_CATALOG_RE.match(raw)
++    if provider_catalog:
++        return ModelControlIntent(
++            kind="catalog",
++            provider_hint=_normalize_provider_hint(provider_catalog.group("prov")),
++        )
++
++    if _CATALOG_RE.match(raw):
++        return ModelControlIntent(kind="catalog")
++
 +    if _STATUS_RE.match(raw):
 +        return ModelControlIntent(kind="status")
++
++    for pat in _STRUCTURED_SWITCH_RES:
++        m = pat.match(raw)
++        if not m:
++            continue
++        model = re.sub(r"\s+", " ", (m.group("model") or "").strip(" ,.-"))
++        prov = _normalize_provider_hint(m.group("prov"))
++        if model and len(model) >= 2 and len(model.split()) <= 8:
++            return ModelControlIntent(
++                kind="switch",
++                model_query=model,
++                provider_hint=prov,
++            )
 +
 +    m = _SWITCH_RE.match(raw)
 +    if not m:
@@ -115,34 +383,19 @@ index 0000000..d69760d
 +    body = (m.group("body") or "").strip().rstrip(".!?")
 +    if not body:
 +        return None
-+    # Reject vague / taskful bodies ("switch to agent mode", "switch topics").
 +    if re.search(
 +        r"(?i)\b(topic|subject|mode|gear|tabs?|apps?|windows?|channel)\b",
 +        body,
-+    ) and not re.search(r"(?i)\b(model|muse|kimi|glm|gpt|claude|llama|zen|opencode)\b", body):
++    ) and not re.search(r"(?i)\bmodel\b", body):
 +        return None
-+
-+    provider_hint = ""
-+    pm = _PROVIDER_HINT_RE.search(body)
-+    if pm:
-+        provider_hint = _PROVIDER_ALIASES.get(
-+            pm.group("prov").strip().lower(),
-+            pm.group("prov").strip().lower(),
-+        )
-+        body = (_PROVIDER_HINT_RE.sub("", body)).strip(" ,.-")
 +
 +    body = re.sub(r"(?i)\b(?:the\s+)?model\b", " ", body)
 +    body = re.sub(r"\s+", " ", body).strip(" ,.-")
 +    if not body or len(body) < 2:
 +        return None
-+    # Must look like a model token, not free prose.
 +    if len(body.split()) > 8:
 +        return None
-+    return ModelControlIntent(
-+        kind="switch",
-+        model_query=body,
-+        provider_hint=provider_hint,
-+    )
++    return ModelControlIntent(kind="switch", model_query=body, provider_hint="")
 +
 +
 +def normalize_model_query(query: str) -> str:
@@ -173,6 +426,15 @@ index 0000000..d69760d
 +        return ("", "", "")
 +
 +
++def _candidate_provider_aliases(candidate: Any) -> Tuple[str, ...]:
++    if not isinstance(candidate, dict):
++        return ()
++    aliases = candidate.get("providerAliases") or []
++    if not isinstance(aliases, (list, tuple, set)):
++        return ()
++    return tuple(str(alias).strip().lower() for alias in aliases if str(alias).strip())
++
++
 +def resolve_model_alias(
 +    query: str,
 +    *,
@@ -187,19 +449,17 @@ index 0000000..d69760d
 +    q = normalize_model_query(query)
 +    if not q:
 +        return None, []
-+    hint = (provider_hint or "").strip().lower()
-+    if hint in _PROVIDER_ALIASES:
-+        hint = _PROVIDER_ALIASES[hint]
++    hint = _normalize_provider_hint(provider_hint)
 +
 +    pool: List[ResolvedModel] = []
 +    for cand in candidates or []:
 +        provider, model, group = _candidate_fields(cand)
 +        if not model:
 +            continue
-+        if hint and provider != hint and group != hint:
-+            # Allow "opencode" hint to match zen group.
-+            if not (hint == "opencode-zen" and (provider == "opencode-zen" or group == "zen")):
-+                continue
++        if not _provider_hint_matches(
++            hint, provider, group, _candidate_provider_aliases(cand)
++        ):
++            continue
 +        pool.append(
 +            ResolvedModel(provider=provider, model=model, group=group, candidate=cand)
 +        )
@@ -207,7 +467,6 @@ index 0000000..d69760d
 +    if not pool:
 +        return None, []
 +
-+    # Exact id / suffix match first.
 +    exact = [
 +        r
 +        for r in pool
@@ -220,7 +479,6 @@ index 0000000..d69760d
 +    if len(exact) > 1:
 +        return None, exact
 +
-+    # Token / substring match (muse 1.2 → muse + 1.2 must all appear).
 +    tokens = [t for t in re.split(r"[\s/]+", q) if t]
 +    fuzzy: List[ResolvedModel] = []
 +    for r in pool:
@@ -234,6 +492,112 @@ index 0000000..d69760d
 +    return None, []
 +
 +
++_ACTIVE_STATUS_SOURCES = frozenset({"MANUAL_SESSION", "RUNNING_AGENT"})
++
++
++@dataclass(frozen=True)
++class ModelStatusSnapshot:
++    provider: str
++    model: str
++    source: str
++    fleet_pin: bool
++    routing_mode: str = ""
++    last_requested_switch: str = ""
++
++
++def resolve_model_status_snapshot(
++    *,
++    session_override: Optional[dict] = None,
++    running_provider: str = "",
++    running_model: str = "",
++    pin_info: Optional[dict] = None,
++    last_requested_switch: str = "",
++    configured_provider: str = "",
++    configured_model: str = "",
++) -> ModelStatusSnapshot:
++    """Read-only precedence for model status (no Fleet selection mutation)."""
++    fleet_pin = bool(pin_info and pin_info.get("fleet_pin"))
++    last_req = (last_requested_switch or "").strip()
++
++    override = session_override or {}
++    if override.get("model"):
++        return ModelStatusSnapshot(
++            provider=str(override.get("provider") or ""),
++            model=str(override.get("model") or ""),
++            source="MANUAL_SESSION",
++            fleet_pin=fleet_pin,
++            routing_mode="manual",
++            last_requested_switch=last_req,
++        )
++
++    if running_model:
++        prov = str(running_provider or "")
++        if prov.lower() == "auto":
++            prov = ""
++        return ModelStatusSnapshot(
++            provider=prov,
++            model=running_model,
++            source="RUNNING_AGENT",
++            fleet_pin=fleet_pin,
++            routing_mode="automatic",
++            last_requested_switch=last_req,
++        )
++
++    if pin_info and pin_info.get("error"):
++        return ModelStatusSnapshot(
++            provider="",
++            model="unknown",
++            source="FLEET_ERROR",
++            fleet_pin=False,
++            routing_mode="automatic",
++            last_requested_switch=last_req,
++        )
++
++    if pin_info and pin_info.get("fleet_pin"):
++        if pin_info.get("resolved") and pin_info.get("model"):
++            prov = str(pin_info.get("provider") or "")
++            if prov.lower() == "auto":
++                prov = ""
++            return ModelStatusSnapshot(
++                provider=prov,
++                model=str(pin_info.get("model") or ""),
++                source="FLEET_PIN",
++                fleet_pin=True,
++                routing_mode="pinned",
++                last_requested_switch=last_req,
++            )
++        return ModelStatusSnapshot(
++            provider="",
++            model="unknown",
++            source="FLEET_PIN_UNRESOLVED",
++            fleet_pin=True,
++            routing_mode="pinned",
++            last_requested_switch=last_req,
++        )
++
++    if configured_model:
++        prov = str(configured_provider or "")
++        if prov.lower() == "auto":
++            prov = ""
++        return ModelStatusSnapshot(
++            provider=prov,
++            model=configured_model,
++            source="CONFIGURED_FALLBACK",
++            fleet_pin=fleet_pin,
++            routing_mode="automatic",
++            last_requested_switch=last_req,
++        )
++
++    return ModelStatusSnapshot(
++        provider="",
++        model="unknown",
++        source="UNKNOWN",
++        fleet_pin=fleet_pin,
++        routing_mode="automatic",
++        last_requested_switch=last_req,
++    )
++
++
 +def format_model_status(
 +    *,
 +    provider: str,
@@ -241,19 +605,44 @@ index 0000000..d69760d
 +    source: str,
 +    fleet_pin: bool,
 +    routing_mode: str = "",
-+    last_successful: str = "",
++    last_requested_switch: str = "",
 +) -> str:
-+    """Human-readable status from runtime state — never LLM self-report."""
++    """Human-readable status from read-only routing snapshot."""
++    route = f"{provider}/{model}" if provider else model
++    if source in _ACTIVE_STATUS_SOURCES:
++        headline = (
++            f"Active route: {route}"
++            if model and model != "unknown"
++            else "Active route: unknown"
++        )
++    elif source == "FLEET_PIN":
++        headline = (
++            f"Fleet pinned route: {route}"
++            if model and model != "unknown"
++            else "Fleet pinned route: unknown"
++        )
++    elif source in {"CONFIGURED_FALLBACK", "BOOTSTRAP"}:
++        headline = f"Configured default: {route}"
++    elif source == "FLEET_PIN_UNRESOLVED":
++        headline = (
++            "Fleet pin present but candidate not resolved "
++            "(runtime route unknown)"
++        )
++    elif source == "FLEET_ERROR":
++        headline = "Model status: unknown (Fleet read failed)"
++    elif source == "UNKNOWN":
++        headline = "Model status: unknown"
++    else:
++        headline = f"Model status: {route}" if model else "Model status: unknown"
 +    bits = [
-+        f"Active route: {provider}/{model}" if provider else f"Active model: {model}",
++        headline,
 +        f"source={source}",
 +        f"fleet_pin={'yes' if fleet_pin else 'no'}",
 +    ]
 +    if routing_mode:
 +        bits.append(f"routing={routing_mode}")
-+    if last_successful and last_successful != f"{provider}/{model}":
-+        bits.append(f"last_successful={last_successful}")
-+    bits.append("This answer comes from runtime routing state, not model self-report.")
++    if last_requested_switch and last_requested_switch != route:
++        bits.append(f"last_requested_switch={last_requested_switch}")
 +    return "\n".join(bits)
 +
 +
@@ -295,7 +684,7 @@ index 0000000..d69760d
 +
 +def format_switch_ambiguous(matches: Sequence[ResolvedModel]) -> str:
 +    lines = [
-+        "Several Fleet models match — reply with one exact id (or /model <id> --provider <p>):"
++        "Several Fleet models match — reply with: switch to <model-id> on <provider>"
 +    ]
 +    for i, m in enumerate(matches[:8], 1):
 +        lines.append(f"  {i}. {m.provider} / {m.model}")
@@ -326,6 +715,145 @@ index 0000000..d69760d
 +        return []
 +
 +
++def read_fleet_catalog_readonly() -> List[dict]:
++    """Return the discovered Fleet catalog without opening Fleet's database."""
++    try:
++        from agent.hermes_fleet_bridge import CONFIG, ROOT
++
++        cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
++        registry_path = ROOT / "registry" / "models.json"
++        registry = (
++            json.loads(registry_path.read_text(encoding="utf-8"))
++            if registry_path.is_file()
++            else {}
++        )
++    except Exception:
++        return []
++
++    try:
++        from fleet_runtime import verification_ttl_ms
++
++        ttl_ms = verification_ttl_ms()
++    except Exception:
++        ttl_ms = 86_400_000
++    now_ms = int(time.time() * 1000)
++    rows = registry.get("models") or []
++    pools = cfg.get("pools") or {}
++    result: List[dict] = []
++    seen = set()
++    for pool_name in (cfg.get("roles") or {}).get("main", []) or []:
++        pool = pools.get(pool_name) or {}
++        pool_type = str(pool.get("type") or "").strip().lower()
++        provider = str(pool.get("provider") or "").strip()
++        group = str(pool.get("providerGroup") or "").strip()
++        if pool_type == "registry":
++            for row in rows:
++                if not isinstance(row, dict):
++                    continue
++                if str(row.get("providerGroup") or "").strip() != group:
++                    continue
++                if str(row.get("provider") or "").strip() != provider:
++                    continue
++                if pool.get("freeOnly") is True and row.get("explicitFree") is not True:
++                    continue
++                model = str(row.get("id") or "").strip()
++                key = (provider, model)
++                if not model or key in seen:
++                    continue
++                seen.add(key)
++                verified_at = row.get("verifiedAtMs") or row.get("lastProbeMs")
++                try:
++                    fresh = bool(
++                        row.get("verification") == "verified"
++                        and verified_at
++                        and now_ms - int(verified_at) < ttl_ms
++                    )
++                except (TypeError, ValueError, OverflowError):
++                    fresh = False
++                ready = bool(
++                    row.get("productionEligible")
++                    and fresh
++                    and not row.get("discoveryStale")
++                    and not row.get("excludedReason")
++                )
++                status = "verified" if ready else str(
++                    row.get("excludedReason")
++                    or ("stale" if row.get("discoveryStale") else "")
++                    or ("verification-expired" if row.get("verification") == "verified" else "")
++                    or row.get("verification")
++                    or "unverified"
++                )
++                result.append(
++                    {
++                        "provider": provider,
++                        "group": group,
++                        "aliases": list(pool.get("discoveryAliases") or []),
++                        "model": model,
++                        "status": status,
++                    }
++                )
++        elif pool_type == "stable-route":
++            model = str(pool.get("route") or "").strip()
++            key = (provider, model)
++            if provider and model and key not in seen:
++                seen.add(key)
++                result.append(
++                    {
++                        "provider": provider,
++                        "group": group,
++                        "aliases": list(pool.get("discoveryAliases") or []),
++                        "model": model,
++                        "status": "managed",
++                    }
++                )
++    return result
++
++
++def format_fleet_catalog(
++    rows: Sequence[dict], *, provider_hint: str = "", max_chars: int = 12000
++) -> str:
++    """Compact provider-grouped catalog suitable for messaging channels."""
++    hint = _normalize_provider_hint(provider_hint)
++    if hint:
++        rows = [
++            row for row in rows
++            if hint in {
++                _normalize_provider_hint(str(row.get("provider") or "")),
++                _normalize_provider_hint(str(row.get("group") or "")),
++                *(
++                    _normalize_provider_hint(str(alias))
++                    for alias in (row.get("aliases") or [])
++                ),
++            }
++        ]
++    if not rows:
++        return "Fleet model catalog is unavailable. Try /model --catalog --refresh."
++    lines = [
++        "Fleet model catalog snapshot "
++        "(verified routes remain subject to live health checks):"
++    ]
++    current = None
++    shown = 0
++    for row in rows:
++        group = str(row.get("group") or row.get("provider") or "unknown")
++        pending = []
++        if group != current:
++            pending.append(f"\n{group}:")
++        pending.append(f"- {row.get('provider')}/{row.get('model')} [{row.get('status') or 'unknown'}]")
++        if len("\n".join(lines + pending)) > max_chars:
++            break
++        lines.extend(pending)
++        current = group
++        shown += 1
++    if shown < len(rows):
++        lines.append(
++            f"\nShowing {shown} of {len(rows)} models (message-size limit). "
++            "Ask 'show <provider> models' for a provider-only catalog."
++        )
++    lines.append("\nSwitch: change to <model-id> on <provider>. Auto: /model --auto")
++    return "\n".join(lines)
++
++
 +def tool_result_is_success(payload: Any) -> bool:
 +    """Truthfulness helper: nonzero / error / cancel / unknown ≠ success."""
 +    if payload is None:
@@ -340,7 +868,6 @@ index 0000000..d69760d
 +
 +            data = json.loads(text)
 +        except Exception:
-+            # Non-JSON tool text: only treat explicit success markers as ok.
 +            low = text.lower()
 +            if "exit_code" in low and re.search(r"exit_code\"?\s*[:=]\s*[1-9]", text):
 +                return False
@@ -370,10 +897,9 @@ index 0000000..d69760d
 +        return False
 +    if data.get("success") is True or data.get("ok") is True:
 +        return True
-+    # Unknown without explicit success → not success.
 +    return False
 diff --git a/gateway/run.py b/gateway/run.py
-index cfe5a81..609adf4 100644
+index cfe5a81..9278ae0 100644
 --- a/gateway/run.py
 +++ b/gateway/run.py
 @@ -5021,12 +5021,52 @@ class TurnRunner:
@@ -561,7 +1087,7 @@ index cfe5a81..609adf4 100644
              _agent_result = await self._handle_message_with_agent(event, source, _quick_key, _run_generation)
              # Goal continuation: after the agent returns a final response
              # for this turn, check any standing /goal — the judge will
-@@ -15777,6 +15870,210 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -15777,6 +15870,462 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
          except Exception:
              return None
  
@@ -575,12 +1101,15 @@ index cfe5a81..609adf4 100644
 +        from gateway.model_control_fast_path import (
 +            detect_model_control_intent,
 +            format_capability_answer,
++            format_fleet_catalog,
 +            format_model_status,
 +            format_switch_ack,
 +            format_switch_ambiguous,
 +            format_switch_not_found,
 +            list_fleet_main_candidates,
++            read_fleet_catalog_readonly,
 +            resolve_model_alias,
++            resolve_model_status_snapshot,
 +        )
 +
 +        text = (getattr(event, "text", None) or "").strip()
@@ -599,82 +1128,110 @@ index cfe5a81..609adf4 100644
 +                platform=platform, capability=intent.capability or "voice_chat"
 +            )
 +
-+        if intent.kind == "status":
-+            provider = ""
-+            model = ""
-+            source_label = "AUTO_OR_BOOTSTRAP"
-+            fleet_pin = False
-+            routing_mode = "automatic"
-+            last_ok = ""
-+            try:
-+                override = (getattr(self, "_session_model_overrides", {}) or {}).get(
-+                    session_key
-+                ) or {}
-+                if override.get("model"):
-+                    model = str(override.get("model") or "")
-+                    provider = str(override.get("provider") or "")
-+                    source_label = "MANUAL_SESSION"
-+                    routing_mode = "manual"
-+            except Exception:
-+                pass
-+            try:
-+                from agent.hermes_fleet_bridge import enabled, session_is_pinned
++        if intent.kind == "catalog":
++            rows = await asyncio.to_thread(read_fleet_catalog_readonly)
++            return format_fleet_catalog(rows, provider_hint=intent.provider_hint)
 +
-+                if enabled() and session_is_pinned(session_key, "main"):
-+                    fleet_pin = True
++        if intent.kind == "status":
++            override = {}
++            running_provider = ""
++            running_model = ""
++            pin_info = None
++            configured_provider = ""
++            configured_model = ""
++            last_req = ""
++
++            try:
++                override = (
++                    (getattr(self, "_session_model_overrides", {}) or {}).get(
++                        session_key
++                    )
++                    or {}
++                )
 +            except Exception:
-+                pass
-+            if not model:
++                override = {}
++
++            if not override.get("model"):
 +                try:
-+                    agent = (getattr(self, "_running_agents", {}) or {}).get(session_key)
++                    agent = (getattr(self, "_running_agents", {}) or {}).get(
++                        session_key
++                    )
 +                    if agent is not None and agent is not _AGENT_PENDING_SENTINEL:
-+                        model = str(getattr(agent, "model", "") or "")
-+                        provider = str(
++                        running_model = str(getattr(agent, "model", "") or "")
++                        running_provider = str(
 +                            getattr(agent, "provider", None)
 +                            or getattr(agent, "api_provider", "")
-+                            or provider
++                            or ""
 +                        )
 +                except Exception:
 +                    pass
-+            if not model:
++
++            if not override.get("model") and not running_model:
++                try:
++                    from agent.hermes_fleet_bridge import resolve_session_pin_readonly
++
++                    pin_info = await asyncio.to_thread(
++                        resolve_session_pin_readonly, session_key, "main"
++                    )
++                except Exception:
++                    pin_info = {"error": True}
++
++            if (
++                not override.get("model")
++                and not running_model
++                and not (pin_info and pin_info.get("fleet_pin"))
++            ):
 +                try:
 +                    from hermes_cli.config import load_config_readonly
 +
 +                    cfg = load_config_readonly() or {}
 +                    raw = cfg.get("model")
 +                    if isinstance(raw, dict):
-+                        model = str(raw.get("default") or raw.get("model") or "")
-+                        provider = str(raw.get("provider") or provider or "")
++                        configured_model = str(
++                            raw.get("default") or raw.get("model") or ""
++                        )
++                        configured_provider = str(raw.get("provider") or "")
 +                    elif isinstance(raw, str):
-+                        model = raw.strip()
++                        configured_model = raw.strip()
 +                except Exception:
 +                    pass
-+            if not model:
-+                model = "unknown"
-+            if str(provider or "").lower() == "auto":
-+                provider = ""
++
 +            try:
-+                last_ok = str(
-+                    (getattr(self, "_opencloud_last_successful_route", {}) or {}).get(
++                last_req = str(
++                    (getattr(self, "_opencloud_last_requested_switch", {}) or {}).get(
 +                        session_key
 +                    )
 +                    or ""
 +                )
 +            except Exception:
-+                last_ok = ""
++                last_req = ""
++
++            snap = resolve_model_status_snapshot(
++                session_override=override,
++                running_provider=running_provider,
++                running_model=running_model,
++                pin_info=pin_info,
++                last_requested_switch=last_req,
++                configured_provider=configured_provider,
++                configured_model=configured_model,
++            )
 +            return format_model_status(
-+                provider=provider,
-+                model=model,
-+                source=source_label,
-+                fleet_pin=fleet_pin,
-+                routing_mode=routing_mode,
-+                last_successful=last_ok,
++                provider=snap.provider,
++                model=snap.model,
++                source=snap.source,
++                fleet_pin=snap.fleet_pin,
++                routing_mode=snap.routing_mode,
++                last_requested_switch=snap.last_requested_switch,
 +            )
 +
 +        if intent.kind != "switch":
 +            return None
 +
-+        # Atomic switch: resolve → validate → write → read back → ack.
++        # Atomic switch: capture prior state → validate restorability → write
++        # override + Fleet pin → read back → evict → verify → ack. Success is
++        # acknowledged only when override, Fleet pin, and cached-agent state
++        # all agree. Failures verify rollback before saying "Route unchanged";
++        # otherwise they report that route state could not be confirmed.
 +        prev_override = None
 +        try:
 +            prev_override = dict(
@@ -690,6 +1247,43 @@ index cfe5a81..609adf4 100644
 +                f"{prev_override.get('model')}"
 +            )
 +
++        from agent.hermes_fleet_bridge import (
++            _fleet,
++            _readonly_fleet_candidate,
++            _runtime,
++            _set_pin,
++            clear_session_pin,
++            enabled,
++            resolve_session_pin_readonly,
++        )
++
++        # Capture the previous Fleet pin BEFORE mutating anything. If a prior
++        # pin exists but cannot be resolved into a restorable candidate, refuse
++        # the switch: overwriting an unrestorable pin could strand the route.
++        prev_pin_key = ""
++        prev_pin_candidate = None
++        prev_pin_profile = ""
++        try:
++            prev_pin_info = await asyncio.to_thread(
++                resolve_session_pin_readonly, session_key, "main"
++            )
++            if prev_pin_info and not prev_pin_info.get("error"):
++                prev_pin_key = str(prev_pin_info.get("candidate_key") or "")
++                prev_pin_profile = str(prev_pin_info.get("routing_profile") or "")
++                if prev_pin_key:
++                    prev_pin_candidate = await asyncio.to_thread(
++                        _readonly_fleet_candidate, "main", prev_pin_key
++                    )
++        except Exception:
++            prev_pin_key = ""
++            prev_pin_candidate = None
++
++        if prev_pin_key and prev_pin_candidate is None:
++            return (
++                "Model switch failed; route state could not be confirmed. "
++                "Try /model <id> --provider <provider>."
++            )
++
 +        candidates = await asyncio.to_thread(list_fleet_main_candidates)
 +        resolved, ambiguous = resolve_model_alias(
 +            intent.model_query,
@@ -703,34 +1297,54 @@ index cfe5a81..609adf4 100644
 +                intent.model_query, intent.provider_hint
 +            )
 +
-+        # Gemini stays blocked unless independently verified (_available).
 +        try:
-+            from agent.hermes_fleet_bridge import _runtime, _set_pin, _fleet, enabled
-+
 +            runtime = await asyncio.to_thread(_runtime, resolved.candidate)
-+            new_override = {
-+                "model": resolved.model,
-+                "provider": resolved.provider,
-+                "api_key": runtime.get("api_key"),
-+                "base_url": runtime.get("base_url"),
-+                "api_mode": runtime.get("api_mode"),
-+            }
-+            if not hasattr(self, "_session_model_overrides") or self._session_model_overrides is None:
-+                self._session_model_overrides = {}
-+            self._session_model_overrides[session_key] = new_override
-+            # Read-back check — fail leaves prior route unchanged.
-+            rb = self._session_model_overrides.get(session_key) or {}
-+            if rb.get("model") != resolved.model or (
-+                rb.get("provider") or ""
-+            ).lower() != (resolved.provider or "").lower():
-+                if prev_override:
-+                    self._session_model_overrides[session_key] = prev_override
-+                elif session_key in self._session_model_overrides:
-+                    self._session_model_overrides.pop(session_key, None)
-+                return format_switch_not_found(
-+                    intent.model_query, intent.provider_hint
-+                )
-+            if enabled():
++        except Exception as exc:
++            logger.warning("model-control runtime resolve failed: %s", exc)
++            return (
++                "Model switch failed; route state could not be confirmed. "
++                "Try /model <id> --provider <provider>."
++            )
++
++        expected_pin_key = ""
++        try:
++            cand = resolved.candidate
++            if isinstance(cand, dict):
++                expected_pin_key = str(cand.get("candidateKey") or "")
++            else:
++                expected_pin_key = str(getattr(cand, "candidateKey", "") or "")
++        except Exception:
++            expected_pin_key = ""
++
++        new_override = {
++            "model": resolved.model,
++            "provider": resolved.provider,
++            "api_key": runtime.get("api_key"),
++            "base_url": runtime.get("base_url"),
++            "api_mode": runtime.get("api_mode"),
++        }
++        if not hasattr(self, "_session_model_overrides") or self._session_model_overrides is None:
++            self._session_model_overrides = {}
++        self._session_model_overrides[session_key] = new_override
++        # Read-back check — fail leaves prior route unchanged.
++        rb = self._session_model_overrides.get(session_key) or {}
++        if rb.get("model") != resolved.model or (
++            rb.get("provider") or ""
++        ).lower() != (resolved.provider or "").lower():
++            if prev_override:
++                self._session_model_overrides[session_key] = prev_override
++            elif session_key in self._session_model_overrides:
++                self._session_model_overrides.pop(session_key, None)
++            return format_switch_not_found(
++                intent.model_query, intent.provider_hint
++            )
++
++        # Fleet pin. A committed _set_pin() followed by a close() failure still
++        # leaves the new pin on disk, so the read-back — not the call sequence
++        # — decides whether a rollback is owed.
++        pin_mutated = False
++        if enabled():
++            try:
 +                fleet = _fleet()
 +                try:
 +                    _set_pin(
@@ -738,41 +1352,205 @@ index cfe5a81..609adf4 100644
 +                        "main",
 +                        session_key,
 +                        resolved.candidate,
-+                        profile=None,
++                        profile="manual",
 +                    )
 +                finally:
-+                    fleet.close()
-+            try:
-+                self._evict_cached_agent(session_key)
-+            except Exception:
-+                pass
-+            try:
-+                if not hasattr(self, "_opencloud_last_successful_route"):
-+                    self._opencloud_last_successful_route = {}
-+                self._opencloud_last_successful_route[session_key] = (
-+                    f"{resolved.provider}/{resolved.model}"
++                    try:
++                        fleet.close()
++                    except Exception as close_exc:
++                        logger.warning(
++                            "model-control fleet close failed: %s",
++                            close_exc,
++                            exc_info=True,
++                        )
++            except Exception as pin_exc:
++                logger.warning(
++                    "model-control set pin failed: %s",
++                    pin_exc,
++                    exc_info=True,
 +                )
-+            except Exception:
-+                pass
-+            return format_switch_ack(resolved, previous=previous)
-+        except Exception as exc:
-+            logger.warning("model-control switch failed: %s", exc)
 +            try:
-+                if prev_override:
-+                    self._session_model_overrides[session_key] = prev_override
-+                elif hasattr(self, "_session_model_overrides"):
-+                    self._session_model_overrides.pop(session_key, None)
++                cur_pin_info = await asyncio.to_thread(
++                    resolve_session_pin_readonly, session_key, "main"
++                )
++                cur_pin_key = str((cur_pin_info or {}).get("candidate_key") or "")
++                pin_mutated = bool(cur_pin_key) and cur_pin_key != prev_pin_key
 +            except Exception:
-+                pass
++                # Pin state cannot be confirmed — treat as mutated so failure
++                # paths still attempt a verified rollback.
++                pin_mutated = True
++
++        try:
++            self._evict_cached_agent(session_key)
++        except Exception as evict_exc:
++            logger.warning(
++                "model-control evict cached agent failed: %s",
++                evict_exc,
++                exc_info=True,
++            )
++            rollback_verified = await self._rollback_model_switch(
++                session_key,
++                prev_override=prev_override,
++                prev_pin_key=prev_pin_key,
++                prev_pin_candidate=prev_pin_candidate,
++                prev_pin_profile=prev_pin_profile,
++                pin_mutated=pin_mutated,
++            )
++            if rollback_verified:
++                return (
++                    "Model switch failed. Route unchanged. "
++                    "Try /model <id> --provider <provider>."
++                )
 +            return (
-+                f"Model switch failed ({exc}). Route unchanged. "
++                "Model switch failed; route state could not be confirmed. "
 +                "Try /model <id> --provider <provider>."
 +            )
++
++        # Eviction succeeded — never ack success until override, Fleet pin,
++        # and cached-agent state agree with the target route.
++        try:
++            agree = False
++            rb = self._session_model_overrides.get(session_key) or {}
++            if (
++                rb.get("model") == resolved.model
++                and (rb.get("provider") or "").lower()
++                == (resolved.provider or "").lower()
++            ):
++                if enabled():
++                    cur_pin_info = await asyncio.to_thread(
++                        resolve_session_pin_readonly, session_key, "main"
++                    )
++                    cur_pin_key = str((cur_pin_info or {}).get("candidate_key") or "")
++                    pin_target = expected_pin_key or prev_pin_key
++                    agree = bool(cur_pin_key) and cur_pin_key == pin_target
++                else:
++                    agree = True
++            if not agree:
++                rollback_verified = await self._rollback_model_switch(
++                    session_key,
++                    prev_override=prev_override,
++                    prev_pin_key=prev_pin_key,
++                    prev_pin_candidate=prev_pin_candidate,
++                    prev_pin_profile=prev_pin_profile,
++                    pin_mutated=pin_mutated,
++                )
++                if rollback_verified:
++                    return (
++                        "Model switch failed. Route unchanged. "
++                        "Try /model <id> --provider <provider>."
++                    )
++                return (
++                    "Model switch failed; route state could not be confirmed. "
++                    "Try /model <id> --provider <provider>."
++                )
++        except Exception:
++            rollback_verified = await self._rollback_model_switch(
++                session_key,
++                prev_override=prev_override,
++                prev_pin_key=prev_pin_key,
++                prev_pin_candidate=prev_pin_candidate,
++                prev_pin_profile=prev_pin_profile,
++                pin_mutated=True,
++            )
++            if rollback_verified:
++                return (
++                    "Model switch failed. Route unchanged. "
++                    "Try /model <id> --provider <provider>."
++                )
++            return (
++                "Model switch failed; route state could not be confirmed. "
++                "Try /model <id> --provider <provider>."
++            )
++        try:
++            if not hasattr(self, "_opencloud_last_requested_switch"):
++                self._opencloud_last_requested_switch = {}
++            self._opencloud_last_requested_switch[session_key] = (
++                f"{resolved.provider}/{resolved.model}"
++            )
++        except Exception:
++            pass
++        return format_switch_ack(resolved, previous=previous)
++
++    async def _rollback_model_switch(
++        self,
++        session_key: str,
++        *,
++        prev_override,
++        prev_pin_key: str,
++        prev_pin_candidate,
++        prev_pin_profile: str,
++        pin_mutated: bool,
++    ) -> bool:
++        """Verified rollback after a failed model switch.
++
++        Returns True only when the session override AND the Fleet pin (if it
++        was mutated) are confirmed back to their captured prior state.
++        """
++
++        from agent.hermes_fleet_bridge import (
++            _fleet,
++            _set_pin,
++            clear_session_pin,
++            resolve_session_pin_readonly,
++        )
++
++        verified = True
++        # 1) In-memory override: restore the captured prior value (or remove).
++        try:
++            if prev_override:
++                self._session_model_overrides[session_key] = prev_override
++            elif hasattr(self, "_session_model_overrides"):
++                self._session_model_overrides.pop(session_key, None)
++            rb = self._session_model_overrides.get(session_key) or {}
++            if prev_override:
++                verified = verified and (
++                    rb.get("model") == prev_override.get("model")
++                    and (rb.get("provider") or "").lower()
++                    == (prev_override.get("provider") or "").lower()
++                )
++            else:
++                verified = verified and session_key not in self._session_model_overrides
++        except Exception:
++            verified = False
++
++        # 2) Fleet pin: restore the previous pin exactly, or clear when the
++        #    session had none — then verify with a read-back.
++        if verified and pin_mutated:
++            try:
++                if prev_pin_key and prev_pin_candidate:
++                    fleet = _fleet()
++                    try:
++                        _set_pin(
++                            fleet,
++                            "main",
++                            session_key,
++                            prev_pin_candidate,
++                            profile=prev_pin_profile or None,
++                        )
++                    finally:
++                        fleet.close()
++                else:
++                    clear_session_pin(session_key, "main")
++                cur_pin_info = await asyncio.to_thread(
++                    resolve_session_pin_readonly, session_key, "main"
++                )
++                cur_pin_key = str((cur_pin_info or {}).get("candidate_key") or "")
++                if prev_pin_key:
++                    verified = verified and cur_pin_key == prev_pin_key
++                else:
++                    verified = verified and not cur_pin_key
++            except Exception:
++                logger.warning(
++                    "model-control pin rollback failed",
++                    exc_info=True,
++                )
++                verified = False
++        return verified
 +
      async def _maybe_handle_cron_control_fast_path(
          self, event, source, session_key: str
      ) -> Optional[str]:
-@@ -23251,6 +23548,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -23251,6 +23794,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
              # object keeps its interrupt flag so a hung drain still dies
              # when it unblocks.
              self._evict_cached_agent(session_key)

@@ -402,9 +402,7 @@ def main() -> None:
         assert openrouter_pool.get("type") == "stable-route"
         # No concrete ``:free`` model is configured anywhere in the policy.
         assert ":free" not in json.dumps(fleet_policy)
-        fleet_bridge = (ROOT / "integrations/hermes/hermes-fleet-bridge.patch").read_text()
-        assert '== "openrouter/free"' in fleet_bridge
-        assert "openrouter/free" in fleet_bridge
+        assert fleet_policy.get("routingV1", {}).get("finalEscape", {}).get("model") == "openrouter/free"
 
     print("PASS required + allowed MCP operation survives progressive disclosure")
     print("PASS unrelated MCP operation is still deferred")

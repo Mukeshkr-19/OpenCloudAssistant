@@ -93,13 +93,32 @@ def main() -> None:
             "TypeError",
             "Completions.create() got an unexpected keyword argument "
             "'_opencloud_routing_profile'",
+            module="agent.transports.chat_completions",
         )
         assert fp == "opencloud_metadata_leak", fp
         assert "strip internal keys" in task
 
-        # plain internal TypeError / AttributeError -> repair.
-        assert classify("TypeError", "got an unexpected keyword argument 'x'")[0] == "internal_typeerror"
-        assert classify("AttributeError", "'NoneType' object has no attribute 'x'")[0] == "internal_attributeerror"
+        # TypeError / AttributeError require explicit OpenCloud provenance.
+        assert classify(
+            "TypeError", "got an unexpected keyword argument 'x'",
+            module="agent.opencloud_dispatcher",
+        )[0] == "opencloud_typeerror"
+        assert classify(
+            "AttributeError", "missing route", module="agent.opencloud_routing_v1"
+        )[0] == "opencloud_attributeerror"
+        assert classify("TypeError", "provider response is not subscriptable") is None
+        assert classify("TypeError", "OpenCloud appeared only in provider text") is None
+        assert classify(
+            "RuntimeError",
+            "provider echoed _opencloud_routing_profile",
+            module="agent.transports.chat_completions",
+        ) is None
+        assert classify(
+            "TypeError",
+            "unexpected keyword argument '_opencloud_routing_profile'",
+            module="third_party.provider",
+        ) is None
+        assert classify("AttributeError", "provider response has no attribute 'x'") is None
 
         # OpenCloud integration ImportError -> repair.
         fp, _ = classify(
@@ -120,6 +139,10 @@ def main() -> None:
             ("NotFoundError", "404 not found"),
             ("ServiceUnavailableError", "503 service unavailable"),
             ("InsufficientQuotaError", "insufficient credits"),
+            (
+                "RateLimitError",
+                "429 rate limit for '_opencloud_routing_profile' request",
+            ),
         ]:
             assert classify(exc_type, message) is None, (exc_type, message)
 
@@ -127,6 +150,8 @@ def main() -> None:
         calls = []
 
         def invoke_repair(task):
+            assert (orch._in_progress.stat().st_mode & 0o777) == 0o600
+            assert (Path(state).stat().st_mode & 0o777) == 0o700
             calls.append(("repair", task))
             return True
 
@@ -153,6 +178,7 @@ def main() -> None:
         status = orch.run("fp1", "fix the leak", "user msg", metadata={"source": {"chat_id": "7"}})
         assert status == "replayed", status
         assert calls == [("repair", "fix the leak"), ("restart",), ("health",), ("replay", "user msg")], calls
+        assert (Path(state).stat().st_mode & 0o777) == 0o700
 
         # ── 4. Cooldown + no-recursion blocking ────────────────────────────
         # same fingerprint within cooldown -> skipped.
@@ -211,10 +237,29 @@ def main() -> None:
         orch5._write_pending_replay(
             "preserved request", metadata={"source": {"platform": "photon", "chat_id": "42"}}
         )
+        assert (orch5._pending_replay.stat().st_mode & 0o777) == 0o600
+        assert (Path(state5).stat().st_mode & 0o777) == 0o700
         payload = Orchestrator.consume_pending_replay(state5)
         assert payload["request"] == "preserved request"
         assert payload["metadata"]["source"]["chat_id"] == "42"
         assert Orchestrator.consume_pending_replay(state5) is None  # second call -> None
+
+        # A real production restart never returns through run(), so startup
+        # consumption must release the persisted in-progress guard.
+        state6 = tempfile.mkdtemp(prefix="opencloud-self-repair-state6-")
+        orch6 = Orchestrator(
+            state_root=state6,
+            invoke_repair=lambda t: True,
+            restart=lambda: None,
+            health_check=lambda: True,
+            replay=lambda r: None,
+            cooldown_seconds=0,
+        )
+        orch6._in_progress.write_text("1.0")
+        orch6._write_pending_replay("production restart request")
+        assert Orchestrator.consume_pending_replay(state6)["request"] == "production restart request"
+        assert not orch6._in_progress.exists()
+        assert orch6.should_attempt("different-fingerprint") is True
 
         # ── 8. maybe_auto_repair dispatch (monkeypatched orchestrator) ─────
         dispatched = []
@@ -265,6 +310,8 @@ def main() -> None:
         assert 'OPEN_CLOUD_SELF_REPAIR' in gateway_source
         assert "_maybe_opencloud_self_repair(" in gateway_source
         assert "maybe_auto_repair(" in gateway_source
+        assert "opencloud_self_repair_replay" in gateway_source
+        assert 'tb_frame.f_globals.get("__name__", "")' in gateway_source
 
         # replay hook is wired into the startup-restore finish.
         assert "_replay_pending_opencloud_repair()" in gateway_source
@@ -275,11 +322,12 @@ def main() -> None:
         assert "_agent_run_exc" in gateway_source
 
         # ── 10. Invariants preserved ───────────────────────────────────────
-        fleet_bridge = (ROOT / "integrations/hermes/hermes-fleet-bridge.patch").read_text()
-        assert '== "openrouter/free"' in fleet_bridge
+        policy = (ROOT / "config/fleet/hermes-fleet-policy.json").read_text()
+        assert '"route": "openrouter/free"' in policy
 
-    print("PASS internal TypeError dispatches repair")
-    print("PASS internal AttributeError dispatches repair")
+    print("PASS OpenCloud-provenance TypeError dispatches repair")
+    print("PASS OpenCloud-provenance AttributeError dispatches repair")
+    print("PASS provider/tool TypeError and AttributeError never repair")
     print("PASS OpenCloud integration ImportError dispatches repair")
     print("PASS _opencloud_* metadata leak dispatches repair")
     print("PASS rate limit / timeout / auth / quota / 404 never repair")
@@ -289,6 +337,7 @@ def main() -> None:
     print("PASS failed repair rolls back with no replay")
     print("PASS failed post-restart health rolls back")
     print("PASS pending-replay marker is consumed exactly once")
+    print("PASS production restart releases stale in-progress guard")
     print("PASS replay metadata round-trips the originating channel")
     print("PASS gateway dispatch is opt-in and preserves the normal error path")
     print("PASS openrouter/free final escape is untouched")

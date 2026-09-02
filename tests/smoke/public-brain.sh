@@ -25,9 +25,9 @@ if grep -RInEi "meta/llama-[A-Za-z0-9._:-]+|nvidia/[A-Za-z0-9._:-]+|qwen/[A-Za-z
     exit 1
 fi
 
-# Routing V1 intentionally carries benchmark-derived concrete preferences.
-# Outside routingV1.profiles.*.preferredModels, the Fleet policy must stay
-# model-dynamic. openrouter/free is the one stable exact escape route.
+# Routing V1 must be fully model-dynamic: profiles carry generic
+# weighting rules only, never concrete model IDs. openrouter/free is
+# the one stable exact escape route (provider-managed, always last).
 python3 - <<'PY_POLICY'
 import json
 from pathlib import Path
@@ -47,18 +47,11 @@ def walk(value, path=()):
             if key == "model" and isinstance(item, str) and item.strip():
                 model = item.strip()
 
-                preferred = (
-                    len(child) >= 6
-                    and child[0] == "routingV1"
-                    and child[1] == "profiles"
-                    and child[3] == "preferredModels"
-                )
-
                 stable_escape = (
                     model == "openrouter/free"
                 )
 
-                if not preferred and not stable_escape:
+                if not stable_escape:
                     violations.append(
                         (".".join(child), model)
                     )
@@ -82,8 +75,14 @@ if violations:
         "BRAIN_REFERENCE_SMOKE: FAIL concrete Fleet runtime model"
     )
 
+if "preferredModels" in Path("config/fleet/hermes-fleet-policy.json").read_text():
+    raise SystemExit(
+        "BRAIN_REFERENCE_SMOKE: FAIL exact-model preference lists returned"
+    )
+
 print(
-    "PASS: concrete Fleet models confined to Routing V1 preferences"
+    "PASS: Fleet routing policy is model-dynamic "
+    "(openrouter/free is the only stable exact route)"
 )
 PY_POLICY
 
