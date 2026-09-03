@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -335,9 +337,113 @@ def normalize_models(value):
     )
 
 
+def discover_opencode_models():
+    """Return the live model catalog exposed by the installed OpenCode client.
+
+    Hermes' generic provider catalog is backed by models.dev and includes
+    historical Zen routes that are not necessarily available to this host.
+    OpenCode's own verbose catalog is the authoritative, account-aware source
+    and includes the cost and API protocol needed for safe Fleet eligibility.
+    """
+
+    executable = shutil.which("opencode")
+
+    if not executable:
+        return None
+
+    completed = subprocess.run(
+        [
+            executable,
+            "models",
+            "opencode",
+            "--verbose",
+            "--pure",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "OpenCode live model discovery failed"
+        )
+
+    text = re.sub(
+        r"\x1b\[[0-?]*[ -/]*[@-~]",
+        "",
+        completed.stdout,
+    )
+    decoder = json.JSONDecoder()
+    rows = []
+    cursor = 0
+    heading = re.compile(
+        r"(?m)^opencode/([^\s]+)\s*$"
+    )
+
+    while True:
+        match = heading.search(
+            text,
+            cursor,
+        )
+
+        if not match:
+            break
+
+        start = text.find(
+            "{",
+            match.end(),
+        )
+
+        if start < 0:
+            raise RuntimeError(
+                "OpenCode model metadata missing"
+            )
+
+        try:
+            metadata, end = decoder.raw_decode(
+                text,
+                start,
+            )
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "OpenCode model metadata malformed"
+            ) from exc
+
+        model_id = str(
+            metadata.get("id")
+            or match.group(1)
+        ).strip()
+
+        if model_id:
+            rows.append({
+                "id": model_id,
+                "metadata": metadata,
+            })
+
+        cursor = end
+
+    if not rows:
+        raise RuntimeError(
+            "OpenCode live model discovery returned no models"
+        )
+
+    return rows
+
+
 def discover(
     aliases,
 ):
+
+    if "opencode-zen" in aliases:
+        rows = discover_opencode_models()
+
+        if rows is not None:
+            return (
+                "opencode-cli",
+                rows,
+            )
 
     last_error = None
 
@@ -472,9 +578,8 @@ def explicitly_free(
 
 
     pricing = (
-        metadata.get(
-            "pricing"
-        )
+        metadata.get("pricing")
+        or metadata.get("cost")
     )
 
 
@@ -782,6 +887,31 @@ def main():
                 excluded = (
                     "specialist"
                 )
+
+
+            # Hermes currently executes Zen through the OpenAI-compatible
+            # chat-completions runtime. OpenCode's live catalog also contains
+            # Responses, Anthropic, and Gemini protocol models. Keep those
+            # visible but ineligible until Hermes supports their declared
+            # protocol; never guess based on a model name.
+            if provider == "opencode-zen":
+                api = metadata.get("api")
+                package = (
+                    api.get("npm")
+                    if isinstance(api, dict)
+                    else None
+                )
+
+                if (
+                    package
+                    and package
+                    != "@ai-sdk/openai-compatible"
+                ):
+                    excluded = (
+                        excluded
+                        or
+                        "unsupported_runtime_protocol"
+                    )
 
 
             free = None
