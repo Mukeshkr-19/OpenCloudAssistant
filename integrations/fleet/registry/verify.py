@@ -530,6 +530,7 @@ def chat_endpoint(
 def classify(
     status,
     body,
+    provider=None,
 ):
 
     text = str(
@@ -546,6 +547,15 @@ def classify(
 
 
     if status == 429:
+
+        # Zen free-tier limits are model-scoped: one route can return 429
+        # while another remains healthy. Continue through the live catalog
+        # instead of suppressing every sibling model.
+        if provider == "opencode-zen":
+            return (
+                "candidate_rate_limit",
+                False,
+            )
 
         return (
             "provider_rate_limit",
@@ -732,6 +742,12 @@ def probe(
 
             "Accept":
                 "application/json",
+
+            # Zen's edge rejects Python urllib's default User-Agent. Use an
+            # honest application identity for every provider probe rather
+            # than imitating a browser or a provider client.
+            "User-Agent":
+                "OpenCloudAssistant-Fleet/1",
         },
 
         method="POST",
@@ -774,6 +790,7 @@ def probe(
         reason, stop = classify(
             exc.code,
             body,
+            provider,
         )
 
 
@@ -794,6 +811,7 @@ def probe(
         reason, stop = classify(
             None,
             str(exc),
+            provider,
         )
 
 

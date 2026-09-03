@@ -978,6 +978,7 @@ def test_synthetic_third_provider_config_only() -> None:
         refresh = importlib.util.module_from_spec(refresh_spec)
         refresh_spec.loader.exec_module(refresh)
 
+        refresh.discover_opencode_models = lambda: None
         refresh.list_provider_models = lambda identity: (
             {ACME: {"name": "Acme Greatest"}}
             if identity == "acme"
