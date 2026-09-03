@@ -21,6 +21,7 @@ import asyncio
 import importlib.util
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -162,6 +163,22 @@ def patch_applies() -> None:
     require(
         "gateway/model_control_fast_path.py" in stat.stdout,
         "patch missing model_control_fast_path.py",
+    )
+    extracted = extract_new_file_from_patch(
+        PATCH.read_text(), "gateway/model_control_fast_path.py"
+    )
+    declared = re.search(
+        r"\+\+\+ b/gateway/model_control_fast_path\.py\n@@ -0,0 \+1,(\d+) @@",
+        PATCH.read_text(),
+    )
+    require(
+        declared is not None
+        and int(declared.group(1)) == len(extracted.splitlines()),
+        "model-control new-file hunk count must match its complete body",
+    )
+    require(
+        extracted.rstrip().endswith("return False"),
+        "model-control new-file hunk must not truncate the truthfulness helper",
     )
 
 
@@ -329,6 +346,16 @@ def test_nl_switch_forms(m) -> None:
             _FIXTURE_FLEET_MODEL,
             _FIXTURE_FLEET_PROVIDER,
         ),
+        (
+            f"can u switch to {_FIXTURE_FLEET_MODEL} in {_FIXTURE_FLEET_PROVIDER}?",
+            _FIXTURE_FLEET_MODEL,
+            _FIXTURE_FLEET_PROVIDER,
+        ),
+        (
+            f"I will try {_FIXTURE_FLEET_MODEL} can u switch to this in {_FIXTURE_FLEET_PROVIDER}!!",
+            _FIXTURE_FLEET_MODEL,
+            _FIXTURE_FLEET_PROVIDER,
+        ),
     ]
     for text, model_q, prov in cases:
         intent = m.detect_model_control_intent(text)
@@ -344,6 +371,11 @@ def test_catalog_intent_and_bounds(m) -> None:
     provider_intent = m.detect_model_control_intent("show nvidia models")
     require(provider_intent is not None and provider_intent.kind == "catalog", "provider catalog intent")
     require(provider_intent.provider_hint == "nvidia", "provider catalog hint")
+    trailing = m.detect_model_control_intent("list the complete list of free models in OpenCode Zen")
+    require(trailing is not None and trailing.kind == "catalog", "trailing provider catalog intent")
+    require(trailing.provider_hint == "opencode-zen", "multiword provider catalog hint")
+    fast = m.detect_model_control_intent("Which fast model do u have !!")
+    require(fast is not None and fast.kind == "catalog", "natural fast catalog intent")
     rows = [
         {"provider": "nvidia", "group": "nvidia", "model": f"fixture/{i}", "status": "ready"}
         for i in range(100)
@@ -977,7 +1009,7 @@ def test_live_nl_switch_success(env: _LiveGatewayEnv) -> None:
     env.set_prev_pin(prev_pin)
 
     out = env.invoke(
-        f"switch to {_FIXTURE_NEW_MODEL} on {_FIXTURE_NEW_PROVIDER}"
+        f"can u switch to {_FIXTURE_NEW_MODEL} in {_FIXTURE_NEW_PROVIDER}?"
     )
     require("✅" in out, "success ack")
     require(
@@ -1044,12 +1076,27 @@ def test_live_provider_catalog_truth(env: _LiveGatewayEnv) -> None:
             },
         ]
     }))
-    out = env.invoke("show fixture-alias-b models")
+    out = env.invoke("list the complete list of free models in fixture-alias-b")
     require("fixture/free-good" in out, "provider alias catalog includes matching free row")
     require("fixture/nonfree-specialist" not in out, "free-only catalog excludes nonfree specialist")
     require("fixture/bad-timestamp" in out, "bad timestamp rejects only its row")
     require("verification-expired" in out, "bad timestamp is not labeled verified")
     require("fixture/other-provider" not in out, "provider-specific catalog excludes other providers")
+
+
+def test_live_contextual_switch_mismatch_fails_fast(env: _LiveGatewayEnv) -> None:
+    prev_override = {
+        "provider": _FIXTURE_OVERRIDE_PROVIDER,
+        "model": _FIXTURE_OVERRIDE_MODEL,
+    }
+    env.runner._session_model_overrides[_SK] = dict(prev_override)
+    pin_before = env.current_pin_key()
+
+    out = env.invoke(
+        f"I will try fixture missing model can u switch to this in {_FIXTURE_NEW_PROVIDER}!!"
+    )
+    require("Could not switch" in out, "contextual mismatch is handled deterministically")
+    _assert_no_mutation(env, pin_before, prev_override)
 
 
 def test_live_exact_provider_collision(env: _LiveGatewayEnv) -> None:
@@ -1346,6 +1393,13 @@ def run_live_handler_tests(out: Path) -> None:
                     _cand(_FIXTURE_NEW_PROVIDER, "fixture-group-e", _FIXTURE_NEW_MODEL),
                 ],
                 test_live_nl_switch_success,
+                {},
+            ),
+            (
+                [
+                    _cand(_FIXTURE_NEW_PROVIDER, "fixture-group-e", _FIXTURE_NEW_MODEL),
+                ],
+                test_live_contextual_switch_mismatch_fails_fast,
                 {},
             ),
             (

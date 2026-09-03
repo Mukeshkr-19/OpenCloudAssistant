@@ -216,7 +216,7 @@ new file mode 100644
 index 0000000..0000000
 --- /dev/null
 +++ b/gateway/model_control_fast_path.py
-@@ -0,0 +1,681 @@
+@@ -0,0 +1,720 @@
 +"""Deterministic model-control + channel-capability fast path.
 +
 +# HERMES_OPENCLOUD_MODEL_CONTROL_FAST_PATH_V1
@@ -266,6 +266,25 @@ index 0000000..0000000
 +    r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?(?:please\s+)?"
 +    r"(?:list|show|display)\s+(?:me\s+)?(?:all\s+)?(?P<prov>[\w.-]+)\s+models?\s*[?.!]?\s*$"
 +)
++_PROVIDER_CATALOG_TRAILING_RE = re.compile(
++    r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?(?:please\s+)?"
++    r"(?:list|show|display)\s+(?:me\s+)?(?:(?:the\s+)?complete\s+list\s+of\s+)?"
++    r"(?:all\s+)?(?:free\s+|available\s+)?models?\s+"
++    r"(?:in|on|from|for)\s+(?P<prov>[a-z0-9_.-]+(?:\s+[a-z0-9_.-]+){0,2})\s*[?.!]*\s*$"
++)
++_AVAILABLE_CATALOG_RE = re.compile(
++    r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?"
++    r"(?:what|which)\s+(?:free\s+|fast\s+|available\s+|current\s+)?models?\s+"
++    r"(?:do|can)\s+(?:you|u)\s+have"
++    r"(?:\s+(?:in|on|from|for)\s+(?P<prov>[a-z0-9_.-]+(?:\s+[a-z0-9_.-]+){0,2}))?"
++    r"\s*[?.!]*\s*$"
++)
++_CONTEXTUAL_SWITCH_RE = re.compile(
++    r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?"
++    r"(?:i\s+(?:will\s+|'ll\s+)?(?:try|use)\s+)?(?P<model>.+?)\s+"
++    r"(?:can|could|would)\s+(?:you|u)\s+(?:please\s+)?switch\s+to\s+(?:this|it)\s+"
++    r"(?:on|via|with|using|in)\s+(?P<prov>[a-z0-9_.-]+(?:\s+[a-z0-9_.-]+){0,2})\s*[?.!]*\s*$"
++)
 +
 +_STRUCTURED_SWITCH_RES = (
 +    re.compile(
@@ -282,7 +301,9 @@ index 0000000..0000000
 +    ),
 +    re.compile(
 +        r"(?i)^\s*(?:(?:hey|hi|hello|hermes)[,!]?\s+)?"
-+        r"(?:please\s+)?(?:switch|change|use)\s+(?:to\s+)?(?P<model>.+?)\s+(?:on|via|with|using|in)\s+(?P<prov>[\w./-]+)\s*$"
++        r"(?:please\s+)?(?:(?:can|could|would)\s+(?:you|u)\s+)?"
++        r"(?:switch|change|use)\s+(?:to\s+)?(?P<model>.+?)\s+"
++        r"(?:on|via|with|using|in)\s+(?P<prov>[a-z0-9_.-]+(?:\s+[a-z0-9_.-]+){0,2})\s*[?.!]*\s*$"
 +    ),
 +)
 +
@@ -321,7 +342,7 @@ index 0000000..0000000
 +
 +
 +def _normalize_provider_hint(hint: str) -> str:
-+    return (hint or "").strip().lower()
++    return re.sub(r"[\s_]+", "-", (hint or "").strip().lower()).strip("-")
 +
 +
 +def _provider_hint_matches(
@@ -330,8 +351,8 @@ index 0000000..0000000
 +    hint = _normalize_provider_hint(hint)
 +    if not hint:
 +        return True
-+    prov = (provider or "").strip().lower()
-+    grp = (group or "").strip().lower()
++    prov = _normalize_provider_hint(provider)
++    grp = _normalize_provider_hint(group)
 +    # Exact normalized match only — no substring/prefix collision (acme ≠ acme-plus).
 +    accepted = {prov, grp}
 +    accepted.update(_normalize_provider_hint(alias) for alias in aliases)
@@ -357,12 +378,30 @@ index 0000000..0000000
 +            kind="catalog",
 +            provider_hint=_normalize_provider_hint(provider_catalog.group("prov")),
 +        )
++    for pat in (_PROVIDER_CATALOG_TRAILING_RE, _AVAILABLE_CATALOG_RE):
++        catalog_match = pat.match(raw)
++        if catalog_match:
++            return ModelControlIntent(
++                kind="catalog",
++                provider_hint=_normalize_provider_hint(catalog_match.group("prov") or ""),
++            )
 +
 +    if _CATALOG_RE.match(raw):
 +        return ModelControlIntent(kind="catalog")
 +
 +    if _STATUS_RE.match(raw):
 +        return ModelControlIntent(kind="status")
++
++    contextual = _CONTEXTUAL_SWITCH_RE.match(raw)
++    if contextual:
++        model = re.sub(
++            r"\s+", " ", (contextual.group("model") or "").strip(" ,.-")
++        )
++        prov = _normalize_provider_hint(contextual.group("prov"))
++        if model and len(model) >= 2 and len(model.split()) <= 8:
++            return ModelControlIntent(
++                kind="switch", model_query=model, provider_hint=prov
++            )
 +
 +    for pat in _STRUCTURED_SWITCH_RES:
 +        m = pat.match(raw)
