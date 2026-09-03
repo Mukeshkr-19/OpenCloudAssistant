@@ -1289,6 +1289,11 @@ def run_live_handler_tests(out: Path) -> None:
             "yaml required for materialized handler tests; run via HERMES_PYTHON"
         ) from exc
 
+    # The OCI Hermes venv is an editable install of the live tree.  Remove any
+    # modules it loaded before importing the disposable materialized fixture.
+    for name in tuple(_sys.modules):
+        if name in {"agent", "gateway"} or name.startswith(("agent.", "gateway.")):
+            _sys.modules.pop(name, None)
     _sys.path.insert(0, str(out))
     with _dotenv_stub_if_needed():
         try:
@@ -1297,6 +1302,18 @@ def run_live_handler_tests(out: Path) -> None:
             raise AssertionError(
                 f"could not import real gateway.run from materialized tree: {exc}"
             ) from exc
+
+        require(
+            Path(gr.__file__).resolve().is_relative_to(out.resolve()),
+            f"gateway.run imported outside materialized tree: {gr.__file__}",
+        )
+        import agent.hermes_fleet_bridge as fixture_bridge
+
+        require(
+            Path(fixture_bridge.__file__).resolve().is_relative_to(out.resolve()),
+            "Fleet bridge imported outside materialized tree: "
+            f"{fixture_bridge.__file__}",
+        )
 
         handler = getattr(
             gr.GatewayRunner, "_maybe_handle_model_control_fast_path", None
