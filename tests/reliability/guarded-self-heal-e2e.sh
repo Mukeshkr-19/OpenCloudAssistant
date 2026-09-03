@@ -137,7 +137,7 @@ seed_repo() {
     local dest="$1"
     mkdir -p "$dest"
     rsync -a \
-        --exclude '.git/' \
+        --exclude '.git' \
         --exclude '.tmp-self-heal-e2e-*/' \
         --exclude '.claw-workflow/' \
         --exclude '__pycache__/' \
