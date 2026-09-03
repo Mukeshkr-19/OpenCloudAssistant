@@ -175,7 +175,7 @@ jobs:
             fi
             err="$(cat "$fetch_err")"
             case "$err" in
-              *"HTTP 429"*|*"HTTP 5"*|*"RPC failed"*|*"expected flush after ref listing"*|*"While resolving"*)
+              *"HTTP 429"*|*"error: 429"*|*"rate-limited"*|*"HTTP 5"*|*"RPC failed"*|*"expected flush after ref listing"*|*"While resolving"*)
                 printf 'hermes-baseline fetch attempt %d/%d failed (transient): %s\n' \
                   "$attempt" "$max_attempts" "$err" >&2
                 ;;

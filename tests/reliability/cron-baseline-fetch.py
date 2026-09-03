@@ -121,6 +121,8 @@ def _check_workflow_resilience() -> str:
         ("bounded max attempts", r"\bmax_attempts\s*="),
         ("exponential backoff sleep", r"\bsleep\s+"),
         ("transient-error match (HTTP 429)", r"HTTP 429"),
+        ("transient-error match (GitHub 429)", r"error: 429"),
+        ("transient-error match (GitHub rate limit)", r"rate-limited"),
         ("transient-error match (HTTP 5xx)", r"HTTP 5"),
         ("transient-error match (RPC failed)", r"RPC failed"),
         ("non-retryable fatal path", r"non-retryable"),
