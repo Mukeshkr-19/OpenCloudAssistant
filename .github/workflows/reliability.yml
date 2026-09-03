@@ -57,11 +57,45 @@ jobs:
 
           git init -q "$hermes_root"
 
-          git -C "$hermes_root" remote add origin             https://github.com/NousResearch/hermes-agent.git
+          git -C "$hermes_root" remote add origin https://github.com/NousResearch/hermes-agent.git
 
-          git -C "$hermes_root" fetch             --depth=1             origin             "$hermes_commit"
+          fetch_err="$RUNNER_TEMP/hermes-fetch.err"
+          attempt=1
+          max_attempts=5
+          backoff=5
+          until [ "$attempt" -gt "$max_attempts" ]; do
+            if git -C "$hermes_root" fetch --depth=1 origin "$hermes_commit" 2>"$fetch_err"; then
+              break
+            fi
+            err="$(cat "$fetch_err")"
+            case "$err" in
+              *"HTTP 429"*|*"error: 429"*|*"rate-limited"*|*"HTTP 5"*|*"RPC failed"*|*"expected flush after ref listing"*|*"While resolving"*)
+                printf 'hermes-baseline fetch attempt %d/%d failed (transient): %s\n' \
+                  "$attempt" "$max_attempts" "$err" >&2
+                ;;
+              *)
+                printf 'hermes-baseline fetch failed (non-retryable): %s\n' "$err" >&2
+                exit 1
+                ;;
+            esac
+            attempt=$((attempt+1))
+            sleep "$backoff"
+            backoff=$((backoff*2))
+          done
+          if [ "$attempt" -gt "$max_attempts" ]; then
+            printf 'hermes-baseline fetch still failing after %d attempts\n' "$max_attempts" >&2
+            cat "$fetch_err" >&2
+            exit 1
+          fi
+          rm -f "$fetch_err"
 
-          git -C "$hermes_root" checkout             -q             --detach             FETCH_HEAD
+          git -C "$hermes_root" checkout -q --detach FETCH_HEAD
+          actual_commit="$(git -C "$hermes_root" rev-parse HEAD)"
+          if [ "$actual_commit" != "$hermes_commit" ]; then
+            printf 'ERROR: checked out %s but pinned baseline is %s\n' \
+              "$actual_commit" "$hermes_commit" >&2
+            exit 1
+          fi
 
           echo "HERMES_ROOT=$hermes_root" >> "$GITHUB_ENV"
 

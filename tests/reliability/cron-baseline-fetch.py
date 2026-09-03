@@ -104,18 +104,7 @@ def _check_parity() -> str:
 
 
 def _check_workflow_resilience() -> str:
-    """Verify ci.yml's fetch step recognizes transient errors and retries."""
-    ci = _read(ROOT / ".github/workflows/ci.yml")
-    fetch_step_idx = ci.find("- name: Fetch captured Hermes baseline")
-    assert fetch_step_idx >= 0, (
-        "ci.yml is missing the 'Fetch captured Hermes baseline' job step"
-    )
-    materialization_idx = ci.find("- name: Materialization compatibility", fetch_step_idx)
-    assert materialization_idx > fetch_step_idx, (
-        "ci.yml is missing 'Materialization compatibility' step after the "
-        "'Fetch captured Hermes baseline' step"
-    )
-    fetch_block = ci[fetch_step_idx:materialization_idx]
+    """Verify both baseline fetch jobs recognize transient errors and retry."""
     needles = [
         ("retry counter", r"\battempt\s*="),
         ("bounded max attempts", r"\bmax_attempts\s*="),
@@ -129,21 +118,32 @@ def _check_workflow_resilience() -> str:
         ("post-checkout SHA verification", r"actual_commit\s*="),
         ("FETCH_HEAD deterministic checkout", r"--detach FETCH_HEAD"),
     ]
-    for label, needle in needles:
-        assert re.search(needle, fetch_block), (
-            f"ci.yml 'Fetch captured Hermes baseline' must declare {label} "
-            f"(pattern: {needle!r}); a bare one-shot `git fetch` would be "
-            f"flake-able on github.com's anonymous rate budget"
+    workflows = (
+        ("ci.yml", "Materialization compatibility"),
+        ("reliability.yml", "Install captured Hermes adapter dependency"),
+    )
+    for filename, next_step in workflows:
+        workflow = _read(ROOT / ".github/workflows" / filename)
+        fetch_step_idx = workflow.find("- name: Fetch captured Hermes baseline")
+        assert fetch_step_idx >= 0, (
+            f"{filename} is missing the 'Fetch captured Hermes baseline' job step"
+        )
+        next_step_idx = workflow.find(f"- name: {next_step}", fetch_step_idx)
+        assert next_step_idx > fetch_step_idx, (
+            f"{filename} is missing '{next_step}' after the baseline fetch step"
+        )
+        fetch_block = workflow[fetch_step_idx:next_step_idx]
+        for label, needle in needles:
+            assert re.search(needle, fetch_block), (
+                f"{filename} baseline fetch must declare {label} "
+                f"(pattern: {needle!r})"
+            )
+        assert "exit 1" in fetch_block, (
+            f"{filename} fetch block must exit non-zero after bounded retries"
         )
 
-    assert re.search(
-        r"\bexit\s+1\b\s*;?\s*\n?\s*(fi|$)", fetch_block
-    ) or "exit 1" in fetch_block, (
-        "ci.yml fetch block must terminate with a non-zero exit on failure"
-    )
-
     return (
-        "ci.yml 'Fetch captured Hermes baseline' declares retry loop, "
+        "CI baseline fetch jobs declare retry loops, "
         "backoff, transient/non-retryable discrimination, post-fetch SHA check, "
         "and FETCH_HEAD checkout"
     )
