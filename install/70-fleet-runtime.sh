@@ -129,7 +129,7 @@ case "$MODE" in
         echo "  would preserve existing runtime registry and health database"
         echo "  would not copy credentials"
         echo "  would not pin NVIDIA or Zen model IDs"
-        echo "  Gemini remains blocked by the Hermes integration guard"
+        echo "  Gemini is dynamic: fresh verification required; automatic quota conservation enabled"
         echo "FLEET_RUNTIME_DRY_RUN: PASS"
         ;;
     --check)

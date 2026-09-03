@@ -138,7 +138,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Fetch captured Hermes baseline
+      - name: Checkout captured Hermes baseline
+        uses: actions/checkout@v6
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 3fa318a50c02df8dbd2c55499f5f73d51ad77188
+          path: .hermes-baseline
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify captured Hermes baseline
         env:
           # The captured-baseline SHA is the singular source of truth. Same
           # value is mirrored in install/35-hermes-live.sh and
@@ -155,48 +164,7 @@ jobs:
               "$docs_commit" "$hermes_commit" >&2
             exit 1
           fi
-          hermes_root="$RUNNER_TEMP/hermes-agent"
-          git init -q "$hermes_root"
-          git -C "$hermes_root" remote add origin https://github.com/NousResearch/hermes-agent.git
-
-          # Retry the network fetch on transient errors only. github.com's
-          # anonymous HTTPS git endpoint enforces a per-source rate budget and
-          # commonly returns HTTP 429 mid-burst on push workflows; sleeping and
-          # retrying with exponential backoff keeps a one-off rate-limit from
-          # failing an otherwise-green CI. Permanent failures (auth, missing
-          # ref, malformed SHA) remain fatal so the check is not weakened.
-          fetch_err="$RUNNER_TEMP/hermes-fetch.err"
-          attempt=1
-          max_attempts=5
-          backoff=5
-          until [ "$attempt" -gt "$max_attempts" ]; do
-            if git -C "$hermes_root" fetch --depth=1 origin "$hermes_commit" 2>"$fetch_err"; then
-              break
-            fi
-            err="$(cat "$fetch_err")"
-            case "$err" in
-              *"HTTP 429"*|*"HTTP 5"*|*"RPC failed"*|*"expected flush after ref listing"*|*"While resolving"*)
-                printf 'hermes-baseline fetch attempt %d/%d failed (transient): %s\n' \
-                  "$attempt" "$max_attempts" "$err" >&2
-                ;;
-              *)
-                printf 'hermes-baseline fetch failed (non-retryable): %s\n' "$err" >&2
-                cat "$fetch_err" >&2
-                exit 1
-                ;;
-            esac
-            attempt=$((attempt+1))
-            sleep "$backoff"
-            backoff=$((backoff*2))
-          done
-          if [ "$attempt" -gt "$max_attempts" ]; then
-            printf 'hermes-baseline fetch still failing after %d attempts\n' "$max_attempts" >&2
-            cat "$fetch_err" >&2
-            exit 1
-          fi
-          rm -f "$fetch_err"
-
-          git -C "$hermes_root" checkout -q --detach FETCH_HEAD
+          hermes_root="$GITHUB_WORKSPACE/.hermes-baseline"
           actual_commit="$(git -C "$hermes_root" rev-parse HEAD)"
           if [ "$actual_commit" != "$hermes_commit" ]; then
             printf 'ERROR: checked out %s but pinned baseline is %s\n' \

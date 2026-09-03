@@ -11,7 +11,7 @@ For current release, configure:
 1. **NVIDIA** — dynamic primary/reviewer capacity when verified;
 2. **OpenRouter** — stable `openrouter/free` fallback route.
 
-OpenCode Zen is optional. Gemini remains blocked by the public Hermes integration until it is separately configured and independently verified.
+OpenCode Zen is optional. Gemini is dynamically discovered and remains ineligible until it is configured and freshly verified.
 
 ## Runtime credential file
 
@@ -96,15 +96,18 @@ There is intentionally no permanent Zen model ID in public architecture.
 
 ## Gemini
 
-The public Fleet policy contains a Gemini emergency lane for architecture compatibility, but the Hermes integration retains an explicit safety guard that blocks it until independently verified.
+The public Fleet policy contains a quota-conserving Gemini lane. It has no
+hardcoded model ID: the registry discovers the configured catalog and only
+freshly verified models become eligible.
 
 Expected doctor output is:
 
 ```text
-SKIP  Gemini lane  blocked until independently verified
+SKIP  Gemini lane  dynamic registry lane; requires configured key and fresh verification
 ```
 
-Do not add a Gemini key expecting the current release public router to start using it automatically.
+Adding a Gemini key enables discovery, not unconditional routing. Verification,
+health, cooldown, and the automatic conservation penalty still apply.
 
 ## Refresh and verify Fleet
 
@@ -148,9 +151,9 @@ The permanent public policy is conceptually:
 
 | Role | Pool order |
 |---|---|
-| Main | NVIDIA dynamic → OpenRouter free → Gemini emergency (blocked) |
-| Worker | Zen free dynamic → NVIDIA dynamic → OpenRouter free → Gemini emergency (blocked) |
-| Reviewer | NVIDIA dynamic → OpenRouter free → Gemini emergency (blocked) |
+| Main | NVIDIA dynamic → Zen free dynamic → OpenRouter free dynamic → OpenRouter free escape → Gemini quota-conserving |
+| Worker | Zen free dynamic → NVIDIA dynamic → OpenRouter free dynamic → OpenRouter free escape → Gemini quota-conserving |
+| Reviewer | NVIDIA dynamic → Zen free dynamic → OpenRouter free dynamic → OpenRouter free escape → Gemini quota-conserving |
 
 Failure handling can quarantine/cool down models or providers for model-unavailable, quota, rate-limit, server, network, auth, or account-access failures. The user conversation should not be filled with this internal failover chatter.
 

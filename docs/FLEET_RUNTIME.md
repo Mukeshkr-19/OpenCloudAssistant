@@ -12,8 +12,8 @@ The Fleet dispatcher is stored at:
 It handles runtime discovery, candidate selection, provider state, failure
 handling, cooldown behavior, health tracking, and SQLite-backed local state.
 
-The dispatcher may discover Gemini configuration. Discovery does not mean that
-Gemini is permitted for routing.
+The dispatcher discovers provider catalogs from policy. A model is routable
+only after fresh verification and while it is healthy and outside cooldown.
 
 ## Provider policy
 
@@ -25,20 +25,15 @@ The stable OpenRouter fallback route is:
 
     openrouter/free
 
-Concrete NVIDIA and Zen model identifiers are discovered dynamically and are
+Concrete NVIDIA, Zen, OpenRouter, and Gemini model identifiers are discovered dynamically and are
 not permanently committed.
 
-## Gemini safety
+## Gemini quota conservation
 
-Gemini permission gating is enforced by the Hermes Fleet integration rather
-than by the generic dispatcher.
-
-The public Hermes integration must retain:
-
-    HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1
-
-Until that lane is independently verified, discovery alone must not make it an
-allowed fallback.
+Gemini uses the same fresh-verification and cooldown gates as other dynamic
+providers. Its pool has a provider-level automatic ranking penalty so verified
+free routes are conserved for later fallback; an explicit session pin still
+wins until the user returns the session to AUTO.
 
 ## Runtime-only state
 

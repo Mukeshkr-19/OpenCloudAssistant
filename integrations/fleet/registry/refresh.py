@@ -31,24 +31,117 @@ OUTPUT = ROOT / "models.json"
 VERIFICATION_TTL_MS = verification_ttl_ms()
 
 
-PROVIDERS = {
-    "opencode-zen": {
-        "providerGroup": "zen",
-        "aliases": [
-            "opencode-zen",
-            "opencode",
-        ],
-        "freeOnly": True,
-    },
+def policy_registry_providers() -> dict:
+    """Enabled registry providers derived from validated Fleet policy.
 
-    "nvidia": {
-        "providerGroup": "nvidia",
-        "aliases": [
-            "nvidia",
-        ],
-        "freeOnly": False,
-    },
-}
+    Reads fleet_root()/fleet.json (the installed hermes-fleet-policy.json).
+    Only pools whose type is "registry" are discovery targets; each must
+    declare provider, providerGroup, discoveryAliases, and freeOnly. There
+    is no enabled-provider/group aggregation table in code.
+
+    Raises SystemExit with a clear reason on malformed policy (fail closed).
+    """
+
+    policy_path = fleet_root() / "fleet.json"
+
+    if not policy_path.is_file():
+        raise SystemExit(
+            f"ERROR: Fleet policy not found at {policy_path}; "
+            "cannot derive enabled providers"
+        )
+
+    try:
+        policy = json.loads(
+            policy_path.read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception as exc:
+        raise SystemExit(
+            f"ERROR: invalid Fleet policy at {policy_path}: {exc}"
+        ) from exc
+
+    result = {}
+
+    pools = (
+        policy.get("pools")
+        or {}
+    )
+
+    for pool_name, pool in pools.items():
+
+        if not isinstance(pool, dict):
+            continue
+
+        if (
+            str(
+                pool.get("type")
+                or ""
+            ).strip().lower()
+            != "registry"
+        ):
+            continue
+
+        provider = str(
+            pool.get("provider")
+            or ""
+        ).strip()
+
+        group = str(
+            pool.get("providerGroup")
+            or ""
+        ).strip()
+
+        if not provider or not group:
+            raise SystemExit(
+                f"ERROR: registry pool {pool_name!r} must declare "
+                "provider and providerGroup in Fleet policy"
+            )
+
+        aliases = pool.get("discoveryAliases")
+
+        if not isinstance(aliases, list) or not aliases:
+            raise SystemExit(
+                f"ERROR: registry pool {pool_name!r} must declare a "
+                "non-empty discoveryAliases list in Fleet policy"
+            )
+
+        cleaned_aliases = []
+
+        for alias in aliases:
+            if not isinstance(alias, str) or not alias.strip():
+                raise SystemExit(
+                    f"ERROR: registry pool {pool_name!r} has invalid "
+                    "discoveryAliases entry in Fleet policy"
+                )
+            cleaned_aliases.append(alias.strip())
+
+        if "freeOnly" not in pool:
+            raise SystemExit(
+                f"ERROR: registry pool {pool_name!r} must declare "
+                "freeOnly in Fleet policy"
+            )
+
+        free_only = pool["freeOnly"]
+
+        if not isinstance(free_only, bool):
+            raise SystemExit(
+                f"ERROR: registry pool {pool_name!r} freeOnly must be "
+                "a boolean in Fleet policy"
+            )
+
+        result[provider] = {
+            "providerGroup": group,
+            "aliases": cleaned_aliases,
+            "freeOnly": free_only,
+        }
+
+    if not result:
+        raise SystemExit(
+            "ERROR: Fleet policy declares no enabled registry providers"
+        )
+
+    return result
 
 
 SPECIALIST = re.compile(
@@ -420,7 +513,9 @@ def explicitly_free(
     return False
 
 
-def configured_seeds():
+def configured_seeds(
+    specs: dict,
+) -> dict:
 
     try:
 
@@ -436,10 +531,33 @@ def configured_seeds():
         config = {}
 
 
-    result = {
-        "zen": set(),
-        "nvidia": set(),
+    provider_to_group = {
+        provider: spec["providerGroup"]
+        for provider, spec in specs.items()
     }
+
+    result = {
+        group: set()
+        for group in sorted(
+            {
+                spec["providerGroup"]
+                for spec in specs.values()
+            }
+        )
+    }
+
+
+    def record(
+        provider: str,
+        model: str,
+    ):
+
+        group = provider_to_group.get(
+            str(provider or "").strip()
+        )
+
+        if group and str(model or "").strip():
+            result[group].add(model.strip())
 
 
     model_cfg = (
@@ -453,30 +571,10 @@ def configured_seeds():
         dict,
     ):
 
-        provider = str(
-            model_cfg.get(
-                "provider",
-                "",
-            )
-        ).strip()
-
-        model = str(
-            model_cfg.get(
-                "default",
-                "",
-            )
-        ).strip()
-
-
-        if (
-            provider
-            == "nvidia"
-            and model
-        ):
-
-            result[
-                "nvidia"
-            ].add(model)
+        record(
+            model_cfg.get("provider"),
+            model_cfg.get("default"),
+        )
 
 
         for fb in (
@@ -493,41 +591,10 @@ def configured_seeds():
             ):
                 continue
 
-            provider = str(
-                fb.get(
-                    "provider",
-                    "",
-                )
-            ).strip()
-
-            model = str(
-                fb.get(
-                    "model",
-                    "",
-                )
-            ).strip()
-
-
-            if (
-                provider
-                == "nvidia"
-                and model
-            ):
-
-                result[
-                    "nvidia"
-                ].add(model)
-
-
-            if (
-                provider
-                == "opencode-zen"
-                and model
-            ):
-
-                result[
-                    "zen"
-                ].add(model)
+            record(
+                fb.get("provider"),
+                fb.get("model"),
+            )
 
 
     delegation = (
@@ -543,30 +610,10 @@ def configured_seeds():
         dict,
     ):
 
-        provider = str(
-            delegation.get(
-                "provider",
-                "",
-            )
-        ).strip()
-
-        model = str(
-            delegation.get(
-                "model",
-                "",
-            )
-        ).strip()
-
-
-        if (
-            provider
-            == "opencode-zen"
-            and model
-        ):
-
-            result[
-                "zen"
-            ].add(model)
+        record(
+            delegation.get("provider"),
+            delegation.get("model"),
+        )
 
 
     return result
@@ -618,8 +665,14 @@ def main():
     }
 
 
+    specs = (
+        policy_registry_providers()
+    )
+
     seeds = (
-        configured_seeds()
+        configured_seeds(
+            specs
+        )
     )
 
 
@@ -635,7 +688,7 @@ def main():
 
 
     for provider, spec in (
-        PROVIDERS.items()
+        specs.items()
     ):
 
         try:
@@ -842,6 +895,18 @@ def main():
                         "lastProbeMs"
                     ),
 
+                # FLEET_PROBE_EVIDENCE_V1 — carry measured probe
+                # evidence (latency, context length) across refreshes.
+                "lastProbeLatencyMs":
+                    old_row.get(
+                        "lastProbeLatencyMs"
+                    ),
+
+                "contextLength":
+                    old_row.get(
+                        "contextLength"
+                    ),
+
                 "probeFailureCount":
                     int(
                         old_row.get(
@@ -868,15 +933,22 @@ def main():
     )
 
 
+    groups = sorted(
+        {
+            spec["providerGroup"]
+            for spec in specs.values()
+        }
+    )
+
     production = {
-        "zen": [],
-        "nvidia": [],
+        group: []
+        for group in groups
     }
 
 
     quarantine = {
-        "zen": [],
-        "nvidia": [],
+        group: []
+        for group in groups
     }
 
 
@@ -971,10 +1043,7 @@ def main():
             )
 
 
-    for group in (
-        "zen",
-        "nvidia",
-    ):
+    for group in groups:
 
         rows = [
             row

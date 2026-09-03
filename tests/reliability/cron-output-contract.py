@@ -713,8 +713,10 @@ def main() -> None:
         assert "_missing_cron_required_operations" in scheduler_source
 
         # openrouter/free escape is untouched.
-        fleet_bridge = (ROOT / "integrations/hermes/hermes-fleet-bridge.patch").read_text()
-        assert '== "openrouter/free"' in fleet_bridge
+        fleet_policy = json.loads(
+            (ROOT / "config/fleet/hermes-fleet-policy.json").read_text()
+        )
+        assert fleet_policy.get("routingV1", {}).get("finalEscape", {}).get("model") == "openrouter/free"
 
     print("PASS URL canonicalization (slash/port/fragment/case/query)")
     print("PASS evidence ledger is derived only from this run's tool results")

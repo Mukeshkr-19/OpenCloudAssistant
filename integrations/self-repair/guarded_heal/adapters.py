@@ -310,13 +310,6 @@ class FleetAdapter:
                 detail=f"fleet_verify_nonzero={verify.returncode}",
                 verified=False,
             )
-        # Gemini must remain blocked for unattended repair paths.
-        if re.search(r"(?i)\bgemini\b.*\beligible\b", out) and "blocked" not in out.lower():
-            return ActionResult(
-                status="HUMAN_REQUIRED",
-                detail="gemini_must_stay_blocked",
-                verified=False,
-            )
         return ActionResult(
             status="NO_ACTION_TRANSIENT",
             detail="fleet_verified_no_source_repair",
@@ -578,7 +571,7 @@ class DeployAdapter:
         self._runner = runner
         self._dry = dry_invoke
         self.materialize_script = materialize_script or (
-            self.repo_root / "install" / "30-brain-materialize.sh"
+            self.repo_root / "install" / "35-hermes-live.sh"
         )
 
     def _rev_parse(self, ref: str) -> tuple[str, str]:
@@ -643,7 +636,7 @@ class DeployAdapter:
                 )
             if self.materialize_script.is_file():
                 mat = _run(
-                    ["bash", str(self.materialize_script)],
+                    ["bash", str(self.materialize_script), "--install"],
                     runner=self._runner,
                     timeout=600,
                     cwd=str(self.repo_root),
@@ -764,7 +757,7 @@ class DeployAdapter:
                 )
             if self.materialize_script.is_file():
                 mat = _run(
-                    ["bash", str(self.materialize_script)],
+                    ["bash", str(self.materialize_script), "--install"],
                     runner=self._runner,
                     timeout=600,
                     cwd=str(self.repo_root),

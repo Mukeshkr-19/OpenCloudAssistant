@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
@@ -34,9 +35,25 @@ def main():
         )
         shutil.copy2(ROOT / "integrations/fleet/dispatcher.py", fleet_root / "dispatcher.py")
         shutil.copy2(ROOT / "integrations/fleet/fleet_runtime.py", fleet_root / "fleet_runtime.py")
+        # Strict-evidence registry: every selectable model carries a
+        # detailed row with fresh verification (productionModels
+        # membership alone no longer satisfies the verified gate).
+        now_ms = int(time.time() * 1000)
+
+        def verified_row(provider, group, model):
+            return {
+                "provider": provider,
+                "providerGroup": group,
+                "id": model,
+                "verification": "verified",
+                "verifiedAtMs": now_ms - 1_000,
+            }
+
         (fleet_root / "registry/models.json").write_text(json.dumps({
             "productionModels": {"zen": ["zen-verified"], "nvidia": ["nvidia-verified"]},
             "models": [
+                verified_row("opencode-zen", "zen", "zen-verified"),
+                verified_row("nvidia", "nvidia", "nvidia-verified"),
                 {"providerGroup": "zen", "id": "stale-unverified", "verification": "unverified"},
             ],
         }))
@@ -114,7 +131,10 @@ def main():
 
         registry_path.write_text(json.dumps({
             "productionModels": {"zen": ["zen-verified"], "nvidia": ["nvidia-verified"]},
-            "models": [],
+            "models": [
+                verified_row("opencode-zen", "zen", "zen-verified"),
+                verified_row("nvidia", "nvidia", "nvidia-verified"),
+            ],
         }))
         session = "synthetic-main-session"
         initial = bridge.resolve_role("main", session_key=session)

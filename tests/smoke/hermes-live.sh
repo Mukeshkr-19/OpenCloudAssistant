@@ -64,7 +64,7 @@ printf "%s\n" "$FIRST" | grep -qF "HERMES_LIVE_INSTALL: PASS"
 
 grep -RqsF "HERMES_FLEET_MAIN_ATTACH_BEGIN" "$TMP/hermes/agent" "$TMP/hermes/tools"
 grep -RqsF "HERMES_FLEET_WORKER_ATTACH_BEGIN" "$TMP/hermes/agent" "$TMP/hermes/tools"
-grep -RqsF "HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1" "$TMP/hermes/agent" "$TMP/hermes/tools"
+! grep -RqsF "HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1" "$TMP/hermes/agent" "$TMP/hermes/tools"
 grep -qF "HERMES_SILENT_GATEWAY_LIFECYCLE_NOTICE_V1" "$TMP/hermes/gateway/run.py"
 test -f "$TMP/hermes/agent/hermes_fleet_bridge.py"
 

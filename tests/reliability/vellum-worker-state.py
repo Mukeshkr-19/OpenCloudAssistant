@@ -15,8 +15,12 @@ ROOT = Path(__file__).resolve().parents[2]
 def load_server():
     fastmcp = types.ModuleType("mcp.server.fastmcp")
     class FastMCP:
-        def __init__(self, _name, **_kwargs): pass
-        def tool(self): return lambda function: function
+        def __init__(self, _name, **_kwargs): self.tools = []
+        def tool(self):
+            def register(function):
+                self.tools.append(function.__name__)
+                return function
+            return register
     fastmcp.FastMCP = FastMCP
     sys.modules.setdefault("mcp", types.ModuleType("mcp"))
     sys.modules.setdefault("mcp.server", types.ModuleType("mcp.server"))
@@ -29,6 +33,13 @@ def load_server():
 
 def main():
     server = load_server()
+    assert server.mcp.tools == [
+        "repair_code",
+        "get_user_context",
+        "start_vellum_task",
+        "get_vellum_task",
+        "stop_vellum_task",
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
         server.BASE_DIR = base
@@ -73,6 +84,17 @@ def main():
         result = json.loads(server.start_vellum_task("synthetic preflight failure"))
         assert result["status"] == "failed"
 
+        task_id = "vellum_" + "a" * 32
+        server.write_state(task_id, {
+            "task_id": task_id,
+            "status": "completed",
+            "result": "synthetic completed payload",
+        })
+        result = json.loads(server.get_vellum_task(task_id))
+        assert result["result"] == "synthetic completed payload"
+
+    print("PASS exact public Vellum MCP tool surface")
+    print("PASS completed worker result round-trips to Hermes")
     print("PASS queued state precedes worker start")
     print("PASS instant worker failure cannot regress to starting")
     print("PASS Popen and packaged-runtime failures become terminal")

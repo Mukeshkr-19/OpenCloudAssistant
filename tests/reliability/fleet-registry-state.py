@@ -3,6 +3,7 @@
 
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import types
@@ -45,6 +46,34 @@ def main():
     verify = load("fleet_verify", ROOT / "integrations/fleet/registry/verify.py")
 
     with tempfile.TemporaryDirectory() as tmp:
+        fleet_home = Path(tmp) / "fleet"
+        (fleet_home / "registry").mkdir(parents=True)
+        (fleet_home / "fleet.json").write_text(
+            json.dumps(
+                {
+                    "pools": {
+                        "zen": {
+                            "type": "registry",
+                            "provider": "opencode-zen",
+                            "providerGroup": "zen",
+                            "discoveryAliases": [
+                                "opencode-zen",
+                                "opencode",
+                            ],
+                            "freeOnly": True,
+                        },
+                        "nvidia": {
+                            "type": "registry",
+                            "provider": "nvidia",
+                            "providerGroup": "nvidia",
+                            "discoveryAliases": ["nvidia"],
+                            "freeOnly": False,
+                        },
+                    }
+                }
+            )
+        )
+        os.environ["OPEN_CLOUD_FLEET_HOME"] = str(fleet_home)
         output = Path(tmp) / "models.json"
         old = {
             "models": [
@@ -60,7 +89,15 @@ def main():
         refresh.ROOT = Path(tmp)
         refresh.OUTPUT = output
         refresh.CONFIG = Path(tmp) / "missing.yaml"
-        refresh.configured_seeds = lambda: {"zen": set(), "nvidia": set()}
+        refresh.configured_seeds = lambda specs: {
+            group: set()
+            for group in sorted(
+                {
+                    spec["providerGroup"]
+                    for spec in specs.values()
+                }
+            )
+        }
 
         for error in (TimeoutError(), ValueError("malformed"), OSError("http")):
             output.write_text(json.dumps(old))

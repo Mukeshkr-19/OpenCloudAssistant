@@ -19,10 +19,9 @@ return:
    ``.github/workflows/ci.yml`` as the ``hermes_commit:`` env on the
    "Fetch captured Hermes baseline" step. Any drift breaks CI loudly.
 
-2. The CI workflow's fetch step recognizes transient network failures
-   (HTTP 429, HTTP 5xx, ``RPC failed``) and retries with bounded backoff so
-   a single github.com rate-limit burst cannot fail the check. A one-shot
-   ``git fetch`` that propagates the failure is detected as a regression.
+2. Both CI workflows use the standard authenticated checkout action for the
+   external baseline instead of anonymous ``git fetch`` calls that share a
+   rate-limited runner IP budget.
 
 3. The pinned baseline is checkable on the real GitHub remote: a HEAD probe
    at the SHA must return HTTP 200 — the captured fixture is still alive on
@@ -104,46 +103,38 @@ def _check_parity() -> str:
 
 
 def _check_workflow_resilience() -> str:
-    """Verify ci.yml's fetch step recognizes transient errors and retries."""
-    ci = _read(ROOT / ".github/workflows/ci.yml")
-    fetch_step_idx = ci.find("- name: Fetch captured Hermes baseline")
-    assert fetch_step_idx >= 0, (
-        "ci.yml is missing the 'Fetch captured Hermes baseline' job step"
+    """Verify both jobs use authenticated checkout and verify the exact SHA."""
+    workflows = (
+        ("ci.yml", "Materialization compatibility"),
+        ("reliability.yml", "Install captured Hermes adapter dependency"),
     )
-    materialization_idx = ci.find("- name: Materialization compatibility", fetch_step_idx)
-    assert materialization_idx > fetch_step_idx, (
-        "ci.yml is missing 'Materialization compatibility' step after the "
-        "'Fetch captured Hermes baseline' step"
-    )
-    fetch_block = ci[fetch_step_idx:materialization_idx]
-    needles = [
-        ("retry counter", r"\battempt\s*="),
-        ("bounded max attempts", r"\bmax_attempts\s*="),
-        ("exponential backoff sleep", r"\bsleep\s+"),
-        ("transient-error match (HTTP 429)", r"HTTP 429"),
-        ("transient-error match (HTTP 5xx)", r"HTTP 5"),
-        ("transient-error match (RPC failed)", r"RPC failed"),
-        ("non-retryable fatal path", r"non-retryable"),
-        ("post-checkout SHA verification", r"actual_commit\s*="),
-        ("FETCH_HEAD deterministic checkout", r"--detach FETCH_HEAD"),
-    ]
-    for label, needle in needles:
-        assert re.search(needle, fetch_block), (
-            f"ci.yml 'Fetch captured Hermes baseline' must declare {label} "
-            f"(pattern: {needle!r}); a bare one-shot `git fetch` would be "
-            f"flake-able on github.com's anonymous rate budget"
+    for filename, next_step in workflows:
+        workflow = _read(ROOT / ".github/workflows" / filename)
+        checkout_idx = workflow.find("- name: Checkout captured Hermes baseline")
+        assert checkout_idx >= 0, (
+            f"{filename} is missing the captured-baseline checkout step"
         )
-
-    assert re.search(
-        r"\bexit\s+1\b\s*;?\s*\n?\s*(fi|$)", fetch_block
-    ) or "exit 1" in fetch_block, (
-        "ci.yml fetch block must terminate with a non-zero exit on failure"
-    )
+        verify_idx = workflow.find("- name: Verify captured Hermes baseline", checkout_idx)
+        assert verify_idx > checkout_idx, (
+            f"{filename} is missing baseline verification after checkout"
+        )
+        next_step_idx = workflow.find(f"- name: {next_step}", verify_idx)
+        assert next_step_idx > verify_idx, (
+            f"{filename} is missing '{next_step}' after the baseline fetch step"
+        )
+        checkout_block = workflow[checkout_idx:verify_idx]
+        verify_block = workflow[verify_idx:next_step_idx]
+        assert "uses: actions/checkout@v6" in checkout_block
+        assert "repository: NousResearch/hermes-agent" in checkout_block
+        assert f"ref: {PINNED_SHA}" in checkout_block
+        assert "path: .hermes-baseline" in checkout_block
+        assert "persist-credentials: false" in checkout_block
+        assert "actual_commit=" in verify_block
+        assert '"$actual_commit" != "$hermes_commit"' in verify_block
+        assert "exit 1" in verify_block
 
     return (
-        "ci.yml 'Fetch captured Hermes baseline' declares retry loop, "
-        "backoff, transient/non-retryable discrimination, post-fetch SHA check, "
-        "and FETCH_HEAD checkout"
+        "CI baseline jobs use authenticated checkout and verify the exact SHA"
     )
 
 

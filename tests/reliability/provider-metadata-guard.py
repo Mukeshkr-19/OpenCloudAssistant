@@ -23,6 +23,7 @@ fully-patched tree and asserts no internal metadata can survive to kwargs.
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -198,8 +199,10 @@ def main() -> None:
         assert codex_live or "strip_internal_metadata(request_overrides)" in codex_source
 
         # ── 6. The OpenRouter final escape remains exactly openrouter/free ──
-        fleet_bridge = (ROOT / "integrations/hermes/hermes-fleet-bridge.patch").read_text()
-        assert '== "openrouter/free"' in fleet_bridge
+        fleet_policy = json.loads(
+            (ROOT / "config/fleet/hermes-fleet-policy.json").read_text()
+        )
+        assert fleet_policy.get("routingV1", {}).get("finalEscape", {}).get("model") == "openrouter/free"
 
     print("PASS _opencloud_* metadata is stripped from request_overrides")
     print("PASS chat_completions legacy merge point cannot leak internal metadata")

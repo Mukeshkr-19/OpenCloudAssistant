@@ -25,6 +25,8 @@ grep -qF "def _runtime_gemini_models" "$DISPATCHER"
 
 grep -qF "openrouter/free" "$POLICY"
 
-grep -RqsF "HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1" integrations/hermes
+grep -qF '"gemini-emergency"' "$POLICY"
+grep -qF '"automaticPenalty"' "$POLICY"
+! grep -RqsF "HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1" integrations/hermes
 
 echo "FLEET_RUNTIME_SMOKE: PASS"

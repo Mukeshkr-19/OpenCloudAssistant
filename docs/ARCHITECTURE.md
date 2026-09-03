@@ -106,21 +106,27 @@ The stable explicit OpenRouter fallback is:
 openrouter/free
 ```
 
-Conceptual role order:
+Role pools (availability scope, not a fixed selection order):
 
 ```text
-main:     NVIDIA dynamic → OpenRouter free → Gemini emergency (blocked)
-worker:   Zen free dynamic → NVIDIA dynamic → OpenRouter free → Gemini emergency (blocked)
-reviewer: NVIDIA dynamic → OpenRouter free → Gemini emergency (blocked)
+main:     NVIDIA dynamic, Zen free dynamic, OpenRouter free dynamic, Gemini dynamic, OpenRouter free escape
+worker:   Zen free dynamic, NVIDIA dynamic, OpenRouter free dynamic, Gemini dynamic, OpenRouter free escape
+reviewer: NVIDIA dynamic, Zen free dynamic, OpenRouter free dynamic, Gemini dynamic, OpenRouter free escape
 ```
 
-The dispatcher tracks model/provider health and cooldowns. Failure switching is internal control flow; normal conversation should receive one clean answer rather than provider-debug narration.
+Within those pools the dispatcher ranks every freshly verified, healthy candidate
+from measured capability, health, verification freshness, and latency evidence for
+the active workload profile. Gemini receives a configurable quota-conservation
+penalty during automatic ranking, and `openrouter/free` remains the final escape;
+neither rule hardcodes a transient model ID. Failure switching is internal control
+flow, so normal conversation receives one clean answer rather than provider-debug
+narration.
 
-## Gemini guard
+## Gemini eligibility
 
-Fleet discovery and Fleet permission are separate concerns. The generic dispatcher can understand that a provider exists, but the Hermes integration can still forbid routing to it.
-
-current release keeps Gemini blocked until independently verified.
+Fleet discovery and Fleet permission are separate concerns. Gemini candidates
+must be freshly verified and healthy; automatic ranking conserves that pool,
+while an explicit session pin remains authoritative.
 
 ## Restricted self-repair
 

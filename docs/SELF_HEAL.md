@@ -82,7 +82,7 @@ Package: `integrations/self-repair/guarded_heal/`
   crash/stuck turn/lifecycle only (restart + verify; never
   `hermes-code-repair` / P8; other Tier-1 → `HUMAN_REQUIRED`) → `2`
   provider/Fleet (`NO_ACTION_TRANSIENT` unless verified; never source-edit
-  quota/timeout; preserve `openrouter/free`; Gemini stays blocked) → `3`
+  quota/timeout; preserve `openrouter/free`; keep Gemini registry-gated) → `3`
   source repair
 - **Detector vs controller**: `opencloud self-heal detect` is **queue-only**
   (journal → classify → sanitize → `QUEUED` → advance cursor). It never

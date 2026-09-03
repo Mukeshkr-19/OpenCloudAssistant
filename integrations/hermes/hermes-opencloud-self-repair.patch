@@ -3,7 +3,7 @@ new file mode 100644
 index 000000000..8e3109be6
 --- /dev/null
 +++ b/agent/opencloud_self_repair.py
-@@ -0,0 +1,306 @@
+@@ -0,0 +1,334 @@
 +"""Deterministic self-repair auto-trigger for OpenCloud-internal regressions.
 +
 +When the runtime hits a deterministic OpenCloud code regression (e.g. the
@@ -35,6 +35,7 @@ index 000000000..8e3109be6
 +
 +import json
 +import os
++import re
 +import time
 +from pathlib import Path
 +
@@ -47,11 +48,11 @@ index 000000000..8e3109be6
 +# exit code is the supported "restart now" signal that avoids an unclean crash.
 +_RESTART_EXIT_CODE = 75
 +
-+_REPAIRABLE_OPENCLOUD_MARKERS = (
-+    ("opencloud_metadata_leak", "_opencloud_"),
-+    ("opencloud_import_error", "no module named 'agent.opencloud"),
-+    ("opencloud_import_error", "no module named 'opencloud"),
++_METADATA_LEAK_RE = re.compile(
++    r"unexpected keyword argument ['\"](_opencloud_[a-z0-9_]+)['\"]",
++    re.I,
 +)
++_INTERNAL_RUNTIME_PREFIXES = ("agent.", "gateway.", "hermes_cli.", "tools.")
 +
 +# External / operational failures that must never trigger a source repair.
 +_EXTERNAL_MARKERS = (
@@ -77,18 +78,24 @@ index 000000000..8e3109be6
 +    module = str(module or "")
 +    low = message.lower()
 +
-+    # Fast positive: OpenCloud-internal control metadata reached a provider.
-+    if "_opencloud_" in low:
++    # Fast negative: never repair external / operational failures.
++    for marker in _EXTERNAL_MARKERS:
++        if marker in low:
++            return None
++
++    # Exact positive: a TypeError raised from Hermes/OpenCloud runtime code at
++    # the provider-call boundary rejected one internal control kwarg. Merely
++    # echoing an ``_opencloud_`` token in untrusted provider text is not proof.
++    if (
++        exc_type == "typeerror"
++        and _METADATA_LEAK_RE.search(message)
++        and module.lower().startswith(_INTERNAL_RUNTIME_PREFIXES)
++    ):
 +        return (
 +            "opencloud_metadata_leak",
 +            "A provider request leaked OpenCloud-internal '_opencloud_' metadata; "
 +            "strip internal keys at the provider-kwargs boundary.",
 +        )
-+
-+    # Fast negative: never repair external / operational failures.
-+    for marker in _EXTERNAL_MARKERS:
-+        if marker in low:
-+            return None
 +
 +    # OpenCloud integration ImportError.
 +    if exc_type in ("importerror", "modulenotfounderror"):
@@ -99,18 +106,16 @@ index 000000000..8e3109be6
 +            )
 +        return None
 +
-+    # Local deterministic code errors (TypeError / AttributeError) that are
-+    # OpenCloud-scoped, or that carry no external-failure signal at all.
++    # Local deterministic code errors are repairable only with explicit
++    # OpenCloud provenance.  The gateway catches the whole agent turn, so a
++    # plain provider/tool TypeError is not evidence of an OpenCloud defect.
 +    if exc_type in ("typeerror", "attributeerror"):
-+        if "opencloud" in (low + " " + module.lower()):
++        if "opencloud" in module.lower():
 +            return (
 +                f"opencloud_{exc_type}",
 +                f"Fix the OpenCloud integration {exc_type}: {message[:200]}",
 +            )
-+        return (
-+            f"internal_{exc_type}",
-+            f"Fix the internal code {exc_type}: {message[:200]}",
-+        )
++        return None
 +
 +    return None
 +
@@ -146,6 +151,19 @@ index 000000000..8e3109be6
 +        self._pending_replay = self.state_root / "pending-replay.json"
 +        self._in_progress = self.state_root / "autotrigger-in-progress"
 +
++    def _write_private(self, path, value):
++        self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
++        self.state_root.chmod(0o700)
++        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
++        try:
++            os.fchmod(fd, 0o600)
++            with os.fdopen(fd, "w", encoding="utf-8") as handle:
++                fd = -1
++                handle.write(str(value))
++        finally:
++            if fd >= 0:
++                os.close(fd)
++
 +    # -- gating ------------------------------------------------------------
 +
 +    def _last_attempt(self, fingerprint):
@@ -176,9 +194,12 @@ index 000000000..8e3109be6
 +
 +        # No recursion: mark in-progress before any repair work so a replayed
 +        # request (or any concurrent path) cannot re-enter.
-+        self._cooldown_dir.mkdir(parents=True, exist_ok=True)
-+        (self._cooldown_dir / fingerprint).write_text(str(self._now()))
-+        self._in_progress.write_text(str(self._now()))
++        self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
++        self.state_root.chmod(0o700)
++        self._cooldown_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
++        self._cooldown_dir.chmod(0o700)
++        self._write_private(self._cooldown_dir / fingerprint, self._now())
++        self._write_private(self._in_progress, self._now())
 +        try:
 +            if not self.invoke_repair(task):
 +                self._clear_in_progress()
@@ -205,7 +226,6 @@ index 000000000..8e3109be6
 +    # -- pending replay ----------------------------------------------------
 +
 +    def _write_pending_replay(self, user_request, metadata=None):
-+        self.state_root.mkdir(parents=True, exist_ok=True)
 +        payload = json.dumps(
 +            {
 +                "request": str(user_request or ""),
@@ -214,7 +234,7 @@ index 000000000..8e3109be6
 +            },
 +            ensure_ascii=False,
 +        )
-+        self._pending_replay.write_text(payload)
++        self._write_private(self._pending_replay, payload)
 +
 +    def _clear_pending_replay(self):
 +        try:
@@ -237,7 +257,15 @@ index 000000000..8e3109be6
 +        Consuming the marker is idempotent-guarded by deletion: the second
 +        call returns ``None``.
 +        """
-+        marker = Path(state_root) / "pending-replay.json"
++        state_root = Path(state_root)
++        marker = state_root / "pending-replay.json"
++        # A production restart exits before run() can clear this marker.  A
++        # freshly started gateway cannot be the old in-process transaction,
++        # so release the stale guard before handling the optional replay.
++        try:
++            (state_root / "autotrigger-in-progress").unlink()
++        except FileNotFoundError:
++            pass
 +        try:
 +            data = json.loads(marker.read_text())
 +        except (OSError, ValueError):
@@ -325,7 +353,7 @@ index bf408d359..4b33547bc 100644
      @staticmethod
      def _log_background_resume_result(task: "asyncio.Task") -> None:
          """Done-callback for a boot-resume turn that outlived the
-@@ -16195,6 +16199,105 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -16195,6 +16199,115 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                  pass
          return source
 
@@ -341,6 +369,10 @@ index bf408d359..4b33547bc 100644
 +        """
 +        # HERMES_OPENCLOUD_SELF_REPAIR_V1
 +        try:
++            if bool((getattr(event, "metadata", None) or {}).get(
++                "opencloud_self_repair_replay"
++            )):
++                return
 +            if not is_truthy_value(os.environ.get("OPEN_CLOUD_SELF_REPAIR", "")):
 +                return
 +            from agent.opencloud_self_repair import maybe_auto_repair
@@ -353,11 +385,17 @@ index bf408d359..4b33547bc 100644
 +            if channel_prompt:
 +                metadata["channel_prompt"] = channel_prompt
 +
++            failing_module = ""
++            traceback = getattr(exc, "__traceback__", None)
++            while traceback is not None:
++                failing_module = str(traceback.tb_frame.f_globals.get("__name__", ""))
++                traceback = traceback.tb_next
++
 +            maybe_auto_repair(
 +                type(exc).__name__,
 +                str(exc),
 +                user_request=message_text,
-+                module=getattr(exc, "__module__", "") or "",
++                module=failing_module,
 +                metadata=metadata,
 +            )
 +        except Exception:
@@ -431,7 +469,7 @@ index bf408d359..4b33547bc 100644
      async def _handle_message_with_agent(self, event, source, _quick_key: str, run_generation: int):
          """Inner handler that runs under the _running_agents sentinel guard."""
          _msg_start_time = time.time()
-@@ -17431,21 +17534,28 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -17431,21 +17544,28 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
              # session_entry.session_id while the old run is still unwinding.
              _run_start_session_id = session_entry.session_id
              _turn_started_monotonic = time.monotonic()

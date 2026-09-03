@@ -156,13 +156,15 @@ index 0000000..6eb5c06
 +
 +
 +def _allowed(candidate):
++    # Provider names never grant or deny production permission here.
++    # Candidate permission is enforced by Fleet's shared eligibility gate:
++    # current discovery, explicit free-only policy where configured, fresh
++    # verification, non-specialist classification, and health cooldowns.
++    # Keeping this helper provider-neutral lets newly discovered models and
++    # configured providers participate without code changes or model IDs.
++    # All candidates are constrained by their pool and registry proof.
++    # Manual pins use the same eligibility check before runtime resolution.
 +
-+    # HERMES_FLEET_GEMINI_UNVERIFIED_GUARD_V1
-+    _fleet_provider = getattr(candidate, 'provider', None)
-+    if _fleet_provider is None and isinstance(candidate, dict):
-+        _fleet_provider = candidate.get('provider')
-+    if str(_fleet_provider or '').strip().lower() in {'gemini', 'google-gemini'}:
-+        return False
 +    provider = _provider(
 +        candidate
 +    )
@@ -174,15 +176,6 @@ index 0000000..6eb5c06
 +    model = _model(
 +        candidate
 +    )
-+
-+    if (
-+        provider == "openrouter"
-+        or group == "openrouter"
-+    ):
-+        return (
-+            model
-+            == "openrouter/free"
-+        )
 +
 +    return bool(
 +        provider
@@ -236,17 +229,23 @@ index 0000000..6eb5c06
 +    fleet,
 +    role,
 +):
++    candidates = _all(
++        fleet,
++        role,
++    )
++    registry_rows = fleet._registry_model_rows()
 +
 +    return [
 +        candidate
-+        for candidate in _all(
-+            fleet,
-+            role,
-+        )
++        for candidate in candidates
 +        if (
 +            _allowed(
 +                candidate
 +            )
++            and fleet._candidate_eligibility(
++                candidate,
++                registry_rows,
++            )[0]
 +            and not _cooling(
 +                fleet,
 +                candidate,
@@ -878,8 +877,8 @@ index 0000000..6eb5c06
 +
 +                if (
 +                    routing_profile
-+                    and pin_profile
-+                    != routing_profile
++                    and pin_profile != "manual"
++                    and pin_profile != routing_profile
 +                ):
 +                    _clear_pin(
 +                        fleet,
@@ -898,9 +897,10 @@ index 0000000..6eb5c06
 +
 +                if (
 +                    candidate
-+                    and _allowed(
-+                        candidate
-+                    )
++                    and _allowed(candidate)
++                    and fleet._candidate_eligibility(
++                        candidate, fleet._registry_model_rows()
++                    )[0]
 +                    and not _cooling(
 +                        fleet,
 +                        candidate,

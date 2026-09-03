@@ -5,18 +5,21 @@
     "main": [
       "nvidia-dynamic",
       "zen-free-dynamic",
+      "openrouter-free-dynamic",
       "openrouter-free",
       "gemini-emergency"
     ],
     "worker": [
       "zen-free-dynamic",
       "nvidia-dynamic",
+      "openrouter-free-dynamic",
       "openrouter-free",
       "gemini-emergency"
     ],
     "reviewer": [
       "nvidia-dynamic",
       "zen-free-dynamic",
+      "openrouter-free-dynamic",
       "openrouter-free",
       "gemini-emergency"
     ]
@@ -24,11 +27,22 @@
   "pools": {
     "zen-free-dynamic": {
       "type": "registry",
-      "providerGroup": "zen"
+      "providerGroup": "zen",
+      "provider": "opencode-zen",
+      "discoveryAliases": [
+        "opencode-zen",
+        "opencode"
+      ],
+      "freeOnly": true
     },
     "nvidia-dynamic": {
       "type": "registry",
-      "providerGroup": "nvidia"
+      "providerGroup": "nvidia",
+      "provider": "nvidia",
+      "discoveryAliases": [
+        "nvidia"
+      ],
+      "freeOnly": false
     },
     "openrouter-free": {
       "type": "stable-route",
@@ -36,10 +50,24 @@
       "provider": "openrouter",
       "route": "openrouter/free"
     },
+    "openrouter-free-dynamic": {
+      "type": "registry",
+      "providerGroup": "openrouter",
+      "provider": "openrouter",
+      "discoveryAliases": [
+        "openrouter"
+      ],
+      "freeOnly": true
+    },
     "gemini-emergency": {
-      "type": "hermes-runtime-config",
+      "type": "registry",
       "providerGroup": "gemini",
-      "provider": "gemini"
+      "provider": "gemini",
+      "discoveryAliases": [
+        "gemini"
+      ],
+      "freeOnly": false,
+      "automaticPenalty": 0.35
     }
   },
   "failurePolicy": {
@@ -66,140 +94,28 @@
     "allDiscoveredFallback": true,
     "profiles": {
       "fast": {
-        "preferredModels": [
-          {
-            "providerGroup": "zen",
-            "model": "nemotron-3.5-lightning-free"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "openai/gpt-oss-20b"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "thinkingmachines/inkling"
-          },
-          {
-            "providerGroup": "zen",
-            "model": "hy3-free"
-          },
-          {
-            "providerGroup": "zen",
-            "model": "laguna-s-2.1-free"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "poolside/laguna-xs-2.1"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "nvidia/nemotron-nano-12b-v2-vl"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "nvidia/llama-3.3-nemotron-super-49b-v1"
-          }
-        ]
+        "weights": {
+          "capability": 0.5,
+          "health": 2.0,
+          "freshness": 1.0,
+          "latency": 4.0
+        }
       },
       "balanced": {
-        "preferredModels": [
-          {
-            "providerGroup": "nvidia",
-            "model": "nvidia/nemotron-3-super-120b-a12b"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "thinkingmachines/inkling"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "nvidia/nemotron-3-ultra-550b-a55b"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "deepseek-ai/deepseek-v4-flash-0731"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "stepfun-ai/step-3.7-flash"
-          },
-          {
-            "providerGroup": "zen",
-            "model": "nemotron-3-ultra-free"
-          },
-          {
-            "providerGroup": "zen",
-            "model": "nemotron-3.5-lightning-free"
-          },
-          {
-            "providerGroup": "zen",
-            "model": "deepseek-v4-flash-free"
-          },
-          {
-            "providerGroup": "zen",
-            "model": "mimo-v2.5-free"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "minimaxai/minimax-m3"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "meta/muse-glimmer-30b"
-          }
-        ]
+        "weights": {
+          "capability": 2.0,
+          "health": 2.0,
+          "freshness": 2.0,
+          "latency": 2.0
+        }
       },
       "deep": {
-        "preferredModels": [
-          {
-            "providerGroup": "nvidia",
-            "model": "nvidia/nemotron-3-ultra-550b-a55b"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "nvidia/nemotron-3-super-120b-a12b"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "deepseek-ai/deepseek-v4-flash-0731"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "thinkingmachines/inkling"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "stepfun-ai/step-3.7-flash"
-          },
-          {
-            "providerGroup": "zen",
-            "model": "nemotron-3-ultra-free"
-          },
-          {
-            "providerGroup": "zen",
-            "model": "deepseek-v4-flash-free"
-          },
-          {
-            "providerGroup": "zen",
-            "model": "mimo-v2.5-free"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "meta/muse-glimmer-30b"
-          },
-          {
-            "providerGroup": "nvidia",
-            "model": "minimaxai/minimax-m3"
-          }
-        ]
+        "weights": {
+          "capability": 3.0,
+          "health": 3.0,
+          "freshness": 3.0,
+          "latency": 1.0
+        }
       }
     },
     "finalEscape": {
@@ -207,5 +123,9 @@
       "provider": "openrouter",
       "model": "openrouter/free"
     }
+  },
+  "verificationV1": {
+    "targetVerifiedPerGroup": 2,
+    "maxAttemptsPerGroup": 10
   }
 }

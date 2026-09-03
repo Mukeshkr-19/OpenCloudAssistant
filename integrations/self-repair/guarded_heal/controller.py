@@ -979,7 +979,7 @@ class SelfHealController:
             "fleet_detail": result.detail,
             "fleet_verified": result.verified,
             "openrouter_free_preserved": True,
-            "gemini_blocked": True,
+            "gemini_registry_gated": True,
         }
         # Transient: never claim source recovery. Verified probe → NO_ACTION.
         if result.status == "HUMAN_REQUIRED":
