@@ -2,11 +2,12 @@ diff --git a/agent/agent_init.py b/agent/agent_init.py
 index 649d533..f6696e9 100644
 --- a/agent/agent_init.py
 +++ b/agent/agent_init.py
-@@ -581,6 +581,138 @@ def init_agent(
+@@ -581,6 +581,144 @@ def init_agent(
      """
      _install_safe_stdio()
 
 +    # HERMES_FLEET_MAIN_ATTACH_BEGIN
++    _hermes_fleet_required = False
 +    _hermes_fleet_bootstrap = None
 +    _hermes_fleet_session_key = gateway_session_key
 +
@@ -21,6 +22,7 @@ index 649d533..f6696e9 100644
 +            provider=provider or requested_provider,
 +            gateway_session_key=_hermes_fleet_session_key,
 +        ):
++            _hermes_fleet_required = True
 +            _hermes_fleet_bootstrap = _fleet_resolve(
 +                "main",
 +                session_key=_hermes_fleet_session_key,
@@ -126,6 +128,10 @@ index 649d533..f6696e9 100644
 +            service_tier = None
 +
 +    except Exception as _fleet_exc:
++        if _hermes_fleet_required:
++            raise RuntimeError(
++                "Automatic Fleet routing unavailable; no healthy route could be selected."
++            ) from _fleet_exc
 +        logger.warning(
 +            "Hermes Fleet main bootstrap failed; "
 +            "using legacy configured route (%s)",
@@ -141,7 +147,7 @@ index 649d533..f6696e9 100644
      agent.model = model
      agent.max_iterations = max_iterations
      # Shared iteration budget — parent creates, children inherit.
-@@ -622,6 +754,17 @@ def init_agent(
+@@ -622,6 +760,17 @@ def init_agent(
          else agent.provider
      )
      agent._credential_pool = credential_pool
