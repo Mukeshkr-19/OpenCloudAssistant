@@ -216,7 +216,7 @@ new file mode 100644
 index 0000000..0000000
 --- /dev/null
 +++ b/gateway/model_control_fast_path.py
-@@ -0,0 +1,720 @@
+@@ -0,0 +1,733 @@
 +"""Deterministic model-control + channel-capability fast path.
 +
 +# HERMES_OPENCLOUD_MODEL_CONTROL_FAST_PATH_V1
@@ -550,6 +550,7 @@ index 0000000..0000000
 +    running_provider: str = "",
 +    running_model: str = "",
 +    pin_info: Optional[dict] = None,
++    fleet_enabled: bool = False,
 +    last_requested_switch: str = "",
 +    configured_provider: str = "",
 +    configured_model: str = "",
@@ -614,6 +615,16 @@ index 0000000..0000000
 +            last_requested_switch=last_req,
 +        )
 +
++    if fleet_enabled:
++        return ModelStatusSnapshot(
++            provider="",
++            model="",
++            source="FLEET_AUTO",
++            fleet_pin=False,
++            routing_mode="automatic",
++            last_requested_switch=last_req,
++        )
++
 +    if configured_model:
 +        prov = str(configured_provider or "")
 +        if prov.lower() == "auto":
@@ -660,6 +671,8 @@ index 0000000..0000000
 +            if model and model != "unknown"
 +            else "Fleet pinned route: unknown"
 +        )
++    elif source == "FLEET_AUTO":
++        headline = "Automatic Fleet routing: next model selected dynamically"
 +    elif source in {"CONFIGURED_FALLBACK", "BOOTSTRAP"}:
 +        headline = f"Configured default: {route}"
 +    elif source == "FLEET_PIN_UNRESOLVED":
@@ -1126,7 +1139,7 @@ index cfe5a81..9278ae0 100644
              _agent_result = await self._handle_message_with_agent(event, source, _quick_key, _run_generation)
              # Goal continuation: after the agent returns a final response
              # for this turn, check any standing /goal — the judge will
-@@ -15777,6 +15870,462 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -15777,6 +15870,477 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
          except Exception:
              return None
  
@@ -1178,6 +1191,7 @@ index cfe5a81..9278ae0 100644
 +            pin_info = None
 +            configured_provider = ""
 +            configured_model = ""
++            fleet_enabled = False
 +            last_req = ""
 +
 +            try:
@@ -1221,6 +1235,19 @@ index cfe5a81..9278ae0 100644
 +                and not (pin_info and pin_info.get("fleet_pin"))
 +            ):
 +                try:
++                    from agent.hermes_fleet_bridge import enabled
++
++                    fleet_enabled = bool(enabled())
++                except Exception:
++                    fleet_enabled = False
++
++            if (
++                not override.get("model")
++                and not running_model
++                and not (pin_info and pin_info.get("fleet_pin"))
++                and not fleet_enabled
++            ):
++                try:
 +                    from hermes_cli.config import load_config_readonly
 +
 +                    cfg = load_config_readonly() or {}
@@ -1250,6 +1277,7 @@ index cfe5a81..9278ae0 100644
 +                running_provider=running_provider,
 +                running_model=running_model,
 +                pin_info=pin_info,
++                fleet_enabled=fleet_enabled,
 +                last_requested_switch=last_req,
 +                configured_provider=configured_provider,
 +                configured_model=configured_model,
@@ -1589,7 +1617,7 @@ index cfe5a81..9278ae0 100644
      async def _maybe_handle_cron_control_fast_path(
          self, event, source, session_key: str
      ) -> Optional[str]:
-@@ -23251,6 +23794,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+@@ -23251,6 +23809,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
              # object keeps its interrupt flag so a hung drain still dies
              # when it unblocks.
              self._evict_cached_agent(session_key)

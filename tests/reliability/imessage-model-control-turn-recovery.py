@@ -26,6 +26,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import types
 from contextlib import contextmanager
@@ -265,6 +266,28 @@ def test_status_precedence(m) -> None:
     )
     require("Configured default:" in cfg_status, "config-only not active route")
     require("Active route:" not in cfg_status, "bootstrap must not say active")
+
+    snap_fleet_auto = m.resolve_model_status_snapshot(
+        configured_provider=_FIXTURE_BOOTSTRAP_PROVIDER,
+        configured_model=_FIXTURE_BOOTSTRAP_MODEL,
+        fleet_enabled=True,
+    )
+    require(snap_fleet_auto.source == "FLEET_AUTO", "Fleet auto beats bootstrap")
+    auto_waiting_status = m.format_model_status(
+        provider=snap_fleet_auto.provider,
+        model=snap_fleet_auto.model,
+        source=snap_fleet_auto.source,
+        fleet_pin=False,
+        routing_mode=snap_fleet_auto.routing_mode,
+    )
+    require(
+        "next model selected dynamically" in auto_waiting_status,
+        "automatic status is explicit before runtime selection",
+    )
+    require(
+        _FIXTURE_BOOTSTRAP_MODEL not in auto_waiting_status,
+        "automatic status must hide stale bootstrap model",
+    )
 
     snap_manual = m.resolve_model_status_snapshot(
         session_override={
@@ -1002,6 +1025,19 @@ def test_live_status_executes_readonly(env: _LiveGatewayEnv) -> None:
     )
 
 
+def test_live_auto_status_ignores_bootstrap(env: _LiveGatewayEnv) -> None:
+    calls_before = (len(env.set_pin_calls), len(env.clear_calls), env.evict_calls)
+    out = env.invoke("which model are u using?")
+    require("Automatic Fleet routing:" in out, "automatic status headline")
+    require("source=FLEET_AUTO" in out, "automatic status source")
+    require("Configured default:" not in out, "automatic status hides bootstrap")
+    require("fleet_pin=no" in out, "automatic status reports no manual pin")
+    require(
+        (len(env.set_pin_calls), len(env.clear_calls), env.evict_calls) == calls_before,
+        "automatic status remains read-only",
+    )
+
+
 def test_live_nl_switch_success(env: _LiveGatewayEnv) -> None:
     prev_override = {"provider": _FIXTURE_OVERRIDE_PROVIDER, "model": _FIXTURE_OVERRIDE_MODEL}
     env.runner._session_model_overrides[_SK] = dict(prev_override)
@@ -1384,6 +1420,13 @@ def run_live_handler_tests(out: Path) -> None:
                 [
                     _cand(_FIXTURE_FLEET_PROVIDER, "fixture-group-b", _FIXTURE_FLEET_MODEL),
                 ],
+                test_live_auto_status_ignores_bootstrap,
+                {},
+            ),
+            (
+                [
+                    _cand(_FIXTURE_FLEET_PROVIDER, "fixture-group-b", _FIXTURE_FLEET_MODEL),
+                ],
                 test_live_provider_catalog_truth,
                 {},
             ),
@@ -1483,7 +1526,41 @@ def run_live_handler_tests(out: Path) -> None:
                 env.close()
 
 
+def test_automatic_bootstrap_fails_closed() -> None:
+    patch = (ROOT / 'integrations/hermes/hermes-live.patch').read_text()
+    added = '\n'.join(line[1:] for line in patch.splitlines() if line.startswith('+') and not line.startswith('+++'))
+    body = added.split('# HERMES_FLEET_MAIN_ATTACH_BEGIN', 1)[1].split('# HERMES_FLEET_MAIN_ATTACH_END', 1)[0]
+    bridge_name = 'agent.hermes_fleet_bridge'
+    saved = sys.modules.get(bridge_name)
+    bridge = types.ModuleType(bridge_name)
+    bridge.should_manage_main = lambda **kwargs: True
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('fixture unavailable')
+    bridge.resolve_role = unavailable
+    sys.modules[bridge_name] = bridge
+    ns = dict(model=_FIXTURE_BOOTSTRAP_MODEL, provider=_FIXTURE_BOOTSTRAP_PROVIDER,
+              requested_provider=None, gateway_session_key=_SK,
+              logger=types.SimpleNamespace(warning=lambda *args: None))
+    try:
+        try:
+            exec(textwrap.dedent(body), ns)
+        except RuntimeError as exc:
+            require('Automatic Fleet routing unavailable' in str(exc), 'sanitized bootstrap failure')
+        else:
+            raise AssertionError('automatic Fleet failure must not use legacy configured model')
+        bridge.should_manage_main = lambda **kwargs: False
+        exec(textwrap.dedent(body), ns)
+        require(ns['model'] == _FIXTURE_BOOTSTRAP_MODEL, 'non-Fleet explicit routes remain untouched')
+    finally:
+        if saved is None:
+            sys.modules.pop(bridge_name, None)
+        else:
+            sys.modules[bridge_name] = saved
+
+
 def main() -> None:
+    test_automatic_bootstrap_fails_closed()
+    print('PASS automatic bootstrap failure cannot use legacy configured model')
     assert_canonical_runner_uses_hermes_python()
     print("PASS canonical runner uses HERMES_PYTHON for PR-A")
     patch_applies()

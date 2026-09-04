@@ -35,10 +35,14 @@ git -C "$FAKE_HOME/.hermes/hermes-agent" \
 # Object store: real pin objects (not used as reliability root). Prefer a local
 # store so the regression stays offline when the developer tree has the pin.
 OBJECT_SOURCE=""
-if [ -d "${HOME}/.hermes/hermes-agent/.git" ] && \
-   git -C "${HOME}/.hermes/hermes-agent" cat-file -e "${PIN}^{commit}" 2>/dev/null; then
-    OBJECT_SOURCE="${HOME}/.hermes/hermes-agent"
-fi
+for candidate in "${OPEN_CLOUD_HERMES_ROOT:-}" \
+    "${OPEN_CLOUD_HERMES_OBJECT_SOURCE:-}" "${HOME}/.hermes/hermes-agent"; do
+    if [ -n "$candidate" ] && [ -d "$candidate/.git" ] && \
+       git -C "$candidate" cat-file -e "${PIN}^{commit}" 2>/dev/null; then
+        OBJECT_SOURCE="$(cd "$candidate" && pwd)"
+        break
+    fi
+done
 
 (
     unset OPEN_CLOUD_HERMES_ROOT OPEN_CLOUD_HERMES_PYTHON
